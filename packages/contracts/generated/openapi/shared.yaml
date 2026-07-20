@@ -1,0 +1,594 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "PAI Shared Contracts",
+    "version": "1.0.0"
+  },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "ResponseEnvelopeV1": {
+        "$id": "urn:pai:shared:response-envelope:v1",
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "details",
+          "trace_id"
+        ],
+        "properties": {
+          "code": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "message": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "details": {},
+          "trace_id": {
+            "minLength": 1,
+            "type": "string"
+          }
+        }
+      },
+      "TypedEvidenceRefV1": {
+        "$id": "urn:pai:shared:typed-evidence-ref:v1",
+        "minLength": 3,
+        "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+        "type": "string"
+      },
+      "ConflictPolicyV1": {
+        "$id": "urn:pai:shared:conflict-policy:v1",
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "policy_version",
+          "domain",
+          "same_actor_scope",
+          "authority_gate_passed",
+          "left_rank",
+          "right_rank",
+          "rank_gap",
+          "higher_confidence",
+          "lower_confidence",
+          "confidence_gate_passed",
+          "auto_resolution_eligible",
+          "decision"
+        ],
+        "properties": {
+          "policy_version": {
+            "const": "1.0.0",
+            "type": "string"
+          },
+          "domain": {
+            "anyOf": [
+              {
+                "const": "runtime_fact",
+                "type": "string"
+              },
+              {
+                "const": "personal_preference",
+                "type": "string"
+              },
+              {
+                "const": "project_decision",
+                "type": "string"
+              },
+              {
+                "const": "rule",
+                "type": "string"
+              },
+              {
+                "const": "relationship_state",
+                "type": "string"
+              },
+              {
+                "const": "unclassified",
+                "type": "string"
+              }
+            ]
+          },
+          "same_actor_scope": {
+            "type": "boolean"
+          },
+          "authority_gate_passed": {
+            "type": "boolean"
+          },
+          "left_rank": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "right_rank": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rank_gap": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "higher_confidence": {
+            "minimum": 0,
+            "maximum": 1,
+            "type": "number"
+          },
+          "lower_confidence": {
+            "minimum": 0,
+            "maximum": 1,
+            "type": "number"
+          },
+          "confidence_gate_passed": {
+            "type": "boolean"
+          },
+          "auto_resolution_eligible": {
+            "type": "boolean"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "const": "auto_resolve",
+                "type": "string"
+              },
+              {
+                "const": "review",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      },
+      "DirectActivePolicyV1": {
+        "$id": "urn:pai:shared:direct-active-policy:v1",
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "policy_version",
+          "status",
+          "reason_code"
+        ],
+        "properties": {
+          "policy_version": {
+            "const": "knowthat.direct_active.v1",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "active",
+                "type": "string"
+              },
+              {
+                "const": "candidate",
+                "type": "string"
+              }
+            ]
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "const": "eligible",
+                "type": "string"
+              },
+              {
+                "const": "proposed_status_not_active",
+                "type": "string"
+              },
+              {
+                "const": "direct_active_hint_missing",
+                "type": "string"
+              },
+              {
+                "const": "risk_not_low",
+                "type": "string"
+              },
+              {
+                "const": "evidence_pending",
+                "type": "string"
+              },
+              {
+                "const": "not_explicit_statement",
+                "type": "string"
+              },
+              {
+                "const": "confidence_below_threshold",
+                "type": "string"
+              },
+              {
+                "const": "invalid_source_or_evidence",
+                "type": "string"
+              },
+              {
+                "const": "open_conflict",
+                "type": "string"
+              },
+              {
+                "const": "category_gate_failed",
+                "type": "string"
+              },
+              {
+                "const": "validity_gate_failed",
+                "type": "string"
+              },
+              {
+                "const": "rule_not_allowlisted",
+                "type": "string"
+              },
+              {
+                "const": "rule_changes_protected_boundary",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      },
+      "ServiceIdV1": {
+        "$id": "urn:pai:shared:service-id:v1",
+        "anyOf": [
+          {
+            "const": "trigger_processor",
+            "type": "string"
+          },
+          {
+            "const": "action_runtime",
+            "type": "string"
+          },
+          {
+            "const": "meta_cognition",
+            "type": "string"
+          },
+          {
+            "const": "memory",
+            "type": "string"
+          },
+          {
+            "const": "knowthat",
+            "type": "string"
+          },
+          {
+            "const": "skill_registry",
+            "type": "string"
+          },
+          {
+            "const": "timer_trigger_app",
+            "type": "string"
+          },
+          {
+            "const": "observation_gateway",
+            "type": "string"
+          }
+        ]
+      },
+      "DeploymentEnvironmentV1": {
+        "$id": "urn:pai:shared:deployment-environment:v1",
+        "anyOf": [
+          {
+            "const": "local",
+            "type": "string"
+          },
+          {
+            "const": "dev",
+            "type": "string"
+          },
+          {
+            "const": "staging",
+            "type": "string"
+          },
+          {
+            "const": "prod",
+            "type": "string"
+          }
+        ]
+      },
+      "ReleaseChannelV1": {
+        "$id": "urn:pai:shared:release-channel:v1",
+        "anyOf": [
+          {
+            "const": "stable",
+            "type": "string"
+          },
+          {
+            "const": "canary",
+            "type": "string"
+          }
+        ]
+      },
+      "WorkloadCredentialClaimsV1": {
+        "$id": "urn:pai:shared:workload-credential-claims:v1",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "iss",
+              "sub",
+              "aud",
+              "jti",
+              "iat",
+              "nbf",
+              "exp",
+              "capability",
+              "scope_kind",
+              "workspace_id",
+              "bot_id",
+              "owner_agent_id",
+              "deployment_environment",
+              "release_channel"
+            ],
+            "properties": {
+              "iss": {
+                "const": "pai-workload",
+                "type": "string"
+              },
+              "sub": {
+                "$ref": "urn:pai:shared:service-id:v1"
+              },
+              "aud": {
+                "$ref": "urn:pai:shared:service-id:v1"
+              },
+              "jti": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "iat": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "nbf": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "exp": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "capability": {
+                "minItems": 1,
+                "uniqueItems": true,
+                "type": "array",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "delegated_principal": {
+                "$ref": "urn:pai:shared:delegated-principal-context:v1"
+              },
+              "scope_kind": {
+                "const": "bot",
+                "type": "string"
+              },
+              "workspace_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "bot_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "owner_agent_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "deployment_environment": {
+                "$ref": "urn:pai:shared:deployment-environment:v1"
+              },
+              "release_channel": {
+                "$ref": "urn:pai:shared:release-channel:v1"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "iss",
+              "sub",
+              "aud",
+              "jti",
+              "iat",
+              "nbf",
+              "exp",
+              "capability",
+              "scope_kind"
+            ],
+            "properties": {
+              "iss": {
+                "const": "pai-workload",
+                "type": "string"
+              },
+              "sub": {
+                "$ref": "urn:pai:shared:service-id:v1"
+              },
+              "aud": {
+                "$ref": "urn:pai:shared:service-id:v1"
+              },
+              "jti": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "iat": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "nbf": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "exp": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "capability": {
+                "minItems": 1,
+                "uniqueItems": true,
+                "type": "array",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "delegated_principal": {
+                "$ref": "urn:pai:shared:delegated-principal-context:v1"
+              },
+              "scope_kind": {
+                "const": "global",
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "DelegatedPrincipalContextV1": {
+        "$id": "urn:pai:shared:delegated-principal-context:v1",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "principal_type",
+              "principal_id",
+              "roles",
+              "source_issuer",
+              "source_subject",
+              "auth_time",
+              "scope_kind",
+              "workspace_id",
+              "bot_id",
+              "owner_agent_id",
+              "deployment_environment",
+              "release_channel"
+            ],
+            "properties": {
+              "principal_type": {
+                "anyOf": [
+                  {
+                    "const": "user",
+                    "type": "string"
+                  },
+                  {
+                    "const": "developer",
+                    "type": "string"
+                  },
+                  {
+                    "const": "operator",
+                    "type": "string"
+                  }
+                ]
+              },
+              "principal_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "roles": {
+                "uniqueItems": true,
+                "type": "array",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "source_issuer": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "source_subject": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "auth_time": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "scope_kind": {
+                "const": "bot",
+                "type": "string"
+              },
+              "workspace_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "bot_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "owner_agent_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "deployment_environment": {
+                "$ref": "urn:pai:shared:deployment-environment:v1"
+              },
+              "release_channel": {
+                "$ref": "urn:pai:shared:release-channel:v1"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "principal_type",
+              "principal_id",
+              "roles",
+              "source_issuer",
+              "source_subject",
+              "auth_time",
+              "scope_kind"
+            ],
+            "properties": {
+              "principal_type": {
+                "anyOf": [
+                  {
+                    "const": "user",
+                    "type": "string"
+                  },
+                  {
+                    "const": "developer",
+                    "type": "string"
+                  },
+                  {
+                    "const": "operator",
+                    "type": "string"
+                  }
+                ]
+              },
+              "principal_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "roles": {
+                "uniqueItems": true,
+                "type": "array",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "source_issuer": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "source_subject": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "auth_time": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "scope_kind": {
+                "const": "global",
+                "type": "string"
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

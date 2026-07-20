@@ -1,0 +1,30 @@
+[
+  {
+    "policy_version": "1.0.0",
+    "domain": "project_decision",
+    "same_actor_scope": true,
+    "authority_gate_passed": true,
+    "left_rank": 5,
+    "right_rank": 3,
+    "rank_gap": 2,
+    "higher_confidence": 0.7,
+    "lower_confidence": 0.9,
+    "confidence_gate_passed": true,
+    "auto_resolution_eligible": true,
+    "decision": "auto_resolve"
+  },
+  {
+    "policy_version": "1.0.0",
+    "domain": "unclassified",
+    "same_actor_scope": true,
+    "authority_gate_passed": true,
+    "left_rank": 5,
+    "right_rank": 1,
+    "rank_gap": 4,
+    "higher_confidence": 1,
+    "lower_confidence": 1,
+    "confidence_gate_passed": true,
+    "auto_resolution_eligible": false,
+    "decision": "review"
+  }
+]

@@ -1,0 +1,37 @@
+{
+  "$id": "urn:pai:shared:service-id:v1",
+  "anyOf": [
+    {
+      "const": "trigger_processor",
+      "type": "string"
+    },
+    {
+      "const": "action_runtime",
+      "type": "string"
+    },
+    {
+      "const": "meta_cognition",
+      "type": "string"
+    },
+    {
+      "const": "memory",
+      "type": "string"
+    },
+    {
+      "const": "knowthat",
+      "type": "string"
+    },
+    {
+      "const": "skill_registry",
+      "type": "string"
+    },
+    {
+      "const": "timer_trigger_app",
+      "type": "string"
+    },
+    {
+      "const": "observation_gateway",
+      "type": "string"
+    }
+  ]
+}

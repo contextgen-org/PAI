@@ -1,0 +1,164 @@
+{
+  "$id": "urn:pai:trigger-processor:trigger-admission-decision:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "trigger_status",
+        "priority",
+        "action",
+        "reason_code",
+        "initial_process_state"
+      ],
+      "properties": {
+        "trigger_status": {
+          "const": "accepted",
+          "type": "string"
+        },
+        "priority": {
+          "anyOf": [
+            {
+              "const": "strong",
+              "type": "string"
+            },
+            {
+              "const": "weak",
+              "type": "string"
+            }
+          ]
+        },
+        "action": {
+          "anyOf": [
+            {
+              "const": "dispatch",
+              "type": "string"
+            },
+            {
+              "const": "dispatch_or_preempt",
+              "type": "string"
+            },
+            {
+              "const": "dispatch_catch_up_serial",
+              "type": "string"
+            },
+            {
+              "const": "enqueue_strong_fifo",
+              "type": "string"
+            },
+            {
+              "const": "enqueue_weak",
+              "type": "string"
+            },
+            {
+              "const": "merge_or_enqueue_weak",
+              "type": "string"
+            }
+          ]
+        },
+        "reason_code": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "initial_process_state": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "phase",
+            "status",
+            "wait_reason",
+            "terminal_reason"
+          ],
+          "properties": {
+            "phase": {
+              "const": "admission",
+              "type": "string"
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "const": "running",
+                  "type": "string"
+                },
+                {
+                  "const": "waiting",
+                  "type": "string"
+                }
+              ]
+            },
+            "wait_reason": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "const": "weak_queue",
+                  "type": "string"
+                },
+                {
+                  "const": "preempt_commit",
+                  "type": "string"
+                },
+                {
+                  "const": "deferred_strong_queue",
+                  "type": "string"
+                }
+              ]
+            },
+            "terminal_reason": {
+              "type": "null"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "trigger_status",
+        "priority",
+        "action",
+        "reason_code"
+      ],
+      "properties": {
+        "trigger_status": {
+          "const": "rejected",
+          "type": "string"
+        },
+        "priority": {
+          "anyOf": [
+            {
+              "const": "strong",
+              "type": "string"
+            },
+            {
+              "const": "weak",
+              "type": "string"
+            }
+          ]
+        },
+        "action": {
+          "const": "reject",
+          "type": "string"
+        },
+        "reason_code": {
+          "anyOf": [
+            {
+              "const": "bot_disabled",
+              "type": "string"
+            },
+            {
+              "const": "bot_archived",
+              "type": "string"
+            },
+            {
+              "const": "safety_blocked",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

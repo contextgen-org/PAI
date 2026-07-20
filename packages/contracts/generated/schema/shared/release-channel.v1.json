@@ -1,0 +1,13 @@
+{
+  "$id": "urn:pai:shared:release-channel:v1",
+  "anyOf": [
+    {
+      "const": "stable",
+      "type": "string"
+    },
+    {
+      "const": "canary",
+      "type": "string"
+    }
+  ]
+}

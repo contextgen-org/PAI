@@ -1,0 +1,21 @@
+{
+  "$id": "urn:pai:shared:deployment-environment:v1",
+  "anyOf": [
+    {
+      "const": "local",
+      "type": "string"
+    },
+    {
+      "const": "dev",
+      "type": "string"
+    },
+    {
+      "const": "staging",
+      "type": "string"
+    },
+    {
+      "const": "prod",
+      "type": "string"
+    }
+  ]
+}

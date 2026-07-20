@@ -1,0 +1,12 @@
+[
+  {
+    "policy_version": "knowthat.direct_active.v1",
+    "status": "active",
+    "reason_code": "eligible"
+  },
+  {
+    "policy_version": "knowthat.direct_active.v1",
+    "status": "candidate",
+    "reason_code": "not_explicit_statement"
+  }
+]

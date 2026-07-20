@@ -1,0 +1,6 @@
+{
+  "$id": "urn:pai:shared:typed-evidence-ref:v1",
+  "minLength": 3,
+  "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+  "type": "string"
+}

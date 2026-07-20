@@ -1,0 +1,21 @@
+{
+  "name": "@pai/workspace",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@11.13.1",
+  "engines": {
+    "node": "24.18.0"
+  },
+  "scripts": {
+    "verify:toolchain": "node scripts/verify-toolchain.mjs",
+    "build": "pnpm -r --if-present build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "check": "pnpm verify:toolchain && pnpm typecheck && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.13",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  }
+}

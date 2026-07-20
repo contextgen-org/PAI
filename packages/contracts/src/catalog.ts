@@ -1,0 +1,144 @@
+import type { TSchema } from "@sinclair/typebox";
+
+import { ConflictPolicyV1Schema } from "./policy/conflict-policy.v1.js";
+import { DirectActivePolicyV1Schema } from "./policy/direct-active-policy.v1.js";
+import { DelegatedPrincipalContextV1Schema } from "./shared/delegated-principal-context.v1.js";
+import { DeploymentEnvironmentV1Schema } from "./shared/deployment-environment.v1.js";
+import { ReleaseChannelV1Schema } from "./shared/release-channel.v1.js";
+import { ResponseEnvelopeV1Schema } from "./shared/response-envelope.v1.js";
+import { ServiceIdV1Schema } from "./shared/service-id.v1.js";
+import { TypedEvidenceRefV1Schema } from "./shared/typed-evidence-ref.v1.js";
+import { WorkloadCredentialClaimsV1Schema } from "./shared/workload-credential-claims.v1.js";
+
+export interface SharedSchemaCatalogEntry {
+  readonly schema_name: string;
+  readonly schema_id: string;
+  readonly version: "1.0.0";
+  readonly owner_service: "architecture-contracts";
+  readonly source_file: string;
+  readonly generated_outputs: readonly string[];
+  readonly contract_tests: readonly string[];
+  readonly schema: TSchema;
+}
+
+function entry(
+  schema_name: string,
+  schema_id: string,
+  source_file: string,
+  generatedBase: string,
+  contractTest: string,
+  schema: TSchema,
+  generatedOutputs?: readonly string[],
+): SharedSchemaCatalogEntry {
+  return {
+    schema_name,
+    schema_id,
+    version: "1.0.0",
+    owner_service: "architecture-contracts",
+    source_file,
+    generated_outputs: generatedOutputs ?? [
+        `generated/schema/${generatedBase}.json`,
+        "generated/openapi/shared.yaml",
+        "generated/types/shared.d.ts",
+      ],
+    contract_tests: [contractTest],
+    schema,
+  };
+}
+
+export const SHARED_SCHEMA_CATALOG = [
+  entry(
+    "ResponseEnvelopeV1",
+    "urn:pai:shared:response-envelope:v1",
+    "packages/contracts/src/shared/response-envelope.v1.ts",
+    "shared/response-envelope.v1",
+    "packages/contracts/test/shared/response-envelope.contract.ts",
+    ResponseEnvelopeV1Schema,
+  ),
+  entry(
+    "TypedEvidenceRefV1",
+    "urn:pai:shared:typed-evidence-ref:v1",
+    "packages/contracts/src/shared/typed-evidence-ref.v1.ts",
+    "shared/typed-evidence-ref.v1",
+    "packages/contracts/test/shared/typed-evidence-ref.contract.ts",
+    TypedEvidenceRefV1Schema,
+  ),
+  entry(
+    "ConflictPolicyV1",
+    "urn:pai:shared:conflict-policy:v1",
+    "packages/contracts/src/policy/conflict-policy.v1.ts",
+    "policy/conflict-policy.v1",
+    "packages/contracts/test/policy/conflict-policy.contract.ts",
+    ConflictPolicyV1Schema,
+    [
+      "generated/schema/policy/conflict-policy.v1.json",
+      "generated/types/shared-policy.d.ts",
+      "generated/fixtures/policy/conflict-policy.v1.truth-table.json",
+    ],
+  ),
+  entry(
+    "DirectActivePolicyV1",
+    "urn:pai:shared:direct-active-policy:v1",
+    "packages/contracts/src/policy/direct-active-policy.v1.ts",
+    "policy/direct-active-policy.v1",
+    "packages/contracts/test/policy/direct-active-policy.contract.ts",
+    DirectActivePolicyV1Schema,
+    [
+      "generated/schema/policy/direct-active-policy.v1.json",
+      "generated/types/shared-policy.d.ts",
+      "generated/fixtures/policy/direct-active-policy.v1.truth-table.json",
+    ],
+  ),
+  entry(
+    "ServiceIdV1",
+    "urn:pai:shared:service-id:v1",
+    "packages/contracts/src/shared/service-id.v1.ts",
+    "shared/service-id.v1",
+    "packages/contracts/test/shared/service-id.contract.ts",
+    ServiceIdV1Schema,
+  ),
+  entry(
+    "DeploymentEnvironmentV1",
+    "urn:pai:shared:deployment-environment:v1",
+    "packages/contracts/src/shared/deployment-environment.v1.ts",
+    "shared/deployment-environment.v1",
+    "packages/contracts/test/shared/deployment-environment.contract.ts",
+    DeploymentEnvironmentV1Schema,
+  ),
+  entry(
+    "ReleaseChannelV1",
+    "urn:pai:shared:release-channel:v1",
+    "packages/contracts/src/shared/release-channel.v1.ts",
+    "shared/release-channel.v1",
+    "packages/contracts/test/shared/release-channel.contract.ts",
+    ReleaseChannelV1Schema,
+  ),
+  entry(
+    "WorkloadCredentialClaimsV1",
+    "urn:pai:shared:workload-credential-claims:v1",
+    "packages/contracts/src/shared/workload-credential-claims.v1.ts",
+    "shared/workload-credential-claims.v1",
+    "packages/contracts/test/shared/workload-credential-claims.contract.ts",
+    WorkloadCredentialClaimsV1Schema,
+    [
+      "generated/schema/shared/workload-credential-claims.v1.json",
+      "generated/openapi/shared.yaml",
+      "generated/types/shared-auth.d.ts",
+      "generated/fixtures/auth/workload-credential-claims.v1.json",
+    ],
+  ),
+  entry(
+    "DelegatedPrincipalContextV1",
+    "urn:pai:shared:delegated-principal-context:v1",
+    "packages/contracts/src/shared/delegated-principal-context.v1.ts",
+    "shared/delegated-principal-context.v1",
+    "packages/contracts/test/shared/delegated-principal-context.contract.ts",
+    DelegatedPrincipalContextV1Schema,
+    [
+      "generated/schema/shared/delegated-principal-context.v1.json",
+      "generated/openapi/shared.yaml",
+      "generated/types/shared-auth.d.ts",
+      "generated/fixtures/auth/delegated-principal-context.v1.json",
+    ],
+  ),
+] as const satisfies readonly SharedSchemaCatalogEntry[];

@@ -1,0 +1,99 @@
+{
+  "$id": "urn:pai:shared:conflict-policy:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "policy_version",
+    "domain",
+    "same_actor_scope",
+    "authority_gate_passed",
+    "left_rank",
+    "right_rank",
+    "rank_gap",
+    "higher_confidence",
+    "lower_confidence",
+    "confidence_gate_passed",
+    "auto_resolution_eligible",
+    "decision"
+  ],
+  "properties": {
+    "policy_version": {
+      "const": "1.0.0",
+      "type": "string"
+    },
+    "domain": {
+      "anyOf": [
+        {
+          "const": "runtime_fact",
+          "type": "string"
+        },
+        {
+          "const": "personal_preference",
+          "type": "string"
+        },
+        {
+          "const": "project_decision",
+          "type": "string"
+        },
+        {
+          "const": "rule",
+          "type": "string"
+        },
+        {
+          "const": "relationship_state",
+          "type": "string"
+        },
+        {
+          "const": "unclassified",
+          "type": "string"
+        }
+      ]
+    },
+    "same_actor_scope": {
+      "type": "boolean"
+    },
+    "authority_gate_passed": {
+      "type": "boolean"
+    },
+    "left_rank": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "right_rank": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "rank_gap": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "higher_confidence": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "lower_confidence": {
+      "minimum": 0,
+      "maximum": 1,
+      "type": "number"
+    },
+    "confidence_gate_passed": {
+      "type": "boolean"
+    },
+    "auto_resolution_eligible": {
+      "type": "boolean"
+    },
+    "decision": {
+      "anyOf": [
+        {
+          "const": "auto_resolve",
+          "type": "string"
+        },
+        {
+          "const": "review",
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

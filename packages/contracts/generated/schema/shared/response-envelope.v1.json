@@ -1,0 +1,30 @@
+{
+  "$id": "urn:pai:shared:response-envelope:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "code",
+    "message",
+    "retryable",
+    "details",
+    "trace_id"
+  ],
+  "properties": {
+    "code": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "message": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "retryable": {
+      "type": "boolean"
+    },
+    "details": {},
+    "trace_id": {
+      "minLength": 1,
+      "type": "string"
+    }
+  }
+}

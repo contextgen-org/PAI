@@ -1,0 +1,84 @@
+{
+  "$id": "urn:pai:shared:direct-active-policy:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "policy_version",
+    "status",
+    "reason_code"
+  ],
+  "properties": {
+    "policy_version": {
+      "const": "knowthat.direct_active.v1",
+      "type": "string"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "const": "active",
+          "type": "string"
+        },
+        {
+          "const": "candidate",
+          "type": "string"
+        }
+      ]
+    },
+    "reason_code": {
+      "anyOf": [
+        {
+          "const": "eligible",
+          "type": "string"
+        },
+        {
+          "const": "proposed_status_not_active",
+          "type": "string"
+        },
+        {
+          "const": "direct_active_hint_missing",
+          "type": "string"
+        },
+        {
+          "const": "risk_not_low",
+          "type": "string"
+        },
+        {
+          "const": "evidence_pending",
+          "type": "string"
+        },
+        {
+          "const": "not_explicit_statement",
+          "type": "string"
+        },
+        {
+          "const": "confidence_below_threshold",
+          "type": "string"
+        },
+        {
+          "const": "invalid_source_or_evidence",
+          "type": "string"
+        },
+        {
+          "const": "open_conflict",
+          "type": "string"
+        },
+        {
+          "const": "category_gate_failed",
+          "type": "string"
+        },
+        {
+          "const": "validity_gate_failed",
+          "type": "string"
+        },
+        {
+          "const": "rule_not_allowlisted",
+          "type": "string"
+        },
+        {
+          "const": "rule_changes_protected_boundary",
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

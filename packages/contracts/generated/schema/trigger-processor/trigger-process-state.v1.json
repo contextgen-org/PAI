@@ -1,0 +1,410 @@
+{
+  "$id": "urn:pai:trigger-processor:trigger-process-state:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "phase",
+        "status",
+        "wait_reason",
+        "terminal_reason"
+      ],
+      "properties": {
+        "phase": {
+          "const": "admission",
+          "type": "string"
+        },
+        "status": {
+          "const": "running",
+          "type": "string"
+        },
+        "wait_reason": {
+          "type": "null"
+        },
+        "terminal_reason": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "phase",
+        "status",
+        "wait_reason",
+        "terminal_reason"
+      ],
+      "properties": {
+        "phase": {
+          "const": "admission",
+          "type": "string"
+        },
+        "status": {
+          "const": "waiting",
+          "type": "string"
+        },
+        "wait_reason": {
+          "anyOf": [
+            {
+              "const": "weak_queue",
+              "type": "string"
+            },
+            {
+              "const": "preempt_commit",
+              "type": "string"
+            },
+            {
+              "const": "deferred_strong_queue",
+              "type": "string"
+            },
+            {
+              "const": "stage_retry_wait",
+              "type": "string"
+            }
+          ]
+        },
+        "terminal_reason": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "phase",
+        "status",
+        "wait_reason",
+        "terminal_reason"
+      ],
+      "properties": {
+        "phase": {
+          "const": "context",
+          "type": "string"
+        },
+        "status": {
+          "const": "running",
+          "type": "string"
+        },
+        "wait_reason": {
+          "type": "null"
+        },
+        "terminal_reason": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "phase",
+        "status",
+        "wait_reason",
+        "terminal_reason"
+      ],
+      "properties": {
+        "phase": {
+          "const": "context",
+          "type": "string"
+        },
+        "status": {
+          "const": "waiting",
+          "type": "string"
+        },
+        "wait_reason": {
+          "anyOf": [
+            {
+              "const": "runtime_start_recompose",
+              "type": "string"
+            },
+            {
+              "const": "stage_retry_wait",
+              "type": "string"
+            }
+          ]
+        },
+        "terminal_reason": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "phase",
+        "status",
+        "wait_reason",
+        "terminal_reason"
+      ],
+      "properties": {
+        "phase": {
+          "const": "intent",
+          "type": "string"
+        },
+        "status": {
+          "const": "running",
+          "type": "string"
+        },
+        "wait_reason": {
+          "type": "null"
+        },
+        "terminal_reason": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "phase",
+        "status",
+        "wait_reason",
+        "terminal_reason"
+      ],
+      "properties": {
+        "phase": {
+          "const": "intent",
+          "type": "string"
+        },
+        "status": {
+          "const": "waiting",
+          "type": "string"
+        },
+        "wait_reason": {
+          "anyOf": [
+            {
+              "const": "external_confirmation",
+              "type": "string"
+            },
+            {
+              "const": "stage_retry_wait",
+              "type": "string"
+            }
+          ]
+        },
+        "terminal_reason": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "phase",
+        "status",
+        "wait_reason",
+        "terminal_reason"
+      ],
+      "properties": {
+        "phase": {
+          "const": "execution",
+          "type": "string"
+        },
+        "status": {
+          "const": "waiting",
+          "type": "string"
+        },
+        "wait_reason": {
+          "anyOf": [
+            {
+              "const": "runtime_start",
+              "type": "string"
+            },
+            {
+              "const": "runtime_start_reconcile",
+              "type": "string"
+            },
+            {
+              "const": "stage_retry_wait",
+              "type": "string"
+            }
+          ]
+        },
+        "terminal_reason": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "phase",
+        "status",
+        "wait_reason",
+        "terminal_reason"
+      ],
+      "properties": {
+        "phase": {
+          "const": "execution",
+          "type": "string"
+        },
+        "status": {
+          "const": "running",
+          "type": "string"
+        },
+        "wait_reason": {
+          "type": "null"
+        },
+        "terminal_reason": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "phase",
+        "status",
+        "wait_reason",
+        "terminal_reason"
+      ],
+      "properties": {
+        "phase": {
+          "const": "execution",
+          "type": "string"
+        },
+        "status": {
+          "const": "preempt_requested",
+          "type": "string"
+        },
+        "wait_reason": {
+          "type": "null"
+        },
+        "terminal_reason": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "phase",
+        "status",
+        "wait_reason",
+        "terminal_reason"
+      ],
+      "properties": {
+        "phase": {
+          "const": "execution",
+          "type": "string"
+        },
+        "status": {
+          "const": "cancelling",
+          "type": "string"
+        },
+        "wait_reason": {
+          "type": "null"
+        },
+        "terminal_reason": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "phase",
+        "status",
+        "wait_reason",
+        "terminal_reason"
+      ],
+      "properties": {
+        "phase": {
+          "const": "cooldown",
+          "type": "string"
+        },
+        "status": {
+          "const": "waiting",
+          "type": "string"
+        },
+        "wait_reason": {
+          "const": "cooldown_until",
+          "type": "string"
+        },
+        "terminal_reason": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "phase",
+        "status",
+        "wait_reason",
+        "terminal_reason"
+      ],
+      "properties": {
+        "phase": {
+          "const": "meta_enqueued",
+          "type": "string"
+        },
+        "status": {
+          "const": "waiting",
+          "type": "string"
+        },
+        "wait_reason": {
+          "const": "meta_enqueue_wait",
+          "type": "string"
+        },
+        "terminal_reason": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "phase",
+        "status",
+        "wait_reason",
+        "terminal_reason"
+      ],
+      "properties": {
+        "phase": {
+          "const": "closed",
+          "type": "string"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "const": "completed",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "type": "string"
+            },
+            {
+              "const": "preempted",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "type": "string"
+            }
+          ]
+        },
+        "wait_reason": {
+          "type": "null"
+        },
+        "terminal_reason": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

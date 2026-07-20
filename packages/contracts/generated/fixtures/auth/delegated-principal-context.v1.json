@@ -1,0 +1,8 @@
+{
+  "invalid_unsigned_sidecar": true,
+  "invalid_scope_drift": {
+    "workload_bot_id": "bot_01",
+    "delegated_bot_id": "bot_02"
+  },
+  "invalid_principal_type": "service"
+}
