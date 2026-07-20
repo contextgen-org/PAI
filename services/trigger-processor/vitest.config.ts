@@ -4,6 +4,9 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   resolve: {
     alias: {
+      "@pai/auth": fileURLToPath(
+        new URL("../../packages/auth/src/index.ts", import.meta.url),
+      ),
       "@pai/contracts": fileURLToPath(
         new URL("../../packages/contracts/src/index.ts", import.meta.url),
       ),
