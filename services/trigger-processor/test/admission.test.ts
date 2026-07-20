@@ -1,5 +1,12 @@
+import { TriggerAdmissionDecisionV1Schema } from "@pai/contracts";
+import { Value } from "@sinclair/typebox/value";
 import { describe, expect, it } from "vitest";
 
+import {
+  createTriggerAdmissionApplicationV1,
+  type TriggerProcessorOwnerDatabaseV1,
+} from "../src/application/trigger-admission.v1.js";
+import { buildTriggerProcessorApp } from "../src/app.js";
 import {
   assertTriggerAdmissionCommitPreconditionV1,
   calculateTriggerPriorityV1,
@@ -147,6 +154,59 @@ describe("Trigger admission", () => {
     ).toThrow("identity and foreground slot generation");
   });
 
+  it("rejects empty process identities and invalid process timestamps", () => {
+    expect(() =>
+      decideTriggerAdmissionV1({
+        ...base,
+        active_process: "execution_running",
+        active_process_id: "",
+        active_process_slot_generation: 7,
+        active_process_updated_at: "2026-07-20T08:00:00.000Z",
+        foreground_slot_process_id: "",
+      }),
+    ).toThrow("identity and foreground slot generation");
+    expect(() =>
+      decideTriggerAdmissionV1({
+        ...base,
+        active_process: "cooldown_waiting",
+        active_process_id: "process-a",
+        active_process_slot_generation: 7,
+        active_process_updated_at: "not-a-timestamp",
+        foreground_slot_process_id: "process-a",
+      }),
+    ).toThrow("identity and foreground slot generation");
+  });
+
+  it("produces TypeBox-valid decisions for every foreground discriminant", () => {
+    const facts = [
+      base,
+      {
+        ...base,
+        active_process: "execution_running" as const,
+        active_process_id: "process-running",
+        active_process_slot_generation: 7,
+        active_process_updated_at: "2026-07-20T08:00:00.000Z",
+        foreground_slot_process_id: "process-running",
+      },
+      {
+        ...base,
+        active_process: "cooldown_waiting" as const,
+        active_process_id: "process-cooldown",
+        active_process_slot_generation: 7,
+        active_process_updated_at: "2026-07-20T08:00:00.000Z",
+        foreground_slot_process_id: "process-cooldown",
+      },
+    ];
+    for (const item of facts) {
+      expect(
+        Value.Check(
+          TriggerAdmissionDecisionV1Schema,
+          decideTriggerAdmissionV1(item),
+        ),
+      ).toBe(true);
+    }
+  });
+
   it("returns the exact slot CAS precondition consumed by admit_trigger_v1", () => {
     expect(decideTriggerAdmissionV1(base)).toMatchObject({
       admission_precondition: {
@@ -254,5 +314,69 @@ describe("Trigger admission", () => {
       reason_code: "bot_disabled",
     });
     expect("initial_process_state" in decision).toBe(false);
+  });
+
+  it("executes admission through the injected serializable owner transaction", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const database = {
+      repository: {},
+      deployment: {},
+      unit_of_work: {
+        owner_service: "trigger_processor",
+        async withTransaction(request: Record<string, unknown>, work: Function) {
+          calls.push({ transaction: request });
+          return work(
+            { owner_service: "trigger_processor", transaction_id: "tx-1" },
+            {
+              owner: {
+                async executeWriter(_transaction: unknown, writerRequest: Record<string, unknown>) {
+                  calls.push({ writer: writerRequest });
+                  return { persisted: true };
+                },
+              },
+            },
+          );
+        },
+      },
+    } as unknown as TriggerProcessorOwnerDatabaseV1;
+    const application = createTriggerAdmissionApplicationV1(database);
+    await expect(
+      application.admit({
+        trigger_id: "trigger-1",
+        process_id: "process-1",
+        scope: { bot_id: "bot-1" },
+        actor: { actor_type: "user", actor_id: "user-1" },
+        payload: { text: "hello" },
+        dedupe_key: "dedupe-1",
+        request_hash: "request-hash-1",
+        idempotency_key: "submit-1",
+        trace_id: "trace-1",
+        facts: base,
+      }),
+    ).resolves.toEqual({ persisted: true });
+    expect(calls[0]?.transaction).toMatchObject({
+      operation: "admit_trigger",
+      isolation: "serializable",
+      retry: "serialization_failures",
+    });
+    expect(calls[1]?.writer).toMatchObject({
+      writer: "admit_trigger_v1",
+      expected_rows: 1,
+      arguments: expect.objectContaining({
+        p_trigger_id: "trigger-1",
+        p_process_id: "process-1",
+        p_priority: "weak",
+        p_admission_precondition: {
+          kind: "idle",
+          process_id: null,
+          slot_generation: 7,
+        },
+      }),
+    });
+
+    const app = buildTriggerProcessorApp({ logger: false }, database);
+    expect(app.hasDecorator("ownerDatabase")).toBe(true);
+    expect(app.hasDecorator("triggerAdmission")).toBe(true);
+    await app.close();
   });
 });

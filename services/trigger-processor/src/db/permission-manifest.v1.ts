@@ -570,6 +570,25 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
           "generation <= 9007199254740991",
         ],
       },
+      {
+        constraint_name: "trigger_processes_meta_enqueue_reason_check",
+        table_name: "trigger_processes",
+        required_definition_fragments: [
+          "meta_enqueue_reason IS NULL",
+          "cooldown_expired",
+          "user_retracted",
+          "system_interrupted",
+          "failed_with_learnable_snapshot",
+        ],
+      },
+      {
+        constraint_name: "trigger_processes_meta_enqueue_presence_check",
+        table_name: "trigger_processes",
+        required_definition_fragments: [
+          "phase <> 'meta_enqueued'",
+          "meta_enqueue_reason IS NOT NULL",
+        ],
+      },
     ],
   foreign_keys: [],
   append_only_tables: [

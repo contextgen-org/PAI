@@ -254,6 +254,9 @@ importers:
       '@pai/service-kit':
         specifier: workspace:*
         version: link:../../packages/service-kit
+      '@sinclair/typebox':
+        specifier: 'catalog:'
+        version: 0.34.52
     devDependencies:
       typescript:
         specifier: 'catalog:'

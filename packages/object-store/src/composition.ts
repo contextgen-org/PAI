@@ -18,6 +18,7 @@ export type {
   ObjectReconciliationClaimV1,
   ObjectReconciliationOperationV1,
   ReleaseObjectReconciliationInputV1,
+  RenewPutForegroundLeaseInputV1,
 } from "./object-metadata-repository.v1.js";
 export type {
   ObjectStoreReconciliationPortV1,

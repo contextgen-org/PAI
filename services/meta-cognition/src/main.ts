@@ -11,7 +11,7 @@ await startService({
   serviceId: "meta_cognition",
   defaultPort: 3003,
   buildApp(options) {
-    const app = buildMetaCognitionApp({ ...options, readinessChecks: [...(options.readinessChecks ?? []), ...(postgresComposition === undefined ? [] : [{ name: "owner_postgres", check: postgresComposition.checkReadiness }])] });
+    const app = buildMetaCognitionApp({ ...options, readinessChecks: [...(options.readinessChecks ?? []), ...(postgresComposition === undefined ? [] : [{ name: "owner_postgres", check: postgresComposition.checkReadiness }])] }, postgresComposition);
     if (postgresComposition !== undefined) app.addHook("onClose", postgresComposition.close);
     return app;
   },

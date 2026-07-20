@@ -11,7 +11,7 @@ await startService({
   serviceId: "trigger_processor",
   defaultPort: 3001,
   buildApp(options) {
-    const app = buildTriggerProcessorApp({ ...options, readinessChecks: [...(options.readinessChecks ?? []), ...(postgresComposition === undefined ? [] : [{ name: "owner_postgres", check: postgresComposition.checkReadiness }])] });
+    const app = buildTriggerProcessorApp({ ...options, readinessChecks: [...(options.readinessChecks ?? []), ...(postgresComposition === undefined ? [] : [{ name: "owner_postgres", check: postgresComposition.checkReadiness }])] }, postgresComposition);
     if (postgresComposition !== undefined) app.addHook("onClose", postgresComposition.close);
     return app;
   },

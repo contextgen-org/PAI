@@ -43,6 +43,8 @@ export interface ReservePutInputV1 {
   readonly size_bytes: number;
   readonly media_type: string;
   readonly retention_until: string;
+  readonly now: Date;
+  readonly foreground_lease_until: Date;
 }
 
 export type ReservePutResultV1 =
@@ -50,6 +52,7 @@ export type ReservePutResultV1 =
       readonly kind: "claimed";
       readonly reservation_id: string;
       readonly object_ref: ObjectRefV1;
+      readonly foreground_lease_token: string;
     }
   | { readonly kind: "replay"; readonly record: ObjectMetadataRecordV1 }
   | { readonly kind: "conflict" }
@@ -58,7 +61,15 @@ export type ReservePutResultV1 =
 
 export interface CompletePutInputV1 {
   readonly reservation_id: string;
+  readonly foreground_lease_token: string;
   readonly version: string;
+}
+
+export interface RenewPutForegroundLeaseInputV1 {
+  readonly reservation_id: string;
+  readonly foreground_lease_token: string;
+  readonly now: Date;
+  readonly foreground_lease_until: Date;
 }
 
 export type PutFinalizationV1 =
@@ -99,6 +110,7 @@ export interface ObjectReconciliationClaimV1 {
   readonly operation: ObjectReconciliationOperationV1;
   readonly record: ObjectMetadataRecordV1;
   readonly attempt: number;
+  readonly foreground_lease_expired: boolean;
 }
 
 export interface ClaimObjectReconciliationInputV1 {
@@ -127,6 +139,7 @@ export interface RedirectObjectReconciliationInputV1 {
   readonly claim_token: string;
   readonly operation: "put_cleanup";
   readonly last_error: string;
+  readonly next_retry_at?: Date;
 }
 
 /**
@@ -135,9 +148,10 @@ export interface RedirectObjectReconciliationInputV1 {
  */
 export interface ObjectMetadataRepositoryV1 {
   reservePut(input: ReservePutInputV1): Promise<ReservePutResultV1>;
+  renewPutForegroundLease(input: RenewPutForegroundLeaseInputV1): Promise<void>;
   completePut(input: CompletePutInputV1): Promise<ObjectMetadataRecordV1>;
   findPutFinalization(reservationId: string): Promise<PutFinalizationV1>;
-  abortPut(reservationId: string): Promise<void>;
+  abortPut(reservationId: string, foregroundLeaseToken: string): Promise<void>;
   findByRef(objectRef: ObjectRefV1): Promise<ObjectMetadataRecordV1 | undefined>;
   reserveDelete(input: ReserveDeleteInputV1): Promise<ReserveDeleteResultV1>;
   completeDelete(reservationId: string): Promise<ObjectMetadataRecordV1>;
@@ -146,6 +160,8 @@ export interface ObjectMetadataRepositoryV1 {
   handoffPutReconciliation(
     reservationId: string,
     operation: "put_finalize" | "put_cleanup",
+    foregroundLeaseToken: string,
+    notBefore?: Date,
   ): Promise<void>;
   handoffDeleteReconciliation(reservationId: string): Promise<void>;
   claimReconciliation(
@@ -163,7 +179,7 @@ export interface ObjectMetadataRepositoryV1 {
 }
 
 interface ReconciliationLease {
-  operation: ObjectReconciliationOperationV1;
+  operation: ObjectReconciliationOperationV1 | "put_uploading";
   claimToken?: string;
   lockedUntil?: Date;
   attempt: number;
@@ -175,6 +191,8 @@ interface PendingPut extends ReconciliationLease {
   readonly reservationId: string;
   readonly identityKey: string;
   readonly record: ObjectMetadataRecordV1;
+  foregroundLeaseToken?: string;
+  foregroundLeaseUntil: Date;
 }
 
 interface PendingDelete extends ReconciliationLease {
@@ -208,6 +226,13 @@ export class InMemoryObjectMetadataRepositoryV1
   public async reservePut(
     input: ReservePutInputV1,
   ): Promise<ReservePutResultV1> {
+    if (
+      !Number.isFinite(input.now.getTime()) ||
+      !Number.isFinite(input.foreground_lease_until.getTime()) ||
+      input.foreground_lease_until <= input.now
+    ) {
+      throw new Error("put foreground lease must end after reservation time");
+    }
     const identityKey = putIdentity(input);
     const existingRef = this.#identityToRef.get(identityKey);
     if (existingRef !== undefined) {
@@ -229,6 +254,7 @@ export class InMemoryObjectMetadataRepositoryV1
     }
 
     const reservationId = randomUUID();
+    const foregroundLeaseToken = randomUUID();
     const objectRef = `objv1_${randomUUID().replaceAll("-", "")}` as ObjectRefV1;
     const record: ObjectMetadataRecordV1 = {
       object_ref: objectRef,
@@ -252,14 +278,35 @@ export class InMemoryObjectMetadataRepositoryV1
       reservationId,
       identityKey,
       record,
-      operation: "put_finalize",
+      operation: "put_uploading",
+      foregroundLeaseToken,
+      foregroundLeaseUntil: input.foreground_lease_until,
       attempt: 0,
     });
     return {
       kind: "claimed",
       reservation_id: reservationId,
       object_ref: objectRef,
+      foreground_lease_token: foregroundLeaseToken,
     };
+  }
+
+  public async renewPutForegroundLease(
+    input: RenewPutForegroundLeaseInputV1,
+  ): Promise<void> {
+    const pending = this.#pendingPuts.get(input.reservation_id);
+    if (
+      pending === undefined ||
+      pending.operation !== "put_uploading" ||
+      pending.foregroundLeaseToken !== input.foreground_lease_token ||
+      pending.foregroundLeaseUntil <= input.now ||
+      input.foreground_lease_until <= input.now
+    ) {
+      throw new Error("stale put foreground lease");
+    }
+    if (input.foreground_lease_until > pending.foregroundLeaseUntil) {
+      pending.foregroundLeaseUntil = input.foreground_lease_until;
+    }
   }
 
   public async completePut(
@@ -272,6 +319,14 @@ export class InMemoryObjectMetadataRepositoryV1
         return completed;
       }
       throw new Error("unknown put reservation");
+    }
+    if (
+      pending.foregroundLeaseToken !== input.foreground_lease_token ||
+      pending.claimToken !== undefined ||
+      (pending.operation !== "put_uploading" &&
+        pending.operation !== "put_finalize")
+    ) {
+      throw new Error("stale put foreground lease");
     }
     const completed: ObjectMetadataRecordV1 = {
       ...pending.record,
@@ -295,9 +350,23 @@ export class InMemoryObjectMetadataRepositoryV1
       : { kind: "pending", object_ref: pending.record.object_ref };
   }
 
-  public async abortPut(reservationId: string): Promise<void> {
+  public async abortPut(
+    reservationId: string,
+    foregroundLeaseToken: string,
+  ): Promise<void> {
     const pending = this.#pendingPuts.get(reservationId);
     if (pending === undefined) return;
+    if (
+      pending.foregroundLeaseToken !== foregroundLeaseToken ||
+      pending.claimToken !== undefined
+    ) {
+      throw new Error("stale put foreground lease");
+    }
+    this.#abortPendingPut(pending);
+  }
+
+  #abortPendingPut(pending: PendingPut): void {
+    const reservationId = pending.reservationId;
     this.#pendingPuts.delete(reservationId);
     this.#records.delete(pending.record.object_ref);
     this.#identityToRef.delete(pending.identityKey);
@@ -406,13 +475,23 @@ export class InMemoryObjectMetadataRepositoryV1
   public async handoffPutReconciliation(
     reservationId: string,
     operation: "put_finalize" | "put_cleanup",
+    foregroundLeaseToken: string,
+    notBefore?: Date,
   ): Promise<void> {
     const pending = this.#pendingPuts.get(reservationId);
     if (pending === undefined) return;
+    if (
+      pending.foregroundLeaseToken !== foregroundLeaseToken ||
+      pending.claimToken !== undefined ||
+      (pending.operation !== "put_uploading" && pending.operation !== operation)
+    ) {
+      throw new Error("stale put foreground lease");
+    }
     pending.operation = operation;
     delete pending.claimToken;
     delete pending.lockedUntil;
-    delete pending.nextRetryAt;
+    if (notBefore === undefined) delete pending.nextRetryAt;
+    else pending.nextRetryAt = notBefore;
   }
 
   public async handoffDeleteReconciliation(reservationId: string): Promise<void> {
@@ -433,6 +512,7 @@ export class InMemoryObjectMetadataRepositoryV1
     ];
     const claims: ObjectReconciliationClaimV1[] = [];
     for (const pending of candidates) {
+      let foregroundLeaseExpired = false;
       if (claims.length >= input.limit) break;
       if (
         (input.reservation_id !== undefined &&
@@ -441,6 +521,12 @@ export class InMemoryObjectMetadataRepositoryV1
         (pending.lockedUntil !== undefined && pending.lockedUntil > input.now)
       ) {
         continue;
+      }
+      if ("record" in pending && pending.operation === "put_uploading") {
+        if (pending.foregroundLeaseUntil > input.now) continue;
+        foregroundLeaseExpired = true;
+        pending.operation = "put_finalize";
+        delete pending.foregroundLeaseToken;
       }
       pending.attempt += 1;
       pending.claimToken = `${input.worker_id}:${randomUUID()}`;
@@ -453,9 +539,10 @@ export class InMemoryObjectMetadataRepositoryV1
       claims.push({
         reservation_id: pending.reservationId,
         claim_token: pending.claimToken,
-        operation: pending.operation,
+        operation: pending.operation as ObjectReconciliationOperationV1,
         record,
         attempt: pending.attempt,
+        foreground_lease_expired: foregroundLeaseExpired,
       });
     }
     return claims;
@@ -470,20 +557,24 @@ export class InMemoryObjectMetadataRepositoryV1
         throw new Error("stale reconciliation claim");
       }
       if (put.operation === "put_cleanup") {
-        await this.abortPut(input.reservation_id);
+        this.#abortPendingPut(put);
         return undefined;
       }
       if (put.operation !== "put_finalize") {
         throw new Error("invalid put reconciliation completion");
       }
       if (input.version === undefined) {
-        await this.abortPut(input.reservation_id);
-        return undefined;
+        throw new Error("put finalization requires a verified physical version");
       }
-      return this.completePut({
-        reservation_id: input.reservation_id,
+      const completed: ObjectMetadataRecordV1 = {
+        ...put.record,
         version: input.version,
-      });
+        state: "available",
+      };
+      this.#records.set(completed.object_ref, completed);
+      this.#pendingPuts.delete(input.reservation_id);
+      this.#completedPuts.set(input.reservation_id, completed);
+      return completed;
     }
     const deletion = this.#pendingDeletes.get(input.reservation_id);
     if (
@@ -523,7 +614,8 @@ export class InMemoryObjectMetadataRepositoryV1
     pending.lastError = input.last_error;
     delete pending.claimToken;
     delete pending.lockedUntil;
-    delete pending.nextRetryAt;
+    if (input.next_retry_at === undefined) delete pending.nextRetryAt;
+    else pending.nextRetryAt = input.next_retry_at;
   }
 
   public setLegalHold(objectRef: ObjectRefV1, legalHold: boolean): void {

@@ -606,12 +606,136 @@ function escapeRegularExpression(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function executableFunctionDefinition(definition: string): string {
-  return definition
+function staticFunctionBody(definition: string): string {
+  const bodyMatch = definition.match(/\bas\s+(\$[a-z0-9_]*\$)([\s\S]*?)\1/i);
+  if (bodyMatch?.[2] === undefined) {
+    throw new Error("owner writer function body must use a static dollar-quoted definition");
+  }
+  return bodyMatch[2];
+}
+
+function semanticFunctionDefinition(definition: string): string {
+  return staticFunctionBody(definition)
     .replace(/\/\*[\s\S]*?\*\//g, " ")
     .replace(/--[^\r\n]*/g, " ")
+    .toLowerCase();
+}
+
+function executableFunctionDefinition(definition: string): string {
+  return semanticFunctionDefinition(definition)
     .replace(/'(?:''|[^'])*'/g, "''")
     .toLowerCase();
+}
+
+function allowedMutationVerbs(
+  operation: OwnerFunctionEffectV1["operation"],
+): ReadonlySet<string> {
+  if (operation === "append" || operation === "enqueue") {
+    return new Set(["insert"]);
+  }
+  if (operation === "upsert") {
+    return new Set(["insert", "update", "merge"]);
+  }
+  return new Set(["update", "merge"]);
+}
+
+function concurrencyArgumentNames(
+  signature: OwnerFunctionSignatureV1,
+  control: OwnerFunctionEffectV1["concurrency_control"],
+): readonly string[] {
+  const names = signature.arguments.map(({ argument_name }) => argument_name);
+  if (control === "slot_and_process_state_fence") {
+    return names.filter((name) => name === "p_admission_precondition");
+  }
+  if (control === "generation_fence") {
+    return names.filter(
+      (name) =>
+        name.startsWith("p_expected_") &&
+        (name.includes("generation") || name.includes("fence")),
+    );
+  }
+  if (control === "lease_fence") {
+    const claimToken = names.filter((name) => name === "p_claim_token");
+    return claimToken.length > 0
+      ? claimToken
+      : names.filter(
+          (name) => name === "p_worker_id" || name === "p_lease_seconds",
+        );
+  }
+  if (control === "expected_state_version" || control === "expected_version") {
+    return names.filter((name) => name.startsWith("p_expected_"));
+  }
+  return names.filter(
+    (name) =>
+      name === "p_idempotency_key" ||
+      name === "p_request_hash" ||
+      name === "p_claim_token" ||
+      name === "p_lock_token" ||
+      /^p_[a-z0-9_]+_id$/.test(name),
+  );
+}
+
+function assertConcurrencyFenceIsConsumed(
+  signature: OwnerFunctionSignatureV1,
+  effect: OwnerFunctionEffectV1,
+  executable: string,
+  semantic: string,
+): void {
+  const candidates = concurrencyArgumentNames(
+    signature,
+    effect.concurrency_control,
+  );
+  const consumed = candidates.filter((name) =>
+    new RegExp(`\\b${escapeRegularExpression(name)}\\b`, "i").test(executable),
+  );
+  if (consumed.length === 0) {
+    throw new Error(
+      `PostgreSQL function fence drift: ${signature.schema}.${signature.function_name} does not consume ${effect.concurrency_control}`,
+    );
+  }
+  if (effect.concurrency_control === "slot_and_process_state_fence") {
+    const rowLockCount = executable.match(/\bfor\s+(?:no\s+key\s+)?update\b/gi)?.length ?? 0;
+    const requiredPreconditionFields = [
+      "process_id",
+      "slot_generation",
+      "phase",
+      "status",
+      "process_updated_at",
+    ];
+    if (
+      rowLockCount < 2 ||
+      !/\bp_admission_precondition\s*(?:->|#>)/i.test(executable) ||
+      requiredPreconditionFields.some(
+        (field) => !new RegExp(`['"]${field}['"]`, "i").test(semantic),
+      )
+    ) {
+      throw new Error(
+        `PostgreSQL function slot/process fence drift: ${signature.schema}.${signature.function_name}`,
+      );
+    }
+  }
+  if (
+    effect.concurrency_control === "expected_state_version" ||
+    effect.concurrency_control === "expected_version" ||
+    effect.concurrency_control === "generation_fence"
+  ) {
+    const compared = consumed.some((name) => {
+      const escaped = escapeRegularExpression(name);
+      const comparison = "(?:=|<>|is\\s+(?:not\\s+)?distinct\\s+from)";
+      const rowValue = "(?:[a-z][a-z0-9_]*\\.)?[a-z][a-z0-9_]*";
+      return (
+        new RegExp(`\\b${escaped}\\b\\s*${comparison}\\s*${rowValue}\\b`, "i")
+          .test(executable) ||
+        new RegExp(`\\b${rowValue}\\b\\s*${comparison}\\s*\\b${escaped}\\b`, "i")
+          .test(executable)
+      );
+    });
+    if (!compared) {
+      throw new Error(
+        `PostgreSQL function CAS fence drift: ${signature.schema}.${signature.function_name}`,
+      );
+    }
+  }
 }
 
 function mutationPattern(
@@ -630,39 +754,118 @@ function assertFunctionEffectsInDefinition(
   contract: OwnerRepositoryContractV1,
   signature: OwnerFunctionSignatureV1,
   definition: string,
+  ownerFunctionNames: ReadonlySet<string>,
 ): void {
+  const semantic = semanticFunctionDefinition(definition);
   const executable = executableFunctionDefinition(definition);
   if (/\bexecute\b/i.test(executable)) {
     throw new Error(
       `dynamic SQL is forbidden in owner writer: ${signature.schema}.${signature.function_name}`,
     );
   }
+  if (
+    /\b(?:create|alter|drop|truncate|grant|revoke|comment|vacuum|analyze|refresh)\b/i
+      .test(executable)
+  ) {
+    throw new Error(
+      `DDL is forbidden in owner writer: ${signature.schema}.${signature.function_name}`,
+    );
+  }
+  if (/\bdelete\s+from\b/i.test(executable)) {
+    throw new Error(
+      `DELETE is forbidden by writer-only V1: ${signature.schema}.${signature.function_name}`,
+    );
+  }
   for (const effect of signature.effects) {
-    const verbs =
-      effect.operation === "append" || effect.operation === "enqueue"
-        ? ["insert"]
-        : effect.operation === "upsert"
-          ? ["insert", "update", "merge"]
-          : ["update", "merge", "insert"];
+    const verbs = [...allowedMutationVerbs(effect.operation)];
     if (!mutationPattern(contract.schema, effect.table_name, verbs).test(executable)) {
       throw new Error(
         `PostgreSQL function effect drift: ${signature.schema}.${signature.function_name} does not ${effect.operation} ${effect.table_name}`,
       );
     }
+    assertConcurrencyFenceIsConsumed(signature, effect, executable, semantic);
   }
   const declaredTables = new Set<string>(signature.writes_tables);
   const mutationTargetPattern =
-    /\b(?:insert\s+into|update|delete\s+from|merge\s+into)\s+(?:only\s+)?(?:"?([a-z][a-z0-9_]*)"?\s*\.\s*)?"?([a-z][a-z0-9_]*)"?\b/gi;
+    /\b(insert\s+into|update|delete\s+from|merge\s+into|truncate(?:\s+table)?)\s+(?:only\s+)?(?:"?([a-z][a-z0-9_]*)"?\s*\.\s*)?"?([a-z][a-z0-9_]*)"?\b/gi;
   for (const match of executable.matchAll(mutationTargetPattern)) {
-    const observedSchema = match[1] ?? contract.schema;
-    const observedTable = match[2];
+    const observedVerb = match[1]?.split(/\s+/u)[0];
+    const observedSchema = match[2] ?? contract.schema;
+    const observedTable = match[3];
+    const declaredEffect = signature.effects.find(
+      ({ table_name }) => table_name === observedTable,
+    );
     if (
+      observedVerb === undefined ||
       observedTable === undefined ||
       observedSchema !== contract.schema ||
-      !declaredTables.has(observedTable)
+      !declaredTables.has(observedTable) ||
+      declaredEffect === undefined ||
+      !allowedMutationVerbs(declaredEffect.operation).has(observedVerb)
     ) {
       throw new Error(
         `undeclared PostgreSQL mutation in ${signature.schema}.${signature.function_name}: ${observedSchema}.${observedTable ?? "unknown"}`,
+      );
+    }
+  }
+  const commonTableExpressions = new Set(
+    [...executable.matchAll(/(?:\bwith\b|,)\s*"?([a-z][a-z0-9_]*)"?\s+as\s*\(/gi)]
+      .flatMap((match) => (match[1] === undefined ? [] : [match[1]])),
+  );
+  const declaredReads = new Set<string>([
+    ...signature.reads_tables,
+    ...signature.writes_tables,
+  ]);
+  const readTargetPattern =
+    /\b(?:from|join)\s+(?:only\s+)?(?:"?([a-z][a-z0-9_]*)"?\s*\.\s*)?"?([a-z][a-z0-9_]*)"?\b/gi;
+  for (const match of executable.matchAll(readTargetPattern)) {
+    const observedSchema = match[1];
+    const observedTable = match[2];
+    const suffix = executable.slice((match.index ?? 0) + match[0].length);
+    if (
+      observedTable === undefined ||
+      commonTableExpressions.has(observedTable) ||
+      /^\s*\(/u.test(suffix)
+    ) {
+      continue;
+    }
+    if (
+      (observedSchema !== undefined && observedSchema !== contract.schema) ||
+      !declaredReads.has(observedTable)
+    ) {
+      throw new Error(
+        `undeclared PostgreSQL read in ${signature.schema}.${signature.function_name}: ${observedSchema ?? contract.schema}.${observedTable}`,
+      );
+    }
+  }
+  const qualifiedFunctionCallPattern =
+    /\b"?([a-z][a-z0-9_]*)"?\s*\.\s*"?([a-z][a-z0-9_]*)"?\s*\(/gi;
+  for (const match of executable.matchAll(qualifiedFunctionCallPattern)) {
+    const helperSchema = match[1];
+    const helperName = match[2];
+    const prefix = executable.slice(0, match.index ?? 0);
+    if (/\b(?:into|update|table)\s*$/iu.test(prefix)) continue;
+    if (
+      helperSchema !== undefined &&
+      helperSchema !== "pg_catalog" &&
+      !(helperSchema === signature.schema && helperName === signature.function_name)
+    ) {
+      throw new Error(
+        `undeclared PostgreSQL helper call in ${signature.schema}.${signature.function_name}: ${helperSchema}.${helperName ?? "unknown"}`,
+      );
+    }
+  }
+  const unqualifiedFunctionCallPattern =
+    /(?<!\.)\b"?([a-z][a-z0-9_]*)"?\s*\(/gi;
+  for (const match of executable.matchAll(unqualifiedFunctionCallPattern)) {
+    const helperName = match[1];
+    if (
+      helperName !== undefined &&
+      helperName !== signature.function_name &&
+      ownerFunctionNames.has(helperName)
+    ) {
+      throw new Error(
+        `undeclared PostgreSQL helper call in ${signature.schema}.${signature.function_name}: ${signature.schema}.${helperName}`,
       );
     }
   }
@@ -683,6 +886,11 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     runtime_postgres: PostgresQueryPortV1;
   }>,
 ): Promise<VerifiedOwnerRepositoryDeploymentV1<TContract["owner_service"]>> {
+  if (contract.foreign_keys.length === 0) {
+    throw new Error(
+      `canonical PostgreSQL foreign-key snapshot is missing for ${contract.owner_service}; deployment verification cannot continue`,
+    );
+  }
   const schemaResult = await postgres.query<{
     schema_name: string;
     schema_owner: string;
@@ -905,6 +1113,27 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     ),
   );
 
+  const triggerResult = await postgres.query<{
+    table_name: string;
+    trigger_name: string;
+  }>(
+    `SELECT c.relname AS table_name, t.tgname AS trigger_name
+       FROM pg_catalog.pg_trigger t
+       JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1
+        AND NOT t.tgisinternal
+        AND t.tgenabled <> 'D'`,
+    [contract.schema],
+  );
+  if (triggerResult.rows.length > 0) {
+    throw new Error(
+      `undeclared PostgreSQL trigger side effects in ${contract.schema}: ${triggerResult.rows
+        .map(({ table_name, trigger_name }) => `${table_name}.${trigger_name}`)
+        .join(", ")}`,
+    );
+  }
+
   const functionResult = await postgres.query<{
     oid: string;
     function_name: string;
@@ -937,6 +1166,9 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
   );
   const postgresType = (type: OwnerPostgresTypeV1): string =>
     type === "timestamptz" ? "timestamp with time zone" : type;
+  const ownerFunctionNames = new Set(
+    functionResult.rows.map(({ function_name }) => function_name),
+  );
   for (const signature of contract.function_signatures) {
     const deployed = functionResult.rows.find(
       ({ function_name }) => function_name === signature.function_name,
@@ -961,6 +1193,7 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
       contract,
       signature,
       deployed.function_definition,
+      ownerFunctionNames,
     );
   }
 
@@ -1122,6 +1355,7 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     table_acl: tableAclResult.rows,
     column_acl: columnAclResult.rows,
     runtime_column_privileges: runtimeColumnPrivilegeResult.rows,
+    triggers: triggerResult.rows,
     functions: functionResult.rows,
     execute_grants: executeGrantResult.rows,
     runtime_execute: runtimeExecuteResult.rows,
@@ -1154,6 +1388,13 @@ export interface VerifiedOwnerPostgresCompositionV1<
   readonly checkReadiness: () => Promise<void>;
   readonly close: () => Promise<void>;
 }
+
+export type OwnerDatabaseApplicationDependenciesV1<
+  TContract extends OwnerRepositoryContractV1,
+> = Pick<
+  VerifiedOwnerPostgresCompositionV1<TContract>,
+  "deployment" | "repository" | "unit_of_work"
+>;
 
 /**
  * Opens the service runtime connection, verifies that exact effective identity

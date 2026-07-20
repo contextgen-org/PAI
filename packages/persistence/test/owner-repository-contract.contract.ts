@@ -14,6 +14,7 @@ import { TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 } from "../../../services/trig
 import {
   defineOwnerRepositoryContractV1,
   OWNER_DATABASE_TARGETS_V1,
+  verifyOwnerRepositoryDeploymentFromPostgresV1,
 } from "../src/index.js";
 
 const contracts = [
@@ -148,6 +149,46 @@ describe("owner repository contracts", () => {
     );
   });
 
+  it("pins the canonical Timer relation graph and TP meta-enqueue checks", () => {
+    expect(TIMER_REPOSITORY_CONTRACT_V1.foreign_keys).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          table_name: "timer_occurrences",
+          columns: [
+            "schedule_id",
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+          ],
+          referenced_table: "timer_schedules",
+        }),
+        expect.objectContaining({
+          table_name: "timer_dispatch_attempts",
+          columns: ["occurrence_id"],
+          referenced_table: "timer_occurrences",
+        }),
+      ]),
+    );
+    expect(TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          constraint_name: "trigger_processes_meta_enqueue_reason_check",
+          table_name: "trigger_processes",
+          required_definition_fragments: expect.arrayContaining([
+            "user_retracted",
+            "system_interrupted",
+          ]),
+        }),
+        expect.objectContaining({
+          constraint_name: "trigger_processes_meta_enqueue_presence_check",
+          table_name: "trigger_processes",
+        }),
+      ]),
+    );
+  });
+
   it("models trigger admission as one slot-fenced state/audit/outbox transaction", () => {
     const signature = TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.function_signatures
       .find(({ function_name }) => function_name === "admit_trigger_v1");
@@ -242,6 +283,24 @@ describe("owner repository contracts", () => {
         schema: "memory",
       } as never),
     ).toThrow(/owner database target drift/);
+  });
+
+  it("does not treat an empty real-owner FK manifest as a verified deployment", async () => {
+    const neverQueried = {
+      async query(): Promise<{ readonly rows: readonly Record<string, unknown>[] }> {
+        throw new Error("PostgreSQL must not be queried before manifest completeness");
+      },
+    };
+    await expect(
+      verifyOwnerRepositoryDeploymentFromPostgresV1(
+        ACTION_RUNTIME_REPOSITORY_CONTRACT_V1,
+        neverQueried,
+        {
+          expected_schema_owner: "pai_migrator",
+          runtime_postgres: neverQueried,
+        },
+      ),
+    ).rejects.toThrow(/foreign-key snapshot is missing/);
   });
 
   it("fails closed on permission coverage, direct writes, or writer signature drift", () => {

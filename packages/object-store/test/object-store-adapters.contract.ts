@@ -103,7 +103,7 @@ function fakeSupabaseClient(
           body: ReadableStream<Uint8Array>,
           options: {
             contentType: string;
-            metadata: { sha256: string };
+            metadata: { expected_sha256: string };
           },
         ) {
           const id = identity(key);
@@ -137,7 +137,7 @@ function fakeSupabaseClient(
             version: randomUUID(),
             body: storedBody,
             contentType: options.contentType,
-            sha256: options.metadata.sha256,
+            sha256: options.metadata.expected_sha256,
           };
           objects.set(id, object);
           return { data: { id: object.id, path: key, fullPath: id }, error: null };
@@ -162,7 +162,7 @@ function fakeSupabaseClient(
               metadata: {
                 size: object.body.byteLength,
                 mimetype: object.contentType,
-                sha256: object.sha256,
+                expected_sha256: object.sha256,
               },
             },
             error: null,
@@ -751,12 +751,19 @@ class PutMetadataOutageRepository extends InMemoryObjectMetadataRepositoryV1 {
   public override async handoffPutReconciliation(
     reservationId: string,
     operation: "put_finalize" | "put_cleanup",
+    foregroundLeaseToken: string,
+    notBefore?: Date,
   ): Promise<void> {
     if (this.#failHandoff) {
       this.#failHandoff = false;
       throw new Error("injected metadata outage during put handoff");
     }
-    return super.handoffPutReconciliation(reservationId, operation);
+    return super.handoffPutReconciliation(
+      reservationId,
+      operation,
+      foregroundLeaseToken,
+      notBefore,
+    );
   }
 }
 
@@ -793,14 +800,16 @@ class DeleteMetadataOutageRepository extends InMemoryObjectMetadataRepositoryV1 
 }
 
 class FailFirstIntegrityCleanupBackend extends InMemoryObjectStorageBackendV1 {
-  #corruptNextHead = true;
+  #corruptNextUpload = true;
   #failNextDelete = true;
 
   public override async putIfAbsent(request: PutBackendObjectV1) {
-    const head = await super.putIfAbsent(request);
-    if (!this.#corruptNextHead) return head;
-    this.#corruptNextHead = false;
-    return { ...head, sha256: `sha256:${"0".repeat(64)}` };
+    if (!this.#corruptNextUpload) return super.putIfAbsent(request);
+    this.#corruptNextUpload = false;
+    const original = await readAll(request.body);
+    const corrupted = original.slice();
+    if (corrupted.byteLength > 0) corrupted[0] = (corrupted[0] ?? 0) ^ 0xff;
+    return super.putIfAbsent({ ...request, body: bytes(corrupted) });
   }
 
   public override async delete(
@@ -814,16 +823,68 @@ class FailFirstIntegrityCleanupBackend extends InMemoryObjectStorageBackendV1 {
   }
 }
 
-class MismatchOnFirstReconciliationHeadBackend extends InMemoryObjectStorageBackendV1 {
-  #mismatchNextHead = true;
+class MismatchOnFirstReconciliationReadBackend extends InMemoryObjectStorageBackendV1 {
+  #readCount = 0;
 
-  public override async head(
-    ...input: Parameters<InMemoryObjectStorageBackendV1["head"]>
+  public override async get(
+    ...input: Parameters<InMemoryObjectStorageBackendV1["get"]>
   ) {
-    const head = await super.head(...input);
-    if (!this.#mismatchNextHead) return head;
-    this.#mismatchNextHead = false;
-    return { ...head, sha256: `sha256:${"0".repeat(64)}` };
+    const result = await super.get(...input);
+    this.#readCount += 1;
+    if (this.#readCount !== 2) return result;
+    const original = await readAll(result.body);
+    const corrupted = original.slice();
+    if (corrupted.byteLength > 0) corrupted[0] = (corrupted[0] ?? 0) ^ 0xff;
+    return { ...result, body: bytes(corrupted) };
+  }
+}
+
+class FailFirstPutCleanupHandoffRepository extends InMemoryObjectMetadataRepositoryV1 {
+  #failCleanupHandoff = true;
+
+  public override async handoffPutReconciliation(
+    reservationId: string,
+    operation: "put_finalize" | "put_cleanup",
+    foregroundLeaseToken: string,
+    notBefore?: Date,
+  ): Promise<void> {
+    if (operation === "put_cleanup" && this.#failCleanupHandoff) {
+      this.#failCleanupHandoff = false;
+      throw new Error("injected cleanup handoff outage");
+    }
+    return super.handoffPutReconciliation(
+      reservationId,
+      operation,
+      foregroundLeaseToken,
+      notBefore,
+    );
+  }
+}
+
+class PausedPutBackend extends InMemoryObjectStorageBackendV1 {
+  readonly started: Promise<void>;
+  #markStarted!: () => void;
+  #resume!: () => void;
+  readonly #resumed: Promise<void>;
+
+  public constructor() {
+    super();
+    this.started = new Promise((resolve) => {
+      this.#markStarted = resolve;
+    });
+    this.#resumed = new Promise((resolve) => {
+      this.#resume = resolve;
+    });
+  }
+
+  public release(): void {
+    this.#resume();
+  }
+
+  public override async putIfAbsent(request: PutBackendObjectV1) {
+    this.#markStarted();
+    await this.#resumed;
+    return super.putIfAbsent(request);
   }
 }
 
@@ -834,6 +895,10 @@ describe("ObjectStore ambiguous finalization recovery", () => {
     await expect(harness.store.putImmutable(putRequest(body))).rejects.toSatisfy(
       expectCode("storage_unavailable"),
     );
+    await expect(harness.store.putImmutable(putRequest(body))).rejects.toSatisfy(
+      expectCode("precondition_failed"),
+    );
+    harness.setNow("2026-07-20T00:06:00.000Z");
     await expect(harness.store.putImmutable(putRequest(body))).resolves.toMatchObject({
       replayed: true,
       sha256: digest(body),
@@ -1008,9 +1073,84 @@ describe("ObjectStore ambiguous finalization recovery", () => {
     });
   });
 
+  it("does not let a reconciler claim a foreground upload before its lease expires", async () => {
+    const metadata = new InMemoryObjectMetadataRepositoryV1();
+    const backend = new PausedPutBackend();
+    const store = new InMemoryObjectStoreAdapterV1({
+      metadataRepository: metadata,
+      backend,
+      accessPolicyVerifier: new TestObjectAccessPolicyVerifierV1(),
+      policies: [policy],
+      now: () => new Date("2026-07-20T00:00:00.000Z"),
+    });
+    const body = new TextEncoder().encode("slow-foreground-upload");
+    const pendingPut = store.putImmutable(putRequest(body));
+    await backend.started;
+    await expect(
+      store.reconcilePending({
+        worker_id: "early-worker",
+        limit: 1,
+        lease_seconds: 30,
+      }),
+    ).resolves.toEqual({ claimed: 0, completed: 0, retry_scheduled: 0 });
+    backend.release();
+    await expect(pendingPut).resolves.toMatchObject({
+      replayed: false,
+      sha256: digest(body),
+    });
+  });
+
+  it("uses trusted read-back after an expired upload lease when delete and cleanup handoff both fail", async () => {
+    const metadata = new FailFirstPutCleanupHandoffRepository();
+    const backend = new FailFirstIntegrityCleanupBackend();
+    let now = new Date("2026-07-20T00:00:00.000Z");
+    const store = new InMemoryObjectStoreAdapterV1({
+      metadataRepository: metadata,
+      backend,
+      accessPolicyVerifier: new TestObjectAccessPolicyVerifierV1(),
+      policies: [policy],
+      now: () => now,
+    });
+    const body = new TextEncoder().encode("declared-hash-is-not-proof");
+    await expect(store.putImmutable(putRequest(body))).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof ObjectStoreErrorV1 &&
+        error.code === "storage_unavailable" &&
+        error.details.reconciliation_operation === "put_cleanup",
+    );
+
+    now = new Date("2026-07-20T00:06:00.000Z");
+    await expect(
+      store.reconcilePending({
+        worker_id: "expired-upload-worker",
+        limit: 1,
+        lease_seconds: 30,
+      }),
+    ).resolves.toEqual({ claimed: 1, completed: 0, retry_scheduled: 1 });
+    expect([...await metadata.claimReconciliation({
+      worker_id: "too-early-cleanup",
+      now,
+      locked_until: new Date("2026-07-20T00:06:30.000Z"),
+      limit: 1,
+    })]).toHaveLength(0);
+
+    now = new Date("2026-07-20T00:12:00.000Z");
+    await expect(
+      store.reconcilePending({
+        worker_id: "cleanup-worker",
+        limit: 1,
+        lease_seconds: 30,
+      }),
+    ).resolves.toEqual({ claimed: 1, completed: 1, retry_scheduled: 0 });
+    await expect(store.putImmutable(putRequest(body))).resolves.toMatchObject({
+      replayed: false,
+      sha256: digest(body),
+    });
+  });
+
   it("redirects a terminal put-finalize mismatch to cleanup instead of retrying forever", async () => {
     const metadata = new RejectPutFinalizationRepository();
-    const backend = new MismatchOnFirstReconciliationHeadBackend();
+    const backend = new MismatchOnFirstReconciliationReadBackend();
     const store = new InMemoryObjectStoreAdapterV1({
       metadataRepository: metadata,
       backend,

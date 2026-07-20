@@ -188,6 +188,45 @@ GRANT SELECT (audit_id, child_id, created_at) ON timer.contract_audits TO pai_ti
 GRANT EXECUTE ON FUNCTION timer.write_contract_child_v1(text, bigint, text, jsonb) TO pai_timer_app;
 `;
 
+function replacementWriterSql(options: Readonly<{
+  expectedVersionCheck?: string;
+  extraStatement?: string;
+}> = {}): string {
+  return `CREATE OR REPLACE FUNCTION timer.write_contract_child_v1(
+    p_parent_key text,
+    p_expected_parent_version bigint,
+    p_child_id text,
+    p_payload jsonb
+  ) RETURNS jsonb
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = timer, pg_temp
+  AS $body$
+  DECLARE
+    current_version bigint;
+    next_version bigint;
+  BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended(p_parent_key, 0));
+    SELECT parent_version INTO current_version
+      FROM timer.contract_parents WHERE parent_key = p_parent_key
+      ORDER BY parent_version DESC LIMIT 1 FOR UPDATE;
+    current_version := COALESCE(current_version, 0);
+    IF ${options.expectedVersionCheck ?? "current_version <> p_expected_parent_version"} THEN
+      RAISE EXCEPTION 'stale parent version';
+    END IF;
+    next_version := current_version + 1;
+    INSERT INTO timer.contract_parents(parent_key, parent_version)
+      VALUES (p_parent_key, next_version);
+    INSERT INTO timer.contract_children(child_id, parent_key, parent_version, payload)
+      VALUES (p_child_id, p_parent_key, next_version, p_payload);
+    INSERT INTO timer.contract_audits(audit_id, child_id, created_at)
+      VALUES ('audit-' || p_child_id, p_child_id, clock_timestamp());
+    ${options.extraStatement ?? ""}
+    RETURN jsonb_build_object('parent_version', next_version, 'child_id', p_child_id);
+  END;
+  $body$`;
+}
+
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;
 
 describePostgres("PostgreSQL owner deployment verification", () => {
@@ -287,6 +326,62 @@ describePostgres("PostgreSQL owner deployment verification", () => {
     ["wrong search_path", "ALTER FUNCTION timer.write_contract_child_v1(text, bigint, text, jsonb) SET search_path = public"],
     ["missing composite FK", "ALTER TABLE timer.contract_children DROP CONSTRAINT contract_children_parent_fk"],
     [
+      "DELETE after a declared immutable append",
+      replacementWriterSql({
+        extraStatement: "DELETE FROM timer.contract_audits WHERE false;",
+      }),
+    ],
+    [
+      "TRUNCATE of a declared immutable append table",
+      replacementWriterSql({
+        extraStatement: "TRUNCATE TABLE timer.contract_audits;",
+      }),
+    ],
+    [
+      "cross-owner SECURITY DEFINER read",
+      replacementWriterSql({
+        extraStatement: "PERFORM secret_value FROM memory.owner_secrets LIMIT 1;",
+      }),
+    ],
+    [
+      "unused expected-version argument",
+      replacementWriterSql({ expectedVersionCheck: "current_version <> 0" }),
+    ],
+    [
+      "expected-version argument used only as a no-op null check",
+      replacementWriterSql({
+        expectedVersionCheck: "p_expected_parent_version IS NOT NULL",
+      }),
+    ],
+    [
+      "undeclared owner helper side effect",
+      replacementWriterSql({
+        extraStatement: "PERFORM memory.write_side_effect_v1();",
+      }),
+    ],
+    [
+      "unqualified undeclared owner helper side effect",
+      `CREATE FUNCTION timer.hidden_side_effect_v1() RETURNS void
+       LANGUAGE plpgsql AS $helper$ BEGIN
+         DELETE FROM timer.contract_audits WHERE false;
+       END $helper$;
+       ${replacementWriterSql({
+         extraStatement: "PERFORM hidden_side_effect_v1();",
+       })}`,
+    ],
+    [
+      "undeclared table trigger side effect",
+      `CREATE FUNCTION timer.contract_side_effect_trigger_v1() RETURNS trigger
+       LANGUAGE plpgsql AS $trigger$ BEGIN
+         INSERT INTO timer.contract_audits(audit_id, child_id, created_at)
+         VALUES ('trigger-' || NEW.child_id, NEW.child_id, clock_timestamp());
+         RETURN NEW;
+       END $trigger$;
+       CREATE TRIGGER contract_children_side_effect
+       AFTER INSERT ON timer.contract_children
+       FOR EACH ROW EXECUTE FUNCTION timer.contract_side_effect_trigger_v1()`,
+    ],
+    [
       "declared effects missing from the function body",
       `CREATE OR REPLACE FUNCTION timer.write_contract_child_v1(
          p_parent_key text,
@@ -311,7 +406,7 @@ describePostgres("PostgreSQL owner deployment verification", () => {
         expected_schema_owner: "pai_migrator",
         runtime_postgres: runtime(),
       }),
-    ).rejects.toThrow(/drift|missing/);
+    ).rejects.toThrow(/drift|missing|forbidden|undeclared/);
   });
 
   it("proves rollback and function-level atomic side effects", async () => {

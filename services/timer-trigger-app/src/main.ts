@@ -11,7 +11,7 @@ await startService({
   serviceId: "timer_trigger_app",
   defaultPort: 3006,
   buildApp(options) {
-    const app = buildTimerTriggerApp({ ...options, readinessChecks: [...(options.readinessChecks ?? []), ...(postgresComposition === undefined ? [] : [{ name: "owner_postgres", check: postgresComposition.checkReadiness }])] });
+    const app = buildTimerTriggerApp({ ...options, readinessChecks: [...(options.readinessChecks ?? []), ...(postgresComposition === undefined ? [] : [{ name: "owner_postgres", check: postgresComposition.checkReadiness }])] }, postgresComposition);
     if (postgresComposition !== undefined) app.addHook("onClose", postgresComposition.close);
     return app;
   },

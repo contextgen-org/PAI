@@ -14,7 +14,7 @@ await startService({
     const app = buildKnowThatApp({
       ...options,
       readinessChecks: [...(options.readinessChecks ?? []), ...(postgresComposition === undefined ? [] : [{ name: "owner_postgres", check: postgresComposition.checkReadiness }])],
-    });
+    }, postgresComposition);
     if (postgresComposition !== undefined) app.addHook("onClose", postgresComposition.close);
     return app;
   },

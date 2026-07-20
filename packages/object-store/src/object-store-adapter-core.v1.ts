@@ -42,6 +42,8 @@ type ObjectOperationV1 = "put" | ObjectAccessOperationV1;
 const sha256Pattern = /^sha256:[0-9a-f]{64}$/;
 const tokenPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const mediaTypePattern = /^[^\s/]+\/[^\s/]+$/;
+const foregroundUploadLeaseMs = 5 * 60_000;
+const expiredUploadCleanupGraceMs = 5 * 60_000;
 
 function fail(
   code: ObjectStoreErrorV1["code"],
@@ -399,6 +401,79 @@ export class ObjectStoreAdapterCoreV1
     }
   }
 
+  async #readBackVerifiedPhysicalHead(
+    record: Pick<
+      ObjectMetadataRecordV1,
+      "sha256" | "size_bytes" | "media_type"
+    >,
+    policy: ObjectClassPolicyV1,
+    key: string,
+  ): Promise<BackendObjectHeadV1> {
+    const head = await this.#backend.head(policy.bucket, key);
+    const streamed = await this.#backend.get(policy.bucket, key);
+    if (
+      head.version.length === 0 ||
+      head.size_bytes !== record.size_bytes ||
+      head.media_type !== record.media_type ||
+      streamed.offset !== 0 ||
+      streamed.length !== record.size_bytes ||
+      streamed.total_size_bytes !== record.size_bytes
+    ) {
+      fail("integrity_mismatch", "stored object metadata failed read-back verification");
+    }
+    const digest = createHash("sha256");
+    let total = 0;
+    for await (const chunk of streamed.body) {
+      total += chunk.byteLength;
+      if (total > record.size_bytes) {
+        fail("integrity_mismatch", "stored object returned too many bytes");
+      }
+      digest.update(chunk);
+    }
+    const actualSha256 = `sha256:${digest.digest("hex")}`;
+    if (total !== record.size_bytes || actualSha256 !== record.sha256) {
+      fail("integrity_mismatch", "stored object bytes failed read-back verification");
+    }
+    return { ...head, sha256: actualSha256 };
+  }
+
+  #startPutForegroundLeaseHeartbeat(input: {
+    readonly reservation_id: string;
+    readonly foreground_lease_token: string;
+  }): Readonly<{ stop(): Promise<unknown> }> {
+    let stopped = false;
+    let renewalFailure: unknown;
+    let inFlight = Promise.resolve();
+    const timer = setInterval(() => {
+      if (stopped || renewalFailure !== undefined) return;
+      inFlight = inFlight.then(async () => {
+        const now = this.#now();
+        try {
+          await this.#metadata.renewPutForegroundLease({
+            ...input,
+            now,
+            foreground_lease_until: new Date(
+              now.getTime() + foregroundUploadLeaseMs,
+            ),
+          });
+        } catch (error) {
+          renewalFailure = error;
+        }
+      });
+    }, 30_000);
+    timer.unref();
+    return Object.freeze({
+      async stop(): Promise<unknown> {
+        if (!stopped) {
+          stopped = true;
+          clearInterval(timer);
+        }
+        await inFlight;
+        return renewalFailure;
+      },
+    });
+  }
+
   public async reconcilePending(
     request: ReconcileObjectStoreRequestV1,
   ): Promise<ReconcileObjectStoreResultV1> {
@@ -441,18 +516,50 @@ export class ObjectStoreAdapterCoreV1
         if (claim.operation === "put_finalize") {
           let head: BackendObjectHeadV1 | undefined;
           try {
-            head = await this.#backend.head(policy.bucket, key);
+            head = await this.#readBackVerifiedPhysicalHead(
+              claim.record,
+              policy,
+              key,
+            );
           } catch (error) {
             if (
               error instanceof ObjectStorageBackendErrorV1 &&
-              error.code === "not_found" &&
-              claim.attempt >= 3
+              error.code === "not_found"
             ) {
-              await this.#metadata.completeReconciliation({
+              await this.#metadata.redirectReconciliation({
                 reservation_id: claim.reservation_id,
                 claim_token: claim.claim_token,
+                operation: "put_cleanup",
+                last_error: "pending put was not visible after foreground handoff",
+                ...(claim.foreground_lease_expired
+                  ? {
+                      next_retry_at: new Date(
+                        now.getTime() + expiredUploadCleanupGraceMs,
+                      ),
+                    }
+                  : {}),
               });
-              completed += 1;
+              retryScheduled += 1;
+              continue;
+            }
+            if (
+              error instanceof ObjectStoreErrorV1 &&
+              error.code === "integrity_mismatch"
+            ) {
+              await this.#metadata.redirectReconciliation({
+                reservation_id: claim.reservation_id,
+                claim_token: claim.claim_token,
+                operation: "put_cleanup",
+                last_error: error.message,
+                ...(claim.foreground_lease_expired
+                  ? {
+                      next_retry_at: new Date(
+                        now.getTime() + expiredUploadCleanupGraceMs,
+                      ),
+                    }
+                  : {}),
+              });
+              retryScheduled += 1;
               continue;
             }
             throw error;
@@ -468,6 +575,13 @@ export class ObjectStoreAdapterCoreV1
               claim_token: claim.claim_token,
               operation: "put_cleanup",
               last_error: "pending put physical metadata mismatch",
+              ...(claim.foreground_lease_expired
+                ? {
+                    next_retry_at: new Date(
+                      now.getTime() + expiredUploadCleanupGraceMs,
+                    ),
+                  }
+                : {}),
             });
             retryScheduled += 1;
             continue;
@@ -546,6 +660,10 @@ export class ObjectStoreAdapterCoreV1
         size_bytes: request.size_bytes,
         media_type: request.media_type,
         retention_until: request.retention_until,
+        now,
+        foreground_lease_until: new Date(
+          now.getTime() + foregroundUploadLeaseMs,
+        ),
       });
     let reservation;
     try {
@@ -585,6 +703,11 @@ export class ObjectStoreAdapterCoreV1
       object_class: request.object_class,
       object_ref: reservation.object_ref,
     });
+    const foregroundLeaseHeartbeat =
+      this.#startPutForegroundLeaseHeartbeat({
+        reservation_id: reservation.reservation_id,
+        foreground_lease_token: reservation.foreground_lease_token,
+      });
     let head: BackendObjectHeadV1;
     try {
       head = await this.#backend.putIfAbsent({
@@ -596,7 +719,19 @@ export class ObjectStoreAdapterCoreV1
         sha256: request.expected_sha256,
       });
       upload.assertComplete();
+      head = await this.#readBackVerifiedPhysicalHead(
+        {
+          sha256: request.expected_sha256,
+          size_bytes: request.size_bytes,
+          media_type: request.media_type,
+        },
+        policy,
+        key,
+      );
+      const renewalFailure = await foregroundLeaseHeartbeat.stop();
+      if (renewalFailure !== undefined) throw renewalFailure;
     } catch (error) {
+      await foregroundLeaseHeartbeat.stop();
       if (upload.failure() === undefined && upload.completed()) {
         try {
           upload.assertComplete();
@@ -604,7 +739,14 @@ export class ObjectStoreAdapterCoreV1
           // The classified integrity failure is handled by the branch below.
         }
       }
-      if (upload.failure() instanceof ObjectStoreErrorV1) {
+      const integrityFailure =
+        upload.failure() instanceof ObjectStoreErrorV1
+          ? upload.failure()
+          : error instanceof ObjectStoreErrorV1 &&
+              error.code === "integrity_mismatch"
+            ? error
+            : undefined;
+      if (integrityFailure instanceof ObjectStoreErrorV1) {
         let physicalCleanupComplete = false;
         try {
           await this.#backend.delete(policy.bucket, key);
@@ -630,11 +772,18 @@ export class ObjectStoreAdapterCoreV1
           }
         }
         if (physicalCleanupComplete) {
-          await this.#metadata.abortPut(reservation.reservation_id);
-          throw upload.failure();
+          await this.#metadata.abortPut(
+            reservation.reservation_id,
+            reservation.foreground_lease_token,
+          );
+          throw integrityFailure;
         } else {
           await this.#metadata
-            .handoffPutReconciliation(reservation.reservation_id, "put_cleanup")
+            .handoffPutReconciliation(
+              reservation.reservation_id,
+              "put_cleanup",
+              reservation.foreground_lease_token,
+            )
             .catch(() => undefined);
           fail("storage_unavailable", "integrity cleanup requires reconciliation", true, {
             reconciliation_required: true,
@@ -647,11 +796,21 @@ export class ObjectStoreAdapterCoreV1
         error instanceof ObjectStorageBackendErrorV1 &&
         error.code === "already_exists"
       ) {
-        await this.#metadata.abortPut(reservation.reservation_id).catch(() => undefined);
+        await this.#metadata
+          .abortPut(
+            reservation.reservation_id,
+            reservation.foreground_lease_token,
+          )
+          .catch(() => undefined);
         fail("precondition_failed", "physical object identity already exists");
       }
       await this.#metadata
-        .handoffPutReconciliation(reservation.reservation_id, "put_finalize")
+        .handoffPutReconciliation(
+          reservation.reservation_id,
+          "put_finalize",
+          reservation.foreground_lease_token,
+          new Date(this.#now().getTime() + foregroundUploadLeaseMs),
+        )
         .catch(() => undefined);
       fail("storage_unavailable", "object storage outcome requires reconciliation", true, {
         reconciliation_required: true,
@@ -667,12 +826,19 @@ export class ObjectStoreAdapterCoreV1
     ) {
       try {
         await this.#backend.delete(policy.bucket, key);
-        await this.#metadata.abortPut(reservation.reservation_id);
+        await this.#metadata.abortPut(
+          reservation.reservation_id,
+          reservation.foreground_lease_token,
+        );
         fail("integrity_mismatch", "stored object does not match put request");
       } catch (cleanupError) {
         if (cleanupError instanceof ObjectStoreErrorV1) throw cleanupError;
         await this.#metadata
-          .handoffPutReconciliation(reservation.reservation_id, "put_cleanup")
+          .handoffPutReconciliation(
+            reservation.reservation_id,
+            "put_cleanup",
+            reservation.foreground_lease_token,
+          )
           .catch(() => undefined);
         fail("storage_unavailable", "integrity cleanup requires reconciliation", true, {
           reconciliation_required: true,
@@ -684,6 +850,7 @@ export class ObjectStoreAdapterCoreV1
     try {
       const record = await this.#metadata.completePut({
         reservation_id: reservation.reservation_id,
+        foreground_lease_token: reservation.foreground_lease_token,
         version: head.version,
       });
       return resultFromRecord(record, false);
@@ -695,7 +862,11 @@ export class ObjectStoreAdapterCoreV1
         return resultFromRecord(finalization.record, false);
       }
       await this.#metadata
-        .handoffPutReconciliation(reservation.reservation_id, "put_finalize")
+        .handoffPutReconciliation(
+          reservation.reservation_id,
+          "put_finalize",
+          reservation.foreground_lease_token,
+        )
         .catch(() => undefined);
       fail("storage_unavailable", "owner metadata finalization requires reconciliation", true, {
         reconciliation_required: true,

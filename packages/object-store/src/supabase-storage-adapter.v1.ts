@@ -89,7 +89,9 @@ class SupabaseObjectStorageBackendV1 implements ObjectStorageBackendV1 {
         cacheControl: "3600",
         contentType: request.media_type,
         upsert: false,
-        metadata: { sha256: request.sha256 },
+        // This is only an expected digest for diagnostics. The adapter never
+        // treats caller-controlled custom metadata as proof of stored bytes.
+        metadata: { expected_sha256: request.sha256 },
       });
     if (error !== null) throw backendFailure(error);
     return this.head(request.bucket, request.key);
@@ -103,7 +105,7 @@ class SupabaseObjectStorageBackendV1 implements ObjectStorageBackendV1 {
     if (error !== null) throw backendFailure(error);
     const size = data.size ?? data.metadata?.size;
     const mediaType = data.contentType ?? data.metadata?.mimetype;
-    const sha256 = data.metadata?.sha256;
+    const sha256 = data.metadata?.expected_sha256;
     if (
       data.version.length === 0 ||
       typeof size !== "number" ||
