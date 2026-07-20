@@ -121,4 +121,28 @@ describe("Supabase ingress verifier", () => {
       code: "unauthenticated",
     });
   });
+
+  it.each(["sub", "iat", "nbf", "exp"] as const)(
+    "rejects a signed credential with missing %s",
+    async (missingClaim) => {
+      const { key, verifier } = await fixture();
+      const now = Math.floor(Date.now() / 1_000);
+      const claims: Record<string, string | number> = {
+        sub: "user-1",
+        iat: now,
+        nbf: now - 1,
+        exp: now + 60,
+      };
+      delete claims[missingClaim];
+      const token = await new SignJWT(claims)
+        .setProtectedHeader({ alg: "ES256", kid: "supabase-1" })
+        .setIssuer("https://project.supabase.co/auth/v1")
+        .setAudience("authenticated")
+        .sign(key.privateKey);
+
+      await expect(verifier.verify(token)).rejects.toMatchObject({
+        code: "unauthenticated",
+      });
+    },
+  );
 });

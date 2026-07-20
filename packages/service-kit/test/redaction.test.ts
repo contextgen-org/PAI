@@ -101,4 +101,35 @@ describe("structured log redaction", () => {
     expect(serialized).toContain(REDACTED_VALUE);
     expect(serialized).toContain("runtime.started");
   });
+
+  it("redacts ObjectStore grants, decisions, and signed URLs in the logger pipeline", async () => {
+    const output: string[] = [];
+    const app = createServiceApp("action_runtime", {
+      logger: true,
+      loggerStream: {
+        write(line) {
+          output.push(line);
+        },
+      },
+    });
+
+    app.log.info({
+      result: {
+        grant: "https://storage.invalid/read?token=live-grant-token",
+        object_ref: "object:visible-reference",
+        expires_at: "2026-07-20T01:00:00.000Z",
+      },
+      accessDecisionRef: "decision-live-secret",
+      innocuousUrl:
+        "https://storage.invalid/read?x-amz-signature=signed-query-secret",
+    });
+    await app.close();
+
+    const serialized = output.join("\n");
+    expect(serialized).not.toContain("live-grant-token");
+    expect(serialized).not.toContain("decision-live-secret");
+    expect(serialized).not.toContain("signed-query-secret");
+    expect(serialized).toContain("object:visible-reference");
+    expect(serialized).toContain(REDACTED_VALUE);
+  });
 });

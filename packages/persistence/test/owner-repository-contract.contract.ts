@@ -14,6 +14,7 @@ import { TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 } from "../../../services/trig
 import {
   defineOwnerRepositoryContractV1,
   OWNER_DATABASE_TARGETS_V1,
+  verifyOwnerRepositoryDeploymentV1,
 } from "../src/index.js";
 
 const contracts = [
@@ -115,13 +116,25 @@ describe("owner repository contracts", () => {
         expect(signature.schema).toBe(contract.schema);
         expect(signature.security_definer).toBe(true);
         expect(signature.search_path).toEqual([contract.schema, "pg_temp"]);
+        expect(signature.atomicity).toBe("single_transaction");
         expect(signature.arguments.length).toBeGreaterThan(0);
         expect(signature.arguments.every(({ mode }) => mode === "in")).toBe(true);
         expect(new Set(signature.arguments.map(({ argument_name }) => argument_name)).size)
           .toBe(signature.arguments.length);
         expect(Object.isFrozen(signature)).toBe(true);
         expect(Object.isFrozen(signature.arguments)).toBe(true);
+        expect(Object.isFrozen(signature.reads_tables)).toBe(true);
+        expect(Object.isFrozen(signature.writes_tables)).toBe(true);
+        expect(signature.writes_tables).toContain(signature.primary_table);
+        expect(signature.reads_tables.every((table) => contract.tables.includes(table)))
+          .toBe(true);
+        expect(signature.writes_tables.every((table) => contract.tables.includes(table)))
+          .toBe(true);
       }
+      const writableTables = new Set(
+        contract.function_signatures.flatMap(({ writes_tables }) => writes_tables),
+      );
+      expect(contract.tables.every((table) => writableTables.has(table))).toBe(true);
     }
   });
 
@@ -129,6 +142,33 @@ describe("owner repository contracts", () => {
     expect(TIMER_REPOSITORY_CONTRACT_V1.manifest_source).toBe(
       "services/timer-trigger-app/src/db/permission-manifest.v1.ts",
     );
+  });
+
+  it("models trigger admission as one slot-fenced state/audit/outbox transaction", () => {
+    const signature = TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.function_signatures
+      .find(({ function_name }) => function_name === "admit_trigger_v1");
+    expect(signature?.arguments.map(({ argument_name }) => argument_name)).toEqual(
+      expect.arrayContaining([
+        "p_dedupe_key",
+        "p_trigger_id",
+        "p_process_id",
+        "p_expected_slot_process_id",
+        "p_expected_slot_generation",
+        "p_admission_decision",
+      ]),
+    );
+    expect(signature?.writes_tables).toEqual(
+      expect.arrayContaining([
+        "triggers",
+        "trigger_processes",
+        "trigger_process_transitions",
+        "bot_foreground_slots",
+        "weak_trigger_queue_items",
+        "trigger_submit_attempts",
+        "trigger_event_outbox",
+      ]),
+    );
+    expect(signature?.atomicity).toBe("single_transaction");
   });
 
   it("fails closed on schema or role drift", () => {
@@ -174,6 +214,70 @@ describe("owner repository contracts", () => {
         ],
       } as never),
     ).toThrow(/invalid generated writer signature/);
+
+    const tableWithoutPrimaryWriter = "bot_permission_bindings";
+    expect(() =>
+      defineOwnerRepositoryContractV1({
+        ...TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        function_signatures:
+          TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.function_signatures.map(
+            (signature) => ({
+              ...signature,
+              writes_tables: signature.writes_tables.filter(
+                (table) => table !== tableWithoutPrimaryWriter,
+              ),
+            }),
+          ),
+      } as never),
+    ).toThrow(/tables without an atomic writer/);
+
+    expect(() =>
+      defineOwnerRepositoryContractV1({
+        ...TIMER_REPOSITORY_CONTRACT_V1,
+        function_signatures: [
+          {
+            ...TIMER_REPOSITORY_CONTRACT_V1.function_signatures[0],
+            arguments: [
+              ...TIMER_REPOSITORY_CONTRACT_V1.function_signatures[0].arguments,
+              { argument_name: "p_schedule_id", postgres_type: "text", mode: "in" },
+            ],
+          },
+          ...TIMER_REPOSITORY_CONTRACT_V1.function_signatures.slice(1),
+        ],
+      } as never),
+    ).toThrow(/arguments must contain unique SQL identifiers/);
+  });
+
+  it("fails service composition closed when deployed procedures or privileges drift", () => {
+    const contract = TIMER_REPOSITORY_CONTRACT_V1;
+    const artifact = {
+      schema: contract.schema,
+      app_role: contract.app_role,
+      direct_table_mutation_privileges: [],
+      executable_functions: contract.mutable_writers,
+      function_signatures: contract.function_signatures,
+    } as const;
+    expect(
+      verifyOwnerRepositoryDeploymentV1(
+        contract,
+        artifact,
+        "2026-07-20T08:00:00.000Z",
+      ),
+    ).toMatchObject({ owner_service: "timer_trigger_app" });
+    expect(() =>
+      verifyOwnerRepositoryDeploymentV1(
+        contract,
+        { ...artifact, direct_table_mutation_privileges: ["timer_schedules:UPDATE"] },
+        "2026-07-20T08:00:00.000Z",
+      ),
+    ).toThrow(/deployed owner repository artifact drift/);
+    expect(() =>
+      verifyOwnerRepositoryDeploymentV1(
+        contract,
+        { ...artifact, executable_functions: contract.mutable_writers.slice(1) },
+        "2026-07-20T08:00:00.000Z",
+      ),
+    ).toThrow(/deployed owner repository artifact drift/);
   });
 });
 

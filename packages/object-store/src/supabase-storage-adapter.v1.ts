@@ -6,6 +6,8 @@ import { ObjectStoreAdapterCoreV1 } from "./object-store-adapter-core.v1.js";
 import {
   ObjectStorageBackendErrorV1,
   type BackendObjectHeadV1,
+  type BackendObjectRangeV1,
+  type BackendObjectStreamV1,
   type ObjectStorageBackendV1,
   type PutBackendObjectV1,
 } from "./object-storage-backend.v1.js";
@@ -56,14 +58,34 @@ function backendFailure(error: unknown): ObjectStorageBackendErrorV1 {
 }
 
 class SupabaseObjectStorageBackendV1 implements ObjectStorageBackendV1 {
-  public constructor(private readonly client: SupabaseClient) {}
+  public constructor(
+    private readonly client: SupabaseClient,
+    private readonly url: string,
+    private readonly secretKey: string,
+    private readonly fetchImpl: typeof fetch,
+  ) {}
 
   public async putIfAbsent(
     request: PutBackendObjectV1,
   ): Promise<BackendObjectHeadV1> {
+    const iterator = request.body[Symbol.asyncIterator]();
+    const stream = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        try {
+          const next = await iterator.next();
+          if (next.done) controller.close();
+          else controller.enqueue(next.value);
+        } catch (error) {
+          controller.error(error);
+        }
+      },
+      async cancel() {
+        await iterator.return?.();
+      },
+    });
     const { error } = await this.client.storage
       .from(request.bucket)
-      .upload(request.key, request.body, {
+      .upload(request.key, stream, {
         cacheControl: "3600",
         contentType: request.media_type,
         upsert: false,
@@ -105,14 +127,57 @@ class SupabaseObjectStorageBackendV1 implements ObjectStorageBackendV1 {
   public async get(
     bucket: ObjectStoreBucketV1,
     key: string,
-  ): Promise<Uint8Array> {
-    const { data, error } = await this.client.storage.from(bucket).download(key);
-    if (error !== null) throw backendFailure(error);
-    try {
-      return new Uint8Array(await data.arrayBuffer());
-    } catch (error) {
+    range?: BackendObjectRangeV1,
+  ): Promise<BackendObjectStreamV1> {
+    const encodedKey = key.split("/").map(encodeURIComponent).join("/");
+    const response = await this.fetchImpl(
+      `${this.url.replace(/\/$/, "")}/storage/v1/object/authenticated/${encodeURIComponent(bucket)}/${encodedKey}`,
+      {
+        method: "GET",
+        headers: {
+          authorization: `Bearer ${this.secretKey}`,
+          apikey: this.secretKey,
+          ...(range === undefined
+            ? {}
+            : { range: `bytes=${range.offset}-${range.offset + range.length - 1}` }),
+        },
+      },
+    ).catch((error: unknown) => {
       throw backendFailure(error);
+    });
+    if (!response.ok || response.body === null) {
+      throw backendFailure({ status: response.status, message: response.statusText });
     }
+    const contentRange = response.headers.get("content-range");
+    const parsedRange = contentRange?.match(/^bytes (\d+)-(\d+)\/(\d+)$/);
+    const offset = parsedRange === undefined || parsedRange === null
+      ? 0
+      : Number(parsedRange[1]);
+    const totalSize = parsedRange === undefined || parsedRange === null
+      ? Number(response.headers.get("content-length"))
+      : Number(parsedRange[3]);
+    const length = parsedRange === undefined || parsedRange === null
+      ? totalSize
+      : Number(parsedRange[2]) - offset + 1;
+    if (![offset, length, totalSize].every(Number.isSafeInteger)) {
+      throw new ObjectStorageBackendErrorV1(
+        "unavailable",
+        "Supabase range metadata is incomplete",
+      );
+    }
+    const reader = response.body.getReader();
+    const body = async function* (): AsyncIterable<Uint8Array> {
+      try {
+        while (true) {
+          const next = await reader.read();
+          if (next.done) return;
+          yield next.value;
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    };
+    return { body: body(), offset, length, total_size_bytes: totalSize };
   }
 
   public async issueReadGrant(
@@ -160,7 +225,12 @@ export class SupabaseStorageAdapter extends ObjectStoreAdapterCoreV1 {
         : { global: { fetch: options.fetch } }),
     });
     super({
-      backend: new SupabaseObjectStorageBackendV1(client),
+      backend: new SupabaseObjectStorageBackendV1(
+        client,
+        options.url,
+        options.secretKey,
+        options.fetch ?? globalThis.fetch,
+      ),
       metadataRepository: options.metadataRepository,
       accessPolicyVerifier: options.accessPolicyVerifier,
       policies: options.policies,

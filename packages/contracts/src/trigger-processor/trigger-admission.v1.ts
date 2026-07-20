@@ -91,6 +91,13 @@ function acceptedDecisionSchema<
       action: Type.Literal(action),
       reason_code: Type.Literal(reason),
       initial_process_state: initialProcessState,
+      foreground_slot_precondition: Type.Object(
+        {
+          process_id: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+          generation: Type.Integer({ minimum: 0 }),
+        },
+        { additionalProperties: false },
+      ),
     },
     { additionalProperties: false },
   );

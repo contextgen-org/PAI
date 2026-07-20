@@ -109,6 +109,7 @@ export class SupabaseIngressVerifier {
         issuer: this.#issuer,
         audience: this.#audience,
         algorithms: [...this.#algorithms],
+        requiredClaims: ["sub", "iat", "nbf", "exp"],
       });
       return {
         principal: this.#mapPrincipal(result.payload),

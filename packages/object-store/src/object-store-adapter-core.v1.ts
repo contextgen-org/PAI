@@ -116,42 +116,86 @@ function resultFromRecord(
   };
 }
 
-async function consumeAndVerify(
+function verifyingUploadStream(
   body: AsyncIterable<Uint8Array>,
   expectedSha256: string,
   expectedSize: number,
-): Promise<Uint8Array> {
+): {
+  readonly body: AsyncIterable<Uint8Array>;
+  assertComplete(): void;
+  failure(): unknown;
+  completed(): boolean;
+} {
   const digest = createHash("sha256");
-  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let completed = false;
+  let streamFailure: unknown;
+  const stream = async function* (): AsyncIterable<Uint8Array> {
+    try {
+      for await (const chunk of body) {
+        if (!(chunk instanceof Uint8Array)) {
+          fail("precondition_failed", "object body must yield Uint8Array chunks");
+        }
+        total += chunk.byteLength;
+        if (total > expectedSize) {
+          fail("integrity_mismatch", "object body is larger than declared size");
+        }
+        digest.update(chunk);
+        yield chunk;
+      }
+      completed = true;
+    } catch (error) {
+      streamFailure = error;
+      throw error;
+    }
+  };
+  return {
+    body: stream(),
+    assertComplete() {
+      if (streamFailure !== undefined) throw streamFailure;
+      const actualSha256 = completed
+        ? `sha256:${digest.digest("hex")}`
+        : "incomplete";
+      if (!completed || total !== expectedSize || actualSha256 !== expectedSha256) {
+        streamFailure = new ObjectStoreErrorV1(
+          "integrity_mismatch",
+          "object body does not match declared integrity",
+          false,
+        );
+        throw streamFailure;
+      }
+    },
+    failure: () => streamFailure,
+    completed: () => completed,
+  };
+}
+
+async function* verifiedReadStream(
+  body: AsyncIterable<Uint8Array>,
+  expectedLength: number,
+  expectedSha256?: string,
+): AsyncIterable<Uint8Array> {
+  const digest = expectedSha256 === undefined ? undefined : createHash("sha256");
   let total = 0;
   try {
     for await (const chunk of body) {
-      if (!(chunk instanceof Uint8Array)) {
-        fail("precondition_failed", "object body must yield Uint8Array chunks");
-      }
       total += chunk.byteLength;
-      if (total > expectedSize) {
-        fail("integrity_mismatch", "object body is larger than declared size");
+      if (total > expectedLength) {
+        fail("integrity_mismatch", "object storage returned too many bytes");
       }
-      digest.update(chunk);
-      chunks.push(chunk.slice());
+      digest?.update(chunk);
+      yield chunk;
     }
   } catch (error) {
     if (error instanceof ObjectStoreErrorV1) throw error;
-    fail("storage_unavailable", "object input stream failed", true);
+    fail("storage_unavailable", "object storage stream failed", true);
   }
-
-  const actualSha256 = `sha256:${digest.digest("hex")}`;
-  if (total !== expectedSize || actualSha256 !== expectedSha256) {
-    fail("integrity_mismatch", "object body does not match declared integrity");
+  if (
+    total !== expectedLength ||
+    (digest !== undefined && `sha256:${digest.digest("hex")}` !== expectedSha256)
+  ) {
+    fail("integrity_mismatch", "stored object bytes failed integrity verification");
   }
-  const value = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    value.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return value;
 }
 
 function validatePutRequest(request: PutImmutableRequestV1, now: Date): void {
@@ -360,7 +404,7 @@ export class ObjectStoreAdapterCoreV1 implements ObjectStorePortV1 {
     ) {
       fail("precondition_failed", "object violates class size or media policy");
     }
-    const body = await consumeAndVerify(
+    const upload = verifyingUploadStream(
       request.body,
       request.expected_sha256,
       request.size_bytes,
@@ -406,40 +450,66 @@ export class ObjectStoreAdapterCoreV1 implements ObjectStorePortV1 {
       head = await this.#backend.putIfAbsent({
         bucket: policy.bucket,
         key,
-        body,
+        body: upload.body,
+        size_bytes: request.size_bytes,
         media_type: request.media_type,
         sha256: request.expected_sha256,
       });
+      upload.assertComplete();
     } catch (error) {
-      await this.#metadata.abortPut(reservation.reservation_id).catch(() => undefined);
+      if (upload.failure() === undefined && upload.completed()) {
+        try {
+          upload.assertComplete();
+        } catch {
+          // The classified integrity failure is handled by the branch below.
+        }
+      }
+      if (upload.failure() instanceof ObjectStoreErrorV1) {
+        await this.#backend.delete(policy.bucket, key).catch(() => undefined);
+        await this.#metadata.abortPut(reservation.reservation_id).catch(() => undefined);
+        throw upload.failure();
+      }
       if (
         error instanceof ObjectStorageBackendErrorV1 &&
         error.code === "already_exists"
       ) {
+        await this.#metadata.abortPut(reservation.reservation_id).catch(() => undefined);
         fail("precondition_failed", "physical object identity already exists");
       }
-      fail("storage_unavailable", "object storage is unavailable", true);
+      fail("storage_unavailable", "object storage outcome requires reconciliation", true, {
+        reconciliation_required: true,
+        reservation_id: reservation.reservation_id,
+      });
     }
 
+    if (
+      head.version.length === 0 ||
+      head.sha256 !== request.expected_sha256 ||
+      head.size_bytes !== request.size_bytes ||
+      head.media_type !== request.media_type
+    ) {
+      await this.#backend.delete(policy.bucket, key).catch(() => undefined);
+      await this.#metadata.abortPut(reservation.reservation_id).catch(() => undefined);
+      fail("integrity_mismatch", "stored object does not match put request");
+    }
     try {
-      if (
-        head.version.length === 0 ||
-        head.sha256 !== request.expected_sha256 ||
-        head.size_bytes !== request.size_bytes ||
-        head.media_type !== request.media_type
-      ) {
-        fail("integrity_mismatch", "stored object does not match put request");
-      }
       const record = await this.#metadata.completePut({
         reservation_id: reservation.reservation_id,
         version: head.version,
       });
       return resultFromRecord(record, false);
     } catch (error) {
-      await this.#backend.delete(policy.bucket, key).catch(() => undefined);
-      await this.#metadata.abortPut(reservation.reservation_id).catch(() => undefined);
-      if (error instanceof ObjectStoreErrorV1) throw error;
-      fail("storage_unavailable", "owner metadata commit failed", true);
+      const finalization = await this.#metadata
+        .findPutFinalization(reservation.reservation_id)
+        .catch(() => ({ kind: "aborted_or_unknown" as const }));
+      if (finalization.kind === "committed") {
+        return resultFromRecord(finalization.record, false);
+      }
+      fail("storage_unavailable", "owner metadata finalization requires reconciliation", true, {
+        reconciliation_required: true,
+        reservation_id: reservation.reservation_id,
+        finalization_state: finalization.kind,
+      });
     }
   }
 
@@ -454,42 +524,44 @@ export class ObjectStoreAdapterCoreV1 implements ObjectStorePortV1 {
   ): Promise<ObjectStreamResultV1> {
     const { record, policy } = await this.#authorizedRecord(request, "get");
     await this.#backendHead(record, policy);
-    let body: Uint8Array;
+    let range: { readonly offset: number; readonly length: number } | undefined;
+    if (request.range !== undefined) {
+      const { offset, length } = request.range;
+      if (
+        !Number.isSafeInteger(offset) || !Number.isSafeInteger(length) ||
+        offset < 0 || length <= 0 || offset >= record.size_bytes
+      ) {
+        fail("precondition_failed", "invalid object byte range");
+      }
+      range = { offset, length: Math.min(length, record.size_bytes - offset) };
+    }
+    let streamed;
     try {
-      body = await this.#backend.get(policy.bucket, physicalObjectKey(record));
+      streamed = await this.#backend.get(
+        policy.bucket,
+        physicalObjectKey(record),
+        range,
+      );
     } catch {
       fail("storage_unavailable", "object storage is unavailable", true);
     }
     if (
-      body.byteLength !== record.size_bytes ||
-      `sha256:${sha256(body)}` !== record.sha256
+      streamed.total_size_bytes !== record.size_bytes ||
+      streamed.offset !== (range?.offset ?? 0) ||
+      streamed.length !== (range?.length ?? record.size_bytes)
     ) {
-      fail("integrity_mismatch", "stored object bytes failed integrity verification");
+      fail("integrity_mismatch", "object storage returned inconsistent range metadata");
     }
-
-    let selected = body;
-    let contentRange: string | undefined;
-    if (request.range !== undefined) {
-      const { offset, length } = request.range;
-      if (
-        !Number.isSafeInteger(offset) ||
-        !Number.isSafeInteger(length) ||
-        offset < 0 ||
-        length <= 0 ||
-        offset >= body.byteLength
-      ) {
-        fail("precondition_failed", "invalid object byte range");
-      }
-      const endExclusive = Math.min(body.byteLength, offset + length);
-      selected = body.slice(offset, endExclusive);
-      contentRange = `bytes ${offset}-${endExclusive - 1}/${body.byteLength}`;
-    }
-    const stream = async function* (): AsyncIterable<Uint8Array> {
-      yield selected;
-    };
+    const contentRange = range === undefined
+      ? undefined
+      : `bytes ${range.offset}-${range.offset + range.length - 1}/${record.size_bytes}`;
     return {
       ...publicHead(record),
-      body: stream(),
+      body: verifiedReadStream(
+        streamed.body,
+        streamed.length,
+        range === undefined ? record.sha256 : undefined,
+      ),
       ...(contentRange === undefined ? {} : { content_range: contentRange }),
     };
   }
@@ -579,15 +651,26 @@ export class ObjectStoreAdapterCoreV1 implements ObjectStorePortV1 {
         !(error instanceof ObjectStorageBackendErrorV1) ||
         error.code !== "not_found"
       ) {
-        await this.#metadata.abortDelete(reservation.reservation_id).catch(() => undefined);
-        fail("storage_unavailable", "object storage is unavailable", true);
+        fail("storage_unavailable", "object deletion outcome requires reconciliation", true, {
+          reconciliation_required: true,
+          reservation_id: reservation.reservation_id,
+        });
       }
     }
     try {
       await this.#metadata.completeDelete(reservation.reservation_id);
     } catch {
-      await this.#metadata.abortDelete(reservation.reservation_id).catch(() => undefined);
-      fail("storage_unavailable", "owner metadata commit failed", true);
+      const finalization = await this.#metadata
+        .findDeleteFinalization(reservation.reservation_id)
+        .catch(() => ({ kind: "aborted_or_unknown" as const }));
+      if (finalization.kind === "committed") {
+        return { object_ref: record.object_ref, deleted: true, replayed: false };
+      }
+      fail("storage_unavailable", "owner metadata finalization requires reconciliation", true, {
+        reconciliation_required: true,
+        reservation_id: reservation.reservation_id,
+        finalization_state: finalization.kind,
+      });
     }
     return { object_ref: record.object_ref, deleted: true, replayed: false };
   }

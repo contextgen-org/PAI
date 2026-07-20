@@ -2,6 +2,7 @@ import { Value } from "@sinclair/typebox/value";
 import { describe, expect, it } from "vitest";
 
 import {
+  CLOSED_STATUS_TERMINAL_OUTCOMES_V1,
   TERMINAL_OUTCOMES_V1,
   TriggerProcessStateV1Schema,
   isTriggerProcessTransitionV1Allowed,
@@ -398,4 +399,43 @@ describe("TriggerProcessStateV1", () => {
       "interrupted_with_reason",
     ]);
   });
+
+  it.each([
+    ["completed", "executed", true],
+    ["completed", "failed_with_reason", false],
+    ["completed", "cancelled_with_reason", false],
+    ["failed", "failed_with_reason", true],
+    ["failed", "executed", false],
+  ] as const)(
+    "enforces meta finalization status %s with outcome %s",
+    (status, terminalOutcome, expected) => {
+      const from = {
+        phase: "meta_enqueued",
+        status: "waiting",
+        wait_reason: "meta_enqueue_wait",
+        terminal_reason: null,
+      } as const satisfies TriggerProcessStateV1;
+      const to = {
+        phase: "closed",
+        status,
+        wait_reason: null,
+        terminal_reason: `meta_${status}`,
+      } as const satisfies TriggerProcessStateV1;
+      expect(
+        isTriggerProcessTransitionV1Allowed(from, to, {
+          kind: "meta_finalization",
+          terminal_outcome: terminalOutcome,
+          terminal_outcome_finalized_at: "2026-07-20T04:03:00.000Z",
+          canonical_reason_code: `meta_${status}`,
+          transition_audit_ref: "transition-audit-table",
+          outbox_event_ref: "outbox-table",
+        }),
+      ).toBe(expected);
+      expect(
+        (CLOSED_STATUS_TERMINAL_OUTCOMES_V1[status] as readonly string[]).includes(
+          terminalOutcome,
+        ),
+      ).toBe(expected);
+    },
+  );
 });

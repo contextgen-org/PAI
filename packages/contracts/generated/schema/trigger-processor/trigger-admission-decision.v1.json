@@ -9,7 +9,8 @@
         "priority",
         "action",
         "reason_code",
-        "initial_process_state"
+        "initial_process_state",
+        "foreground_slot_precondition"
       ],
       "properties": {
         "trigger_status": {
@@ -54,6 +55,31 @@
               "type": "null"
             }
           }
+        },
+        "foreground_slot_precondition": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "process_id",
+            "generation"
+          ],
+          "properties": {
+            "process_id": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "generation": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
         }
       }
     },
@@ -65,7 +91,8 @@
         "priority",
         "action",
         "reason_code",
-        "initial_process_state"
+        "initial_process_state",
+        "foreground_slot_precondition"
       ],
       "properties": {
         "trigger_status": {
@@ -109,6 +136,31 @@
               "type": "null"
             }
           }
+        },
+        "foreground_slot_precondition": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "process_id",
+            "generation"
+          ],
+          "properties": {
+            "process_id": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "generation": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
         }
       }
     },
@@ -120,7 +172,8 @@
         "priority",
         "action",
         "reason_code",
-        "initial_process_state"
+        "initial_process_state",
+        "foreground_slot_precondition"
       ],
       "properties": {
         "trigger_status": {
@@ -164,6 +217,31 @@
               "type": "null"
             }
           }
+        },
+        "foreground_slot_precondition": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "process_id",
+            "generation"
+          ],
+          "properties": {
+            "process_id": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "generation": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
         }
       }
     },
@@ -175,7 +253,8 @@
         "priority",
         "action",
         "reason_code",
-        "initial_process_state"
+        "initial_process_state",
+        "foreground_slot_precondition"
       ],
       "properties": {
         "trigger_status": {
@@ -220,6 +299,31 @@
               "type": "null"
             }
           }
+        },
+        "foreground_slot_precondition": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "process_id",
+            "generation"
+          ],
+          "properties": {
+            "process_id": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "generation": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
         }
       }
     },
@@ -231,7 +335,8 @@
         "priority",
         "action",
         "reason_code",
-        "initial_process_state"
+        "initial_process_state",
+        "foreground_slot_precondition"
       ],
       "properties": {
         "trigger_status": {
@@ -275,6 +380,31 @@
               "type": "null"
             }
           }
+        },
+        "foreground_slot_precondition": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "process_id",
+            "generation"
+          ],
+          "properties": {
+            "process_id": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "generation": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
         }
       }
     },
@@ -286,7 +416,8 @@
         "priority",
         "action",
         "reason_code",
-        "initial_process_state"
+        "initial_process_state",
+        "foreground_slot_precondition"
       ],
       "properties": {
         "trigger_status": {
@@ -331,6 +462,31 @@
               "type": "null"
             }
           }
+        },
+        "foreground_slot_precondition": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "process_id",
+            "generation"
+          ],
+          "properties": {
+            "process_id": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "generation": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
         }
       }
     },
@@ -342,7 +498,8 @@
         "priority",
         "action",
         "reason_code",
-        "initial_process_state"
+        "initial_process_state",
+        "foreground_slot_precondition"
       ],
       "properties": {
         "trigger_status": {
@@ -386,6 +543,31 @@
               "type": "null"
             }
           }
+        },
+        "foreground_slot_precondition": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "process_id",
+            "generation"
+          ],
+          "properties": {
+            "process_id": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "generation": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
         }
       }
     },
@@ -397,7 +579,8 @@
         "priority",
         "action",
         "reason_code",
-        "initial_process_state"
+        "initial_process_state",
+        "foreground_slot_precondition"
       ],
       "properties": {
         "trigger_status": {
@@ -442,6 +625,31 @@
               "type": "null"
             }
           }
+        },
+        "foreground_slot_precondition": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "process_id",
+            "generation"
+          ],
+          "properties": {
+            "process_id": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "generation": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
         }
       }
     },
@@ -453,7 +661,8 @@
         "priority",
         "action",
         "reason_code",
-        "initial_process_state"
+        "initial_process_state",
+        "foreground_slot_precondition"
       ],
       "properties": {
         "trigger_status": {
@@ -497,6 +706,31 @@
               "type": "null"
             }
           }
+        },
+        "foreground_slot_precondition": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "process_id",
+            "generation"
+          ],
+          "properties": {
+            "process_id": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "generation": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
         }
       }
     },
@@ -508,7 +742,8 @@
         "priority",
         "action",
         "reason_code",
-        "initial_process_state"
+        "initial_process_state",
+        "foreground_slot_precondition"
       ],
       "properties": {
         "trigger_status": {
@@ -553,6 +788,31 @@
               "type": "null"
             }
           }
+        },
+        "foreground_slot_precondition": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "process_id",
+            "generation"
+          ],
+          "properties": {
+            "process_id": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "generation": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
         }
       }
     },
@@ -564,7 +824,8 @@
         "priority",
         "action",
         "reason_code",
-        "initial_process_state"
+        "initial_process_state",
+        "foreground_slot_precondition"
       ],
       "properties": {
         "trigger_status": {
@@ -607,6 +868,31 @@
             },
             "terminal_reason": {
               "type": "null"
+            }
+          }
+        },
+        "foreground_slot_precondition": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "process_id",
+            "generation"
+          ],
+          "properties": {
+            "process_id": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "generation": {
+              "minimum": 0,
+              "type": "integer"
             }
           }
         }

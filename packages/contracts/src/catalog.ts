@@ -9,6 +9,11 @@ import { ResponseEnvelopeV1Schema } from "./shared/response-envelope.v1.js";
 import { ServiceIdV1Schema } from "./shared/service-id.v1.js";
 import { TypedEvidenceRefV1Schema } from "./shared/typed-evidence-ref.v1.js";
 import { WorkloadCredentialClaimsV1Schema } from "./shared/workload-credential-claims.v1.js";
+import { TriggerAdmissionDecisionV1Schema } from "./trigger-processor/trigger-admission.v1.js";
+import {
+  TriggerProcessStateV1Schema,
+  TriggerProcessTransitionEvidenceV1Schema,
+} from "./trigger-processor/trigger-process-state.v1.js";
 
 export interface SharedSchemaCatalogEntry {
   readonly schema_name: string;
@@ -142,3 +147,55 @@ export const SHARED_SCHEMA_CATALOG = [
     ],
   ),
 ] as const satisfies readonly SharedSchemaCatalogEntry[];
+
+export interface TriggerProcessorSchemaCatalogEntry
+  extends Omit<SharedSchemaCatalogEntry, "owner_service"> {
+  readonly owner_service: "trigger_processor";
+}
+
+function triggerProcessorEntry(
+  schema_name: string,
+  schema_id: string,
+  source_file: string,
+  generated_file: string,
+  contract_test: string,
+  schema: TSchema,
+): TriggerProcessorSchemaCatalogEntry {
+  return {
+    schema_name,
+    schema_id,
+    version: "1.0.0",
+    owner_service: "trigger_processor",
+    source_file,
+    generated_outputs: [generated_file, "generated/openapi/shared.yaml"],
+    contract_tests: [contract_test],
+    schema,
+  };
+}
+
+export const TRIGGER_PROCESSOR_SCHEMA_CATALOG = [
+  triggerProcessorEntry(
+    "TriggerProcessStateV1",
+    "urn:pai:trigger-processor:trigger-process-state:v1",
+    "packages/contracts/src/trigger-processor/trigger-process-state.v1.ts",
+    "generated/schema/trigger-processor/trigger-process-state.v1.json",
+    "packages/contracts/test/trigger-processor/trigger-process-state.contract.ts",
+    TriggerProcessStateV1Schema,
+  ),
+  triggerProcessorEntry(
+    "TriggerAdmissionDecisionV1",
+    "urn:pai:trigger-processor:trigger-admission-decision:v1",
+    "packages/contracts/src/trigger-processor/trigger-admission.v1.ts",
+    "generated/schema/trigger-processor/trigger-admission-decision.v1.json",
+    "packages/contracts/test/trigger-processor/trigger-admission.contract.ts",
+    TriggerAdmissionDecisionV1Schema,
+  ),
+  triggerProcessorEntry(
+    "TriggerProcessTransitionEvidenceV1",
+    "urn:pai:trigger-processor:trigger-process-transition-evidence:v1",
+    "packages/contracts/src/trigger-processor/trigger-process-state.v1.ts",
+    "generated/schema/trigger-processor/trigger-process-transition-evidence.v1.json",
+    "packages/contracts/test/trigger-processor/trigger-process-transition-evidence.contract.ts",
+    TriggerProcessTransitionEvidenceV1Schema,
+  ),
+] as const satisfies readonly TriggerProcessorSchemaCatalogEntry[];

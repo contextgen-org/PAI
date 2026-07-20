@@ -85,15 +85,16 @@ interface FakeStoredObject {
   readonly sha256: string;
 }
 
-function fakeSupabaseClient(): SupabaseClient {
-  const objects = new Map<string, FakeStoredObject>();
+function fakeSupabaseClient(
+  objects: Map<string, FakeStoredObject>,
+): SupabaseClient {
   const storage = {
     from(bucket: string) {
       const identity = (key: string): string => `${bucket}/${key}`;
       return {
         async upload(
           key: string,
-          body: Uint8Array,
+          body: ReadableStream<Uint8Array>,
           options: {
             contentType: string;
             metadata: { sha256: string };
@@ -110,10 +111,25 @@ function fakeSupabaseClient(): SupabaseClient {
               },
             };
           }
+          const reader = body.getReader();
+          const chunks: Uint8Array[] = [];
+          let size = 0;
+          while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            chunks.push(next.value.slice());
+            size += next.value.byteLength;
+          }
+          const storedBody = new Uint8Array(size);
+          let offset = 0;
+          for (const chunk of chunks) {
+            storedBody.set(chunk, offset);
+            offset += chunk.byteLength;
+          }
           const object: FakeStoredObject = {
             id: randomUUID(),
             version: randomUUID(),
-            body: body.slice(),
+            body: storedBody,
             contentType: options.contentType,
             sha256: options.metadata.sha256,
           };
@@ -176,6 +192,37 @@ function fakeSupabaseClient(): SupabaseClient {
     },
   };
   return { storage } as unknown as SupabaseClient;
+}
+
+function fakeSupabaseFetch(
+  objects: Map<string, FakeStoredObject>,
+): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(typeof input === "string" ? input : input.toString());
+    const marker = "/storage/v1/object/authenticated/";
+    const encodedIdentity = url.pathname.slice(url.pathname.indexOf(marker) + marker.length);
+    const identity = encodedIdentity.split("/").map(decodeURIComponent).join("/");
+    const object = objects.get(identity);
+    if (object === undefined) return new Response(null, { status: 404, statusText: "not found" });
+    const requestHeaders = new Headers(init?.headers);
+    const rangeValue = requestHeaders.get("range");
+    const match = rangeValue?.match(/^bytes=(\d+)-(\d+)$/);
+    const start = match === null || match === undefined ? 0 : Number(match[1]);
+    const requestedEnd = match === null || match === undefined
+      ? object.body.byteLength - 1
+      : Number(match[2]);
+    const end = Math.min(requestedEnd, object.body.byteLength - 1);
+    const selected = object.body.slice(start, end + 1);
+    return new Response(selected, {
+      status: match === undefined || match === null ? 200 : 206,
+      headers: {
+        "content-length": String(selected.byteLength),
+        ...(match === undefined || match === null
+          ? {}
+          : { "content-range": `bytes ${start}-${end}/${object.body.byteLength}` }),
+      },
+    });
+  }) as typeof fetch;
 }
 
 interface Harness {
@@ -260,8 +307,10 @@ function authorizedRequest<
   return { ...request, ...decision };
 }
 
-function createHarness(kind: "memory" | "supabase"): Harness {
-  const metadata = new InMemoryObjectMetadataRepositoryV1();
+function createHarness(
+  kind: "memory" | "supabase",
+  metadata = new InMemoryObjectMetadataRepositoryV1(),
+): Harness {
   const accessPolicy = new TestObjectAccessPolicyVerifierV1();
   let now = new Date("2026-07-20T00:00:00.000Z");
   const options = {
@@ -274,11 +323,13 @@ function createHarness(kind: "memory" | "supabase"): Harness {
     kind === "memory"
       ? new InMemoryObjectStoreAdapterV1(options)
       : (() => {
-          createClientMock.mockReturnValueOnce(fakeSupabaseClient());
+          const objects = new Map<string, FakeStoredObject>();
+          createClientMock.mockReturnValueOnce(fakeSupabaseClient(objects));
           return new SupabaseStorageAdapter({
             ...options,
             url: "https://storage.test.invalid",
             secretKey: "test-secret",
+            fetch: fakeSupabaseFetch(objects),
           });
         })();
   return {
@@ -623,5 +674,162 @@ describe("ObjectStore adapter policy validation", () => {
         putRequest(body, { capability: "attacker.object.put" }),
       ),
     ).rejects.toSatisfy(expectCode("authorization_scope_mismatch"));
+  });
+});
+
+class CommitPutThenThrowRepository extends InMemoryObjectMetadataRepositoryV1 {
+  public override async completePut(
+    input: Parameters<InMemoryObjectMetadataRepositoryV1["completePut"]>[0],
+  ) {
+    const result = await super.completePut(input);
+    throw Object.assign(new Error("injected post-commit disconnect"), { result });
+  }
+}
+
+class RejectPutFinalizationRepository extends InMemoryObjectMetadataRepositoryV1 {
+  public override async completePut(
+    _input: Parameters<InMemoryObjectMetadataRepositoryV1["completePut"]>[0],
+  ): Promise<never> {
+    throw new Error("injected pre-commit failure");
+  }
+}
+
+class CommitDeleteThenThrowRepository extends InMemoryObjectMetadataRepositoryV1 {
+  public override async completeDelete(reservationId: string) {
+    const result = await super.completeDelete(reservationId);
+    throw Object.assign(new Error("injected post-commit disconnect"), { result });
+  }
+}
+
+class RejectDeleteFinalizationRepository extends InMemoryObjectMetadataRepositoryV1 {
+  public override async completeDelete(_reservationId: string): Promise<never> {
+    throw new Error("injected pre-commit delete finalization failure");
+  }
+}
+
+describe("ObjectStore ambiguous finalization recovery", () => {
+  it("queries a put reservation after commit-then-throw and never compensates the committed object", async () => {
+    const harness = createHarness("memory", new CommitPutThenThrowRepository());
+    const body = new TextEncoder().encode("commit-survives-disconnect");
+    const created = await harness.store.putImmutable(putRequest(body));
+    expect(created.replayed).toBe(false);
+    await expect(
+      harness.store.head(
+        authorizedRequest(harness, "head", {
+          owner_service: "trigger_processor",
+          scope,
+          capability: "trigger_process.snapshot.resolve",
+          object_ref: created.object_ref,
+        }),
+      ),
+    ).resolves.toMatchObject({ sha256: digest(body) });
+  });
+
+  it("keeps a pre-commit put pending for reconciliation instead of deleting unknown physical state", async () => {
+    const harness = createHarness("memory", new RejectPutFinalizationRepository());
+    const body = new TextEncoder().encode("pending-reconciliation");
+    await expect(harness.store.putImmutable(putRequest(body))).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof ObjectStoreErrorV1 &&
+        error.code === "storage_unavailable" &&
+        error.details.reconciliation_required === true &&
+        error.details.finalization_state === "pending",
+    );
+    await expect(harness.store.putImmutable(putRequest(body))).rejects.toSatisfy(
+      expectCode("precondition_failed"),
+    );
+  });
+
+  it("queries a delete reservation after commit-then-throw and reports the committed delete", async () => {
+    const metadata = new CommitDeleteThenThrowRepository();
+    const harness = createHarness("memory", metadata);
+    const created = await harness.store.putImmutable(
+      putRequest(new TextEncoder().encode("delete-finalization")),
+    );
+    harness.setNow("2026-07-22T00:00:00.000Z");
+    await expect(
+      harness.store.deleteIfEligible(
+        authorizedRequest(harness, "delete", {
+          owner_service: "trigger_processor",
+          scope,
+          capability: "trigger_process.snapshot.manage",
+          object_ref: created.object_ref,
+          deletion_decision_version: "decision-v1",
+          idempotency_key: "delete-finalize-1",
+        }),
+      ),
+    ).resolves.toMatchObject({ deleted: true, replayed: false });
+    expect((await metadata.findByRef(created.object_ref))?.state).toBe("deleted");
+  });
+
+  it("keeps metadata delete_pending when bytes are gone but DB finalization fails", async () => {
+    const metadata = new RejectDeleteFinalizationRepository();
+    const harness = createHarness("memory", metadata);
+    const created = await harness.store.putImmutable(
+      putRequest(new TextEncoder().encode("delete-pending")),
+    );
+    harness.setNow("2026-07-22T00:00:00.000Z");
+    await expect(
+      harness.store.deleteIfEligible(
+        authorizedRequest(harness, "delete", {
+          owner_service: "trigger_processor",
+          scope,
+          capability: "trigger_process.snapshot.manage",
+          object_ref: created.object_ref,
+          deletion_decision_version: "decision-v2",
+          idempotency_key: "delete-finalize-2",
+        }),
+      ),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof ObjectStoreErrorV1 &&
+        error.code === "storage_unavailable" &&
+        error.details.reconciliation_required === true &&
+        error.details.finalization_state === "pending",
+    );
+    expect((await metadata.findByRef(created.object_ref))?.state).toBe(
+      "delete_pending",
+    );
+  });
+});
+
+describe("ObjectStore streaming", () => {
+  it("moves a multi-megabyte object in bounded chunks and performs range reads at the backend", async () => {
+    const largePolicy = { ...policy, max_size_bytes: 8 * 1024 * 1024 };
+    const metadata = new InMemoryObjectMetadataRepositoryV1();
+    const accessPolicy = new TestObjectAccessPolicyVerifierV1();
+    const store = new InMemoryObjectStoreAdapterV1({
+      metadataRepository: metadata,
+      accessPolicyVerifier: accessPolicy,
+      policies: [largePolicy],
+      now: () => new Date("2026-07-20T00:00:00.000Z"),
+    });
+    const harness: Harness = { store, metadata, accessPolicy, setNow() {} };
+    const body = new Uint8Array(4 * 1024 * 1024);
+    body.fill(0x5a);
+    let producedChunks = 0;
+    async function* chunked(): AsyncIterable<Uint8Array> {
+      for (let offset = 0; offset < body.byteLength; offset += 64 * 1024) {
+        producedChunks += 1;
+        yield body.subarray(offset, offset + 64 * 1024);
+      }
+    }
+    const created = await store.putImmutable(
+      putRequest(body, { body: chunked(), idempotency_key: "large-stream" }),
+    );
+    expect(producedChunks).toBe(64);
+    const range = await store.getStream(
+      authorizedRequest(harness, "get", {
+        owner_service: "trigger_processor",
+        scope,
+        capability: "trigger_process.snapshot.resolve",
+        object_ref: created.object_ref,
+        range: { offset: 2 * 1024 * 1024, length: 128 * 1024 },
+      }),
+    );
+    expect((await readAll(range.body)).byteLength).toBe(128 * 1024);
+    expect(range.content_range).toBe(
+      `bytes 2097152-2228223/${body.byteLength}`,
+    );
   });
 });

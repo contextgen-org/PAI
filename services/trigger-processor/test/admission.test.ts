@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assertTriggerAdmissionCommitPreconditionV1,
   calculateTriggerPriorityV1,
   decideTriggerAdmissionV1,
 } from "../src/domain/admission.js";
@@ -11,10 +12,13 @@ const base = {
   bot_state: "active" as const,
   safety_blocked: false,
   active_process: "none" as const,
+  active_process_id: null,
+  active_process_slot_generation: null,
   trusted_strong_hint: false,
   explicit_interrupt: false,
   is_catch_up: false,
-  foreground_slot_occupied: false,
+  foreground_slot_process_id: null,
+  foreground_slot_generation: 7,
 };
 
 describe("Trigger admission", () => {
@@ -50,7 +54,9 @@ describe("Trigger admission", () => {
       decideTriggerAdmissionV1({
         ...base,
         active_process: "execution_running",
-        foreground_slot_occupied: true,
+        active_process_id: "process-active",
+        active_process_slot_generation: 7,
+        foreground_slot_process_id: "process-active",
       }),
     ).toMatchObject({
       priority: "weak",
@@ -85,7 +91,9 @@ describe("Trigger admission", () => {
         actor_type: "system",
         is_catch_up: true,
         active_process: "execution_running",
-        foreground_slot_occupied: true,
+        active_process_id: "process-active",
+        active_process_slot_generation: 7,
+        foreground_slot_process_id: "process-active",
       }),
     ).toMatchObject({
       trigger_status: "accepted",
@@ -100,15 +108,15 @@ describe("Trigger admission", () => {
     });
   });
 
-  it("rejects admission facts that disagree about the foreground slot", () => {
+  it("rejects admission facts with torn process identity or slot generation", () => {
     expect(() =>
       decideTriggerAdmissionV1({
         ...base,
         source: "timer",
         actor_type: "system",
-        foreground_slot_occupied: true,
+        foreground_slot_process_id: "process-raced-in",
       }),
-    ).toThrow("must come from one consistent admission snapshot");
+    ).toThrow("identity and foreground slot generation");
 
     expect(() =>
       decideTriggerAdmissionV1({
@@ -117,8 +125,58 @@ describe("Trigger admission", () => {
         actor_type: "system",
         is_catch_up: true,
         active_process: "execution_running",
+        active_process_id: "process-a",
+        active_process_slot_generation: 6,
+        foreground_slot_process_id: "process-a",
       }),
-    ).toThrow("must come from one consistent admission snapshot");
+    ).toThrow("identity and foreground slot generation");
+
+    expect(() =>
+      decideTriggerAdmissionV1({
+        ...base,
+        active_process: "execution_running",
+        active_process_id: "process-a",
+        active_process_slot_generation: 7,
+        foreground_slot_process_id: "process-b",
+      }),
+    ).toThrow("identity and foreground slot generation");
+  });
+
+  it("returns the exact slot CAS precondition consumed by admit_trigger_v1", () => {
+    expect(decideTriggerAdmissionV1(base)).toMatchObject({
+      foreground_slot_precondition: { process_id: null, generation: 7 },
+    });
+    expect(
+      decideTriggerAdmissionV1({
+        ...base,
+        active_process: "cooldown_waiting",
+        active_process_id: "process-active",
+        active_process_slot_generation: 7,
+        foreground_slot_process_id: "process-active",
+      }),
+    ).toMatchObject({
+      foreground_slot_precondition: {
+        process_id: "process-active",
+        generation: 7,
+      },
+    });
+  });
+
+  it("rejects commit when a concurrent slot transfer wins after the decision", () => {
+    const decision = decideTriggerAdmissionV1(base);
+    if (decision.trigger_status !== "accepted") throw new Error("expected accepted");
+    expect(() =>
+      assertTriggerAdmissionCommitPreconditionV1(decision, {
+        process_id: "process-b",
+        generation: 8,
+      }),
+    ).toThrow("changed before atomic trigger admission commit");
+    expect(() =>
+      assertTriggerAdmissionCommitPreconditionV1(decision, {
+        process_id: null,
+        generation: 7,
+      }),
+    ).not.toThrow();
   });
 
   it("rejects an inactive bot without producing a process state", () => {

@@ -1,0 +1,885 @@
+{
+  "$id": "urn:pai:trigger-processor:trigger-process-transition-evidence:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "runtime_terminal_outcome",
+        "runtime_terminal_event_ref",
+        "snapshot_append_ref",
+        "cooldown_until",
+        "completion_won_preempt_race",
+        "preempt_race_proof_ref",
+        "transition_audit_ref",
+        "outbox_event_ref"
+      ],
+      "properties": {
+        "kind": {
+          "const": "execution_completed",
+          "type": "string"
+        },
+        "runtime_terminal_outcome": {
+          "const": "completed",
+          "type": "string"
+        },
+        "runtime_terminal_event_ref": {
+          "pattern": "^trigger_event:[^\\r\\n]+$",
+          "type": "string"
+        },
+        "snapshot_append_ref": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        },
+        "cooldown_until": {
+          "minLength": 1,
+          "format": "date-time",
+          "type": "string"
+        },
+        "completion_won_preempt_race": {
+          "type": "boolean"
+        },
+        "preempt_race_proof_ref": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "transition_audit_ref": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        },
+        "outbox_event_ref": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "enqueue_reason",
+        "trigger_process_id",
+        "meta_enqueue_idempotency_key",
+        "process_lock_ref",
+        "cooldown_expired_at",
+        "snapshot_retention_until",
+        "preempted_by_process_id",
+        "existing_meta_enqueue_intent_ref",
+        "transition_audit_ref",
+        "meta_enqueue_outbox_ref"
+      ],
+      "properties": {
+        "kind": {
+          "const": "cooldown_expired_meta_enqueue",
+          "type": "string"
+        },
+        "enqueue_reason": {
+          "const": "cooldown_expired",
+          "type": "string"
+        },
+        "trigger_process_id": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        },
+        "meta_enqueue_idempotency_key": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        },
+        "process_lock_ref": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        },
+        "cooldown_expired_at": {
+          "minLength": 1,
+          "format": "date-time",
+          "type": "string"
+        },
+        "snapshot_retention_until": {
+          "minLength": 1,
+          "format": "date-time",
+          "type": "string"
+        },
+        "preempted_by_process_id": {
+          "type": "null"
+        },
+        "existing_meta_enqueue_intent_ref": {
+          "type": "null"
+        },
+        "transition_audit_ref": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        },
+        "meta_enqueue_outbox_ref": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "enqueue_reason",
+            "boundary_system_event_ref",
+            "snapshot_ref",
+            "snapshot_freeze_ref",
+            "learnable_snapshot_ready",
+            "transition_audit_ref",
+            "meta_enqueue_outbox_ref",
+            "runtime_state"
+          ],
+          "properties": {
+            "kind": {
+              "const": "meta_enqueue",
+              "type": "string"
+            },
+            "enqueue_reason": {
+              "anyOf": [
+                {
+                  "const": "user_retracted",
+                  "type": "string"
+                },
+                {
+                  "const": "system_interrupted",
+                  "type": "string"
+                },
+                {
+                  "const": "failed_with_learnable_snapshot",
+                  "type": "string"
+                }
+              ]
+            },
+            "boundary_system_event_ref": {
+              "pattern": "^system_event:[^\\r\\n]+$",
+              "type": "string"
+            },
+            "snapshot_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "snapshot_freeze_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "learnable_snapshot_ready": {
+              "const": true,
+              "type": "boolean"
+            },
+            "transition_audit_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "meta_enqueue_outbox_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "runtime_state": {
+              "const": "not_running",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "enqueue_reason",
+            "boundary_system_event_ref",
+            "snapshot_ref",
+            "snapshot_freeze_ref",
+            "learnable_snapshot_ready",
+            "transition_audit_ref",
+            "meta_enqueue_outbox_ref",
+            "runtime_state",
+            "runtime_stop_or_isolation_proof_ref"
+          ],
+          "properties": {
+            "kind": {
+              "const": "meta_enqueue",
+              "type": "string"
+            },
+            "enqueue_reason": {
+              "anyOf": [
+                {
+                  "const": "user_retracted",
+                  "type": "string"
+                },
+                {
+                  "const": "system_interrupted",
+                  "type": "string"
+                },
+                {
+                  "const": "failed_with_learnable_snapshot",
+                  "type": "string"
+                }
+              ]
+            },
+            "boundary_system_event_ref": {
+              "pattern": "^system_event:[^\\r\\n]+$",
+              "type": "string"
+            },
+            "snapshot_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "snapshot_freeze_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "learnable_snapshot_ready": {
+              "const": true,
+              "type": "boolean"
+            },
+            "transition_audit_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "meta_enqueue_outbox_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "runtime_state": {
+              "const": "stopped_or_isolated",
+              "type": "string"
+            },
+            "runtime_stop_or_isolation_proof_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "terminal_outcome",
+            "terminal_outcome_finalized_at",
+            "canonical_reason_code",
+            "transition_audit_ref",
+            "outbox_event_ref",
+            "runtime_state"
+          ],
+          "properties": {
+            "kind": {
+              "const": "explicit_cancel",
+              "type": "string"
+            },
+            "terminal_outcome": {
+              "const": "cancelled_with_reason",
+              "type": "string"
+            },
+            "terminal_outcome_finalized_at": {
+              "minLength": 1,
+              "format": "date-time",
+              "type": "string"
+            },
+            "canonical_reason_code": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "transition_audit_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "outbox_event_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "runtime_state": {
+              "const": "not_running",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "terminal_outcome",
+            "terminal_outcome_finalized_at",
+            "canonical_reason_code",
+            "transition_audit_ref",
+            "outbox_event_ref",
+            "runtime_state",
+            "runtime_stop_or_isolation_proof_ref"
+          ],
+          "properties": {
+            "kind": {
+              "const": "explicit_cancel",
+              "type": "string"
+            },
+            "terminal_outcome": {
+              "const": "cancelled_with_reason",
+              "type": "string"
+            },
+            "terminal_outcome_finalized_at": {
+              "minLength": 1,
+              "format": "date-time",
+              "type": "string"
+            },
+            "canonical_reason_code": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "transition_audit_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "outbox_event_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "runtime_state": {
+              "const": "stopped_or_isolated",
+              "type": "string"
+            },
+            "runtime_stop_or_isolation_proof_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "terminal_outcome",
+            "superseded_by_process_id",
+            "terminal_outcome_finalized_at",
+            "canonical_reason_code",
+            "transition_audit_ref",
+            "outbox_event_ref",
+            "runtime_state"
+          ],
+          "properties": {
+            "kind": {
+              "const": "explicit_cancel",
+              "type": "string"
+            },
+            "terminal_outcome": {
+              "const": "superseded_by_later_trigger",
+              "type": "string"
+            },
+            "superseded_by_process_id": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "terminal_outcome_finalized_at": {
+              "minLength": 1,
+              "format": "date-time",
+              "type": "string"
+            },
+            "canonical_reason_code": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "transition_audit_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "outbox_event_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "runtime_state": {
+              "const": "not_running",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "terminal_outcome",
+            "superseded_by_process_id",
+            "terminal_outcome_finalized_at",
+            "canonical_reason_code",
+            "transition_audit_ref",
+            "outbox_event_ref",
+            "runtime_state",
+            "runtime_stop_or_isolation_proof_ref"
+          ],
+          "properties": {
+            "kind": {
+              "const": "explicit_cancel",
+              "type": "string"
+            },
+            "terminal_outcome": {
+              "const": "superseded_by_later_trigger",
+              "type": "string"
+            },
+            "superseded_by_process_id": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "terminal_outcome_finalized_at": {
+              "minLength": 1,
+              "format": "date-time",
+              "type": "string"
+            },
+            "canonical_reason_code": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "transition_audit_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "outbox_event_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "runtime_state": {
+              "const": "stopped_or_isolated",
+              "type": "string"
+            },
+            "runtime_stop_or_isolation_proof_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "terminal_outcome",
+            "terminal_outcome_finalized_at",
+            "canonical_reason_code",
+            "transition_audit_ref",
+            "outbox_event_ref",
+            "runtime_state"
+          ],
+          "properties": {
+            "kind": {
+              "const": "unrecoverable_failure",
+              "type": "string"
+            },
+            "terminal_outcome": {
+              "const": "failed_with_reason",
+              "type": "string"
+            },
+            "terminal_outcome_finalized_at": {
+              "minLength": 1,
+              "format": "date-time",
+              "type": "string"
+            },
+            "canonical_reason_code": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "transition_audit_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "outbox_event_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "runtime_state": {
+              "const": "not_running",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "terminal_outcome",
+            "terminal_outcome_finalized_at",
+            "canonical_reason_code",
+            "transition_audit_ref",
+            "outbox_event_ref",
+            "runtime_state",
+            "runtime_stop_or_isolation_proof_ref"
+          ],
+          "properties": {
+            "kind": {
+              "const": "unrecoverable_failure",
+              "type": "string"
+            },
+            "terminal_outcome": {
+              "const": "failed_with_reason",
+              "type": "string"
+            },
+            "terminal_outcome_finalized_at": {
+              "minLength": 1,
+              "format": "date-time",
+              "type": "string"
+            },
+            "canonical_reason_code": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "transition_audit_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "outbox_event_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "runtime_state": {
+              "const": "stopped_or_isolated",
+              "type": "string"
+            },
+            "runtime_stop_or_isolation_proof_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "terminal_outcome",
+            "snapshot_freeze_ref",
+            "successor_process_id",
+            "snapshot_transfer_ref",
+            "foreground_slot_transfer_ref",
+            "terminal_outcome_finalized_at",
+            "canonical_reason_code",
+            "transition_audit_ref",
+            "outbox_event_ref",
+            "runtime_state"
+          ],
+          "properties": {
+            "kind": {
+              "const": "preempt_handoff",
+              "type": "string"
+            },
+            "terminal_outcome": {
+              "const": "preempted_and_handed_off",
+              "type": "string"
+            },
+            "snapshot_freeze_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "successor_process_id": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "snapshot_transfer_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "foreground_slot_transfer_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "terminal_outcome_finalized_at": {
+              "minLength": 1,
+              "format": "date-time",
+              "type": "string"
+            },
+            "canonical_reason_code": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "transition_audit_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "outbox_event_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "runtime_state": {
+              "const": "not_running",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "terminal_outcome",
+            "snapshot_freeze_ref",
+            "successor_process_id",
+            "snapshot_transfer_ref",
+            "foreground_slot_transfer_ref",
+            "terminal_outcome_finalized_at",
+            "canonical_reason_code",
+            "transition_audit_ref",
+            "outbox_event_ref",
+            "runtime_state",
+            "runtime_stop_or_isolation_proof_ref"
+          ],
+          "properties": {
+            "kind": {
+              "const": "preempt_handoff",
+              "type": "string"
+            },
+            "terminal_outcome": {
+              "const": "preempted_and_handed_off",
+              "type": "string"
+            },
+            "snapshot_freeze_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "successor_process_id": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "snapshot_transfer_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "foreground_slot_transfer_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "terminal_outcome_finalized_at": {
+              "minLength": 1,
+              "format": "date-time",
+              "type": "string"
+            },
+            "canonical_reason_code": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "transition_audit_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "outbox_event_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            },
+            "runtime_state": {
+              "const": "stopped_or_isolated",
+              "type": "string"
+            },
+            "runtime_stop_or_isolation_proof_ref": {
+              "minLength": 1,
+              "pattern": "^[^\\r\\n]+$",
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "terminal_outcome",
+        "terminal_outcome_finalized_at",
+        "canonical_process_id",
+        "merged_into_process_id",
+        "transition_audit_ref",
+        "outbox_event_ref"
+      ],
+      "properties": {
+        "kind": {
+          "const": "weak_merge",
+          "type": "string"
+        },
+        "terminal_outcome": {
+          "type": "null"
+        },
+        "terminal_outcome_finalized_at": {
+          "type": "null"
+        },
+        "canonical_process_id": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        },
+        "merged_into_process_id": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        },
+        "transition_audit_ref": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        },
+        "outbox_event_ref": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "terminal_outcome",
+        "terminal_outcome_finalized_at",
+        "canonical_reason_code",
+        "transition_audit_ref",
+        "outbox_event_ref"
+      ],
+      "properties": {
+        "kind": {
+          "const": "meta_finalization",
+          "type": "string"
+        },
+        "terminal_outcome": {
+          "$id": "urn:pai:trigger-processor:terminal-outcome:v1",
+          "anyOf": [
+            {
+              "const": "executed",
+              "type": "string"
+            },
+            {
+              "const": "merged_and_executed",
+              "type": "string"
+            },
+            {
+              "const": "superseded_by_later_trigger",
+              "type": "string"
+            },
+            {
+              "const": "deferred_then_executed",
+              "type": "string"
+            },
+            {
+              "const": "expired_with_audit_record",
+              "type": "string"
+            },
+            {
+              "const": "cancelled_with_reason",
+              "type": "string"
+            },
+            {
+              "const": "failed_with_reason",
+              "type": "string"
+            },
+            {
+              "const": "preempted_and_handed_off",
+              "type": "string"
+            },
+            {
+              "const": "interrupted_with_reason",
+              "type": "string"
+            }
+          ]
+        },
+        "terminal_outcome_finalized_at": {
+          "minLength": 1,
+          "format": "date-time",
+          "type": "string"
+        },
+        "canonical_reason_code": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        },
+        "transition_audit_ref": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        },
+        "outbox_event_ref": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

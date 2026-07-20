@@ -1,6 +1,9 @@
-import { Type, type Static, type TLiteral } from "@sinclair/typebox";
-
-import type { TypedEvidenceRefV1 } from "../shared/typed-evidence-ref.v1.js";
+import {
+  Type,
+  type Static,
+  type TLiteral,
+  type TProperties,
+} from "@sinclair/typebox";
 
 export const TERMINAL_OUTCOMES_V1 = [
   "executed",
@@ -20,6 +23,24 @@ export const TerminalOutcomeV1Schema = Type.Union(
 );
 
 export type TerminalOutcomeV1 = Static<typeof TerminalOutcomeV1Schema>;
+
+export const CLOSED_STATUS_TERMINAL_OUTCOMES_V1 = {
+  completed: [
+    "executed",
+    "merged_and_executed",
+    "deferred_then_executed",
+    "expired_with_audit_record",
+  ],
+  failed: ["failed_with_reason"],
+  preempted: ["preempted_and_handed_off"],
+  cancelled: [
+    "cancelled_with_reason",
+    "superseded_by_later_trigger",
+    "interrupted_with_reason",
+  ],
+} as const satisfies Readonly<
+  Record<"completed" | "failed" | "preempted" | "cancelled", readonly TerminalOutcomeV1[]>
+>;
 
 function activeState<
   const TPhase extends "admission" | "context" | "intent" | "execution",
@@ -136,101 +157,134 @@ const directEdges = new Set([
 
 const retryablePhases = new Set(["admission", "context", "intent", "execution"]);
 
-type RuntimeBoundaryEvidenceV1 =
-  | {
-      readonly runtime_state: "not_running";
-      readonly runtime_stop_or_isolation_proof_ref?: never;
-    }
-  | {
-      readonly runtime_state: "stopped_or_isolated";
-      readonly runtime_stop_or_isolation_proof_ref: string;
-    };
+const evidenceRefSchema = Type.String({ minLength: 1, pattern: "^[^\\r\\n]+$" });
+const timestampSchema = Type.String({ minLength: 1, format: "date-time" });
+const systemEventRefSchema = Type.String({ pattern: "^system_event:[^\\r\\n]+$" });
+const triggerEventRefSchema = Type.String({ pattern: "^trigger_event:[^\\r\\n]+$" });
 
-interface TerminalTransactionEvidenceV1 {
-  readonly terminal_outcome: TerminalOutcomeV1;
-  readonly terminal_outcome_finalized_at: string;
-  readonly canonical_reason_code: string;
-  readonly transition_audit_ref: string;
-  readonly outbox_event_ref: string;
+function strictEvidenceObject<const T extends TProperties>(properties: T) {
+  return Type.Object(properties, { additionalProperties: false });
 }
+
+function withRuntimeBoundary<const T extends TProperties>(properties: T) {
+  return Type.Union([
+    strictEvidenceObject({ ...properties, runtime_state: Type.Literal("not_running") }),
+    strictEvidenceObject({
+      ...properties,
+      runtime_state: Type.Literal("stopped_or_isolated"),
+      runtime_stop_or_isolation_proof_ref: evidenceRefSchema,
+    }),
+  ]);
+}
+
+const terminalTransactionProperties = {
+  terminal_outcome: TerminalOutcomeV1Schema,
+  terminal_outcome_finalized_at: timestampSchema,
+  canonical_reason_code: evidenceRefSchema,
+  transition_audit_ref: evidenceRefSchema,
+  outbox_event_ref: evidenceRefSchema,
+} as const;
 
 /**
  * Durable facts that must already be part of the same owner transaction as the
  * requested state transition. References are used instead of caller assertions
  * so repository code has to pass the persisted evidence it committed.
  */
-export type TriggerProcessTransitionEvidenceV1 =
-  | {
-      readonly kind: "execution_completed";
-      readonly runtime_terminal_outcome: "completed";
-      readonly runtime_terminal_event_ref: TypedEvidenceRefV1;
-      readonly snapshot_append_ref: string;
-      readonly cooldown_until: string;
-      readonly completion_won_preempt_race: boolean;
-      readonly preempt_race_proof_ref: string | null;
-      readonly transition_audit_ref: string;
-      readonly outbox_event_ref: string;
-    }
-  | {
-      readonly kind: "cooldown_expired_meta_enqueue";
-      readonly enqueue_reason: "cooldown_expired";
-      readonly trigger_process_id: string;
-      readonly meta_enqueue_idempotency_key: string;
-      readonly process_lock_ref: string;
-      readonly cooldown_expired_at: string;
-      readonly snapshot_retention_until: string;
-      readonly preempted_by_process_id: null;
-      readonly existing_meta_enqueue_intent_ref: null;
-      readonly transition_audit_ref: string;
-      readonly meta_enqueue_outbox_ref: string;
-    }
-  | ({
-      readonly kind: "meta_enqueue";
-      readonly enqueue_reason:
-        | "user_retracted"
-        | "system_interrupted"
-        | "failed_with_learnable_snapshot";
-      readonly boundary_system_event_ref: TypedEvidenceRefV1;
-      readonly snapshot_ref: string;
-      readonly snapshot_freeze_ref: string;
-      readonly learnable_snapshot_ready: true;
-      readonly transition_audit_ref: string;
-      readonly meta_enqueue_outbox_ref: string;
-    } & RuntimeBoundaryEvidenceV1)
-  | ({
-      readonly kind: "explicit_cancel";
-      readonly terminal_outcome:
-        | "cancelled_with_reason"
-        | "superseded_by_later_trigger";
-      readonly superseded_by_process_id?: string;
-    } & RuntimeBoundaryEvidenceV1 &
-      Omit<TerminalTransactionEvidenceV1, "terminal_outcome">)
-  | ({
-      readonly kind: "unrecoverable_failure";
-      readonly terminal_outcome: "failed_with_reason";
-    } & RuntimeBoundaryEvidenceV1 &
-      Omit<TerminalTransactionEvidenceV1, "terminal_outcome">)
-  | ({
-      readonly kind: "preempt_handoff";
-      readonly terminal_outcome: "preempted_and_handed_off";
-      readonly snapshot_freeze_ref: string;
-      readonly successor_process_id: string;
-      readonly snapshot_transfer_ref: string;
-      readonly foreground_slot_transfer_ref: string;
-    } & RuntimeBoundaryEvidenceV1 &
-      Omit<TerminalTransactionEvidenceV1, "terminal_outcome">)
-  | {
-      readonly kind: "weak_merge";
-      readonly terminal_outcome: null;
-      readonly terminal_outcome_finalized_at: null;
-      readonly canonical_process_id: string;
-      readonly merged_into_process_id: string;
-      readonly transition_audit_ref: string;
-      readonly outbox_event_ref: string;
-    }
-  | ({
-      readonly kind: "meta_finalization";
-    } & TerminalTransactionEvidenceV1);
+export const TriggerProcessTransitionEvidenceV1Schema = Type.Union(
+  [
+    strictEvidenceObject({
+      kind: Type.Literal("execution_completed"),
+      runtime_terminal_outcome: Type.Literal("completed"),
+      runtime_terminal_event_ref: triggerEventRefSchema,
+      snapshot_append_ref: evidenceRefSchema,
+      cooldown_until: timestampSchema,
+      completion_won_preempt_race: Type.Boolean(),
+      preempt_race_proof_ref: Type.Union([evidenceRefSchema, Type.Null()]),
+      transition_audit_ref: evidenceRefSchema,
+      outbox_event_ref: evidenceRefSchema,
+    }),
+    strictEvidenceObject({
+      kind: Type.Literal("cooldown_expired_meta_enqueue"),
+      enqueue_reason: Type.Literal("cooldown_expired"),
+      trigger_process_id: evidenceRefSchema,
+      meta_enqueue_idempotency_key: evidenceRefSchema,
+      process_lock_ref: evidenceRefSchema,
+      cooldown_expired_at: timestampSchema,
+      snapshot_retention_until: timestampSchema,
+      preempted_by_process_id: Type.Null(),
+      existing_meta_enqueue_intent_ref: Type.Null(),
+      transition_audit_ref: evidenceRefSchema,
+      meta_enqueue_outbox_ref: evidenceRefSchema,
+    }),
+    withRuntimeBoundary({
+      kind: Type.Literal("meta_enqueue"),
+      enqueue_reason: Type.Union([
+        Type.Literal("user_retracted"),
+        Type.Literal("system_interrupted"),
+        Type.Literal("failed_with_learnable_snapshot"),
+      ]),
+      boundary_system_event_ref: systemEventRefSchema,
+      snapshot_ref: evidenceRefSchema,
+      snapshot_freeze_ref: evidenceRefSchema,
+      learnable_snapshot_ready: Type.Literal(true),
+      transition_audit_ref: evidenceRefSchema,
+      meta_enqueue_outbox_ref: evidenceRefSchema,
+    }),
+    withRuntimeBoundary({
+      kind: Type.Literal("explicit_cancel"),
+      terminal_outcome: Type.Literal("cancelled_with_reason"),
+      ...Type.Omit(Type.Object(terminalTransactionProperties), ["terminal_outcome"]).properties,
+    }),
+    withRuntimeBoundary({
+      kind: Type.Literal("explicit_cancel"),
+      terminal_outcome: Type.Literal("superseded_by_later_trigger"),
+      superseded_by_process_id: evidenceRefSchema,
+      ...Type.Omit(Type.Object(terminalTransactionProperties), ["terminal_outcome"]).properties,
+    }),
+    withRuntimeBoundary({
+      kind: Type.Literal("unrecoverable_failure"),
+      terminal_outcome: Type.Literal("failed_with_reason"),
+      ...Type.Omit(Type.Object(terminalTransactionProperties), ["terminal_outcome"]).properties,
+    }),
+    withRuntimeBoundary({
+      kind: Type.Literal("preempt_handoff"),
+      terminal_outcome: Type.Literal("preempted_and_handed_off"),
+      snapshot_freeze_ref: evidenceRefSchema,
+      successor_process_id: evidenceRefSchema,
+      snapshot_transfer_ref: evidenceRefSchema,
+      foreground_slot_transfer_ref: evidenceRefSchema,
+      ...Type.Omit(Type.Object(terminalTransactionProperties), ["terminal_outcome"]).properties,
+    }),
+    strictEvidenceObject({
+      kind: Type.Literal("weak_merge"),
+      terminal_outcome: Type.Null(),
+      terminal_outcome_finalized_at: Type.Null(),
+      canonical_process_id: evidenceRefSchema,
+      merged_into_process_id: evidenceRefSchema,
+      transition_audit_ref: evidenceRefSchema,
+      outbox_event_ref: evidenceRefSchema,
+    }),
+    strictEvidenceObject({
+      kind: Type.Literal("meta_finalization"),
+      ...terminalTransactionProperties,
+    }),
+  ],
+  { $id: "urn:pai:trigger-processor:trigger-process-transition-evidence:v1" },
+);
+
+export type TriggerProcessTransitionEvidenceV1 = Static<
+  typeof TriggerProcessTransitionEvidenceV1Schema
+>;
+
+type RuntimeBoundaryEvidenceV1 = Extract<
+  TriggerProcessTransitionEvidenceV1,
+  { runtime_state: "not_running" | "stopped_or_isolated" }
+>;
+
+type TerminalTransactionEvidenceV1 = Extract<
+  TriggerProcessTransitionEvidenceV1,
+  { terminal_outcome: TerminalOutcomeV1 }
+>;
 
 function isNonEmptyRef(value: unknown): value is string {
   return (
@@ -241,11 +295,11 @@ function isNonEmptyRef(value: unknown): value is string {
   );
 }
 
-function isSystemEventRef(value: unknown): value is TypedEvidenceRefV1 {
+function isSystemEventRef(value: unknown): value is string {
   return typeof value === "string" && /^system_event:[^\r\n]+$/.test(value);
 }
 
-function isTriggerEventRef(value: unknown): value is TypedEvidenceRefV1 {
+function isTriggerEventRef(value: unknown): value is string {
   return typeof value === "string" && /^trigger_event:[^\r\n]+$/.test(value);
 }
 
@@ -279,6 +333,8 @@ function hasTerminalTransactionEvidence(
   return (
     to.terminal_reason !== "merged" &&
     isTerminalOutcome(evidence.terminal_outcome) &&
+    (CLOSED_STATUS_TERMINAL_OUTCOMES_V1[to.status] as readonly TerminalOutcomeV1[])
+      .includes(evidence.terminal_outcome) &&
     evidence.canonical_reason_code === to.terminal_reason &&
     isNonEmptyRef(evidence.canonical_reason_code) &&
     isTimestamp(evidence.terminal_outcome_finalized_at) &&

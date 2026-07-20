@@ -1,11 +1,12 @@
 export const REDACTED_VALUE = "[REDACTED]";
 
 const SENSITIVE_KEY_PATTERN =
-  /(?:^|_)(?:authorization|cookie|set_cookie|jwt|token|secret|password|private_key|api_key|signing_key|encryption_key|credential|prompt|tool_args?|tool_arguments?|tool_results?|artifact|object_content|provider_key)(?:$|_)/i;
+  /(?:^|_)(?:authorization|cookie|set_cookie|jwt|token|secret|password|private_key|api_key|signing_key|encryption_key|credential|grant|signed_url|access_decision_ref|prompt|tool_args?|tool_arguments?|tool_results?|artifact|object_content|provider_key)(?:$|_)/i;
 const SENSITIVE_STRING_PATTERNS = [
   /\bBearer\s+[A-Za-z0-9._~+/=-]+/i,
   /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/,
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
+  /[?&](?:token|signature|sig|x-amz-signature|x-goog-signature)=[^\s&#]+/i,
 ] as const;
 
 export const PINO_REDACTION_PATHS = [
@@ -18,6 +19,9 @@ export const PINO_REDACTION_PATHS = [
   "secret",
   "password",
   "private_key",
+  "grant",
+  "signed_url",
+  "access_decision_ref",
   "prompt",
   "tool_args",
   "tool_arguments",

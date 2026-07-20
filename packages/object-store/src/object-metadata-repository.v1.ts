@@ -60,6 +60,16 @@ export interface CompletePutInputV1 {
   readonly version: string;
 }
 
+export type PutFinalizationV1 =
+  | { readonly kind: "pending"; readonly object_ref: ObjectRefV1 }
+  | { readonly kind: "committed"; readonly record: ObjectMetadataRecordV1 }
+  | { readonly kind: "aborted_or_unknown" };
+
+export type DeleteFinalizationV1 =
+  | { readonly kind: "pending"; readonly object_ref: ObjectRefV1 }
+  | { readonly kind: "committed"; readonly record: ObjectMetadataRecordV1 }
+  | { readonly kind: "aborted_or_unknown" };
+
 export interface ReserveDeleteInputV1 {
   readonly object_ref: ObjectRefV1;
   readonly deletion_decision_version: string;
@@ -83,10 +93,12 @@ export type ReserveDeleteResultV1 =
 export interface ObjectMetadataRepositoryV1 {
   reservePut(input: ReservePutInputV1): Promise<ReservePutResultV1>;
   completePut(input: CompletePutInputV1): Promise<ObjectMetadataRecordV1>;
+  findPutFinalization(reservationId: string): Promise<PutFinalizationV1>;
   abortPut(reservationId: string): Promise<void>;
   findByRef(objectRef: ObjectRefV1): Promise<ObjectMetadataRecordV1 | undefined>;
   reserveDelete(input: ReserveDeleteInputV1): Promise<ReserveDeleteResultV1>;
   completeDelete(reservationId: string): Promise<ObjectMetadataRecordV1>;
+  findDeleteFinalization(reservationId: string): Promise<DeleteFinalizationV1>;
   abortDelete(reservationId: string): Promise<void>;
 }
 
@@ -121,6 +133,8 @@ export class InMemoryObjectMetadataRepositoryV1
   readonly #identityToRef = new Map<string, ObjectRefV1>();
   readonly #pendingPuts = new Map<string, PendingPut>();
   readonly #pendingDeletes = new Map<string, PendingDelete>();
+  readonly #completedPuts = new Map<string, ObjectMetadataRecordV1>();
+  readonly #completedDeletes = new Map<string, ObjectMetadataRecordV1>();
 
   public async reservePut(
     input: ReservePutInputV1,
@@ -175,7 +189,13 @@ export class InMemoryObjectMetadataRepositoryV1
     input: CompletePutInputV1,
   ): Promise<ObjectMetadataRecordV1> {
     const pending = this.#pendingPuts.get(input.reservation_id);
-    if (pending === undefined) throw new Error("unknown put reservation");
+    if (pending === undefined) {
+      const completed = this.#completedPuts.get(input.reservation_id);
+      if (completed !== undefined && completed.version === input.version) {
+        return completed;
+      }
+      throw new Error("unknown put reservation");
+    }
     const completed: ObjectMetadataRecordV1 = {
       ...pending.record,
       version: input.version,
@@ -183,7 +203,19 @@ export class InMemoryObjectMetadataRepositoryV1
     };
     this.#records.set(completed.object_ref, completed);
     this.#pendingPuts.delete(input.reservation_id);
+    this.#completedPuts.set(input.reservation_id, completed);
     return completed;
+  }
+
+  public async findPutFinalization(
+    reservationId: string,
+  ): Promise<PutFinalizationV1> {
+    const completed = this.#completedPuts.get(reservationId);
+    if (completed !== undefined) return { kind: "committed", record: completed };
+    const pending = this.#pendingPuts.get(reservationId);
+    return pending === undefined
+      ? { kind: "aborted_or_unknown" }
+      : { kind: "pending", object_ref: pending.record.object_ref };
   }
 
   public async abortPut(reservationId: string): Promise<void> {
@@ -244,7 +276,11 @@ export class InMemoryObjectMetadataRepositoryV1
     reservationId: string,
   ): Promise<ObjectMetadataRecordV1> {
     const pending = this.#pendingDeletes.get(reservationId);
-    if (pending === undefined) throw new Error("unknown delete reservation");
+    if (pending === undefined) {
+      const completed = this.#completedDeletes.get(reservationId);
+      if (completed !== undefined) return completed;
+      throw new Error("unknown delete reservation");
+    }
     const deleted: ObjectMetadataRecordV1 = {
       ...pending.previous,
       state: "deleted",
@@ -253,7 +289,19 @@ export class InMemoryObjectMetadataRepositoryV1
     };
     this.#records.set(deleted.object_ref, deleted);
     this.#pendingDeletes.delete(reservationId);
+    this.#completedDeletes.set(reservationId, deleted);
     return deleted;
+  }
+
+  public async findDeleteFinalization(
+    reservationId: string,
+  ): Promise<DeleteFinalizationV1> {
+    const completed = this.#completedDeletes.get(reservationId);
+    if (completed !== undefined) return { kind: "committed", record: completed };
+    const pending = this.#pendingDeletes.get(reservationId);
+    return pending === undefined
+      ? { kind: "aborted_or_unknown" }
+      : { kind: "pending", object_ref: pending.objectRef };
   }
 
   public async abortDelete(reservationId: string): Promise<void> {

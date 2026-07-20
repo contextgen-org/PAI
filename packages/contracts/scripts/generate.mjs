@@ -2,12 +2,13 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { SHARED_SCHEMA_CATALOG } from "../dist/catalog.js";
+import {
+  SHARED_SCHEMA_CATALOG,
+  TRIGGER_PROCESSOR_SCHEMA_CATALOG,
+} from "../dist/catalog.js";
 import {
   TRIGGER_PROCESS_STATE_V1_DATABASE_CHECK,
-  TriggerProcessStateV1Schema,
 } from "../dist/trigger-processor/trigger-process-state.v1.js";
-import { TriggerAdmissionDecisionV1Schema } from "../dist/trigger-processor/trigger-admission.v1.js";
 import { evaluateConflictPolicyV1 } from "../dist/policy/conflict-policy.v1.js";
 import { evaluateDirectActivePolicyV1 } from "../dist/policy/direct-active-policy.v1.js";
 import { findUnexpectedGeneratedFiles } from "./generated-output-drift.mjs";
@@ -33,7 +34,12 @@ async function emitGeneratedFile(outputPath, content) {
   await writeFile(outputPath, content);
 }
 
-for (const entry of SHARED_SCHEMA_CATALOG) {
+const schemaCatalog = [
+  ...SHARED_SCHEMA_CATALOG,
+  ...TRIGGER_PROCESSOR_SCHEMA_CATALOG,
+];
+
+for (const entry of schemaCatalog) {
   const schemaOutput = entry.generated_outputs.find((output) =>
     output.startsWith("generated/schema/"),
   );
@@ -52,7 +58,7 @@ await emitGeneratedFile(
       paths: {},
       components: {
         schemas: Object.fromEntries(
-          SHARED_SCHEMA_CATALOG.map((entry) => [entry.schema_name, entry.schema]),
+          schemaCatalog.map((entry) => [entry.schema_name, entry.schema]),
         ),
       },
     },
@@ -87,15 +93,6 @@ await emitGeneratedFile(
   ].join("\n"),
 );
 
-const triggerProcessSchemaPath = resolve(
-  packageRoot,
-  "generated/schema/trigger-processor/trigger-process-state.v1.json",
-);
-await emitGeneratedFile(
-  triggerProcessSchemaPath,
-  `${JSON.stringify(TriggerProcessStateV1Schema, null, 2)}\n`,
-);
-
 const triggerProcessCheckPath = resolve(
   packageRoot,
   "generated/sql/trigger-processor/trigger-process-state.v1.check.sql",
@@ -103,15 +100,6 @@ const triggerProcessCheckPath = resolve(
 await emitGeneratedFile(
   triggerProcessCheckPath,
   `${TRIGGER_PROCESS_STATE_V1_DATABASE_CHECK.trim()}\n`,
-);
-
-const triggerAdmissionSchemaPath = resolve(
-  packageRoot,
-  "generated/schema/trigger-processor/trigger-admission-decision.v1.json",
-);
-await emitGeneratedFile(
-  triggerAdmissionSchemaPath,
-  `${JSON.stringify(TriggerAdmissionDecisionV1Schema, null, 2)}\n`,
 );
 
 const policyFixtures = [

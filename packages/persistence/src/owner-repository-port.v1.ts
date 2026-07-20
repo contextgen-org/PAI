@@ -43,15 +43,17 @@ export interface OwnerTablePermissionV1<TTable extends string = string> {
   readonly writer_kind: OwnerWriterKindV1;
 }
 
+export type OwnerPostgresTypeV1 =
+  | "text"
+  | "bigint"
+  | "integer"
+  | "boolean"
+  | "jsonb"
+  | "timestamptz";
+
 export interface OwnerFunctionArgumentV1 {
   readonly argument_name: string;
-  readonly postgres_type:
-    | "text"
-    | "bigint"
-    | "integer"
-    | "boolean"
-    | "jsonb"
-    | "timestamptz";
+  readonly postgres_type: OwnerPostgresTypeV1;
   readonly mode: "in";
 }
 
@@ -65,6 +67,9 @@ export interface OwnerFunctionSignatureV1<
   readonly primary_table: TTable;
   readonly writer_kind: OwnerWriterKindV1;
   readonly arguments: readonly OwnerFunctionArgumentV1[];
+  readonly reads_tables: readonly TTable[];
+  readonly writes_tables: readonly TTable[];
+  readonly atomicity: "single_transaction";
   readonly returns: "jsonb" | "setof jsonb";
   readonly security_definer: true;
   readonly search_path: readonly [TSchema, "pg_temp"];
@@ -121,61 +126,6 @@ const writerKinds = new Set<OwnerWriterKindV1>([
   "outbox_claim_ack",
 ]);
 
-const standardArguments = {
-  immutable_append: [
-    ["p_idempotency_key", "text"],
-    ["p_request_hash", "text"],
-    ["p_body", "jsonb"],
-    ["p_trace_id", "text"],
-  ],
-  projection_upsert: [
-    ["p_projection_key", "text"],
-    ["p_expected_version", "bigint"],
-    ["p_request_hash", "text"],
-    ["p_body", "jsonb"],
-    ["p_trace_id", "text"],
-  ],
-  state_transition: [
-    ["p_entity_id", "text"],
-    ["p_expected_state", "text"],
-    ["p_next_state", "text"],
-    ["p_expected_version", "bigint"],
-    ["p_request_hash", "text"],
-    ["p_body", "jsonb"],
-    ["p_trace_id", "text"],
-  ],
-  pointer_cas: [
-    ["p_pointer_key", "text"],
-    ["p_expected_version", "bigint"],
-    ["p_next_ref", "text"],
-    ["p_request_hash", "text"],
-    ["p_trace_id", "text"],
-  ],
-  lease_fence: [
-    ["p_entity_id", "text"],
-    ["p_expected_generation", "bigint"],
-    ["p_expected_fence", "text"],
-    ["p_next_lease", "jsonb"],
-    ["p_request_hash", "text"],
-    ["p_trace_id", "text"],
-  ],
-} as const;
-
-const outboxClaimArguments = [
-  ["p_worker_id", "text"],
-  ["p_limit", "integer"],
-  ["p_lease_seconds", "integer"],
-  ["p_now", "timestamptz"],
-] as const;
-
-const outboxAckArguments = [
-  ["p_outbox_id", "text"],
-  ["p_claim_token", "text"],
-  ["p_outcome", "text"],
-  ["p_next_retry_at", "timestamptz"],
-  ["p_error_class", "text"],
-] as const;
-
 export function ownerFunctionSignatureV1<
   const TSchema extends OwnerSchemaV1,
   const TTable extends string,
@@ -184,57 +134,36 @@ export function ownerFunctionSignatureV1<
   readonly schema: TSchema;
   readonly function_name: TWriter;
   readonly primary_table: TTable;
-  readonly writer_kind: Exclude<OwnerWriterKindV1, "outbox_claim_ack">;
-}): OwnerFunctionSignatureV1<TSchema, TTable, TWriter>;
-export function ownerFunctionSignatureV1<
-  const TSchema extends OwnerSchemaV1,
-  const TTable extends string,
-  const TWriter extends string,
->(input: {
-  readonly schema: TSchema;
-  readonly function_name: TWriter;
-  readonly primary_table: TTable;
-  readonly writer_kind: "outbox_claim_ack";
-  readonly outbox_operation: "claim" | "ack";
-}): OwnerFunctionSignatureV1<TSchema, TTable, TWriter>;
-export function ownerFunctionSignatureV1(
-  input: {
-    readonly schema: OwnerSchemaV1;
-    readonly function_name: string;
-    readonly primary_table: string;
-    readonly writer_kind: OwnerWriterKindV1;
-    readonly outbox_operation?: "claim" | "ack";
-  },
-): OwnerFunctionSignatureV1 {
-  const outboxArguments =
-    input.outbox_operation === "claim"
-      ? outboxClaimArguments
-      : outboxAckArguments;
-  const pairs =
-    input.writer_kind === "outbox_claim_ack"
-      ? outboxArguments
-      : standardArguments[input.writer_kind];
-  const signature: OwnerFunctionSignatureV1 = {
+  readonly writer_kind: OwnerWriterKindV1;
+  readonly arguments: readonly (
+    readonly [argument_name: string, postgres_type: OwnerPostgresTypeV1]
+  )[];
+  readonly reads_tables: readonly TTable[];
+  readonly writes_tables: readonly TTable[];
+  readonly returns: "jsonb" | "setof jsonb";
+}): OwnerFunctionSignatureV1<TSchema, TTable, TWriter> {
+  const signature: OwnerFunctionSignatureV1<TSchema, TTable, TWriter> = {
     schema: input.schema,
     function_name: input.function_name,
     primary_table: input.primary_table,
     writer_kind: input.writer_kind,
-    arguments: pairs.map(([argument_name, postgres_type]) =>
+    arguments: input.arguments.map(([argument_name, postgres_type]) =>
       Object.freeze({
         argument_name,
         postgres_type,
         mode: "in" as const,
       }),
     ),
-    returns:
-      input.writer_kind === "outbox_claim_ack" &&
-      input.outbox_operation === "claim"
-        ? "setof jsonb"
-        : "jsonb",
+    reads_tables: [...input.reads_tables],
+    writes_tables: [...input.writes_tables],
+    atomicity: "single_transaction",
+    returns: input.returns,
     security_definer: true,
     search_path: [input.schema, "pg_temp"],
   };
   Object.freeze(signature.arguments);
+  Object.freeze(signature.reads_tables);
+  Object.freeze(signature.writes_tables);
   Object.freeze(signature.search_path);
   return Object.freeze(signature);
 }
@@ -322,19 +251,9 @@ export function defineOwnerRepositoryContractV1<
       permission,
     ]),
   );
+  const tablesWithWriter = new Set<string>();
   for (const signature of contract.function_signatures) {
     const tablePermission = permissionByTable.get(signature.primary_table);
-    const expectedArguments =
-      signature.writer_kind === "outbox_claim_ack"
-        ? signature.returns === "setof jsonb"
-          ? outboxClaimArguments
-          : outboxAckArguments
-        : standardArguments[signature.writer_kind];
-    const expectedReturn =
-      signature.writer_kind === "outbox_claim_ack" &&
-      signature.returns === "setof jsonb"
-        ? "setof jsonb"
-        : "jsonb";
     if (
       signature.schema !== contract.schema ||
       tablePermission?.writer_kind !== signature.writer_kind ||
@@ -342,14 +261,14 @@ export function defineOwnerRepositoryContractV1<
       signature.search_path.length !== 2 ||
       signature.search_path[0] !== contract.schema ||
       signature.search_path[1] !== "pg_temp" ||
-      signature.returns !== expectedReturn ||
-      signature.arguments.length !== expectedArguments.length ||
-      signature.arguments.some(
-        (argument, index) =>
-          argument.argument_name !== expectedArguments[index]?.[0] ||
-          argument.postgres_type !== expectedArguments[index]?.[1] ||
-          argument.mode !== "in",
-      )
+      signature.atomicity !== "single_transaction" ||
+      signature.arguments.length === 0 ||
+      signature.arguments.some((argument) => argument.mode !== "in") ||
+      signature.reads_tables.length === 0 ||
+      signature.writes_tables.length === 0 ||
+      !signature.writes_tables.includes(signature.primary_table) ||
+      signature.reads_tables.some((table) => !tableSet.has(table)) ||
+      signature.writes_tables.some((table) => !tableSet.has(table))
     ) {
       throw new Error(
         `invalid generated writer signature: ${contract.schema}.${signature.function_name}`,
@@ -358,6 +277,23 @@ export function defineOwnerRepositoryContractV1<
     assertUniqueIdentifiers(
       `${signature.function_name}.arguments`,
       signature.arguments.map(({ argument_name }) => argument_name),
+    );
+    assertUniqueIdentifiers(
+      `${signature.function_name}.reads_tables`,
+      signature.reads_tables,
+    );
+    assertUniqueIdentifiers(
+      `${signature.function_name}.writes_tables`,
+      signature.writes_tables,
+    );
+    for (const table of signature.writes_tables) tablesWithWriter.add(table);
+  }
+  const tablesWithoutWriter = contract.tables.filter(
+    (table) => !tablesWithWriter.has(table),
+  );
+  if (tablesWithoutWriter.length > 0) {
+    throw new Error(
+      `${contract.owner_service} tables without an atomic writer: ${tablesWithoutWriter.join(", ")}`,
     );
   }
   for (const [label, tables] of [
@@ -428,19 +364,79 @@ export interface OwnerTransactionV1<TService extends OwnerDatabaseServiceIdV1> {
 export type OwnerWriterNameV1<TContract extends OwnerRepositoryContractV1> =
   TContract["mutable_writers"][number];
 
-export type OwnerAppendOnlyTableV1<
+const verifiedOwnerDeploymentBrand = Symbol("verifiedOwnerDeploymentV1");
+
+export interface OwnerRepositoryDeploymentArtifactV1<
   TContract extends OwnerRepositoryContractV1,
-> = TContract["append_only_tables"][number];
+> {
+  readonly schema: TContract["schema"];
+  readonly app_role: TContract["app_role"];
+  readonly direct_table_mutation_privileges: readonly string[];
+  readonly executable_functions: readonly TContract["mutable_writers"][number][];
+  readonly function_signatures: TContract["function_signatures"];
+}
+
+export interface VerifiedOwnerRepositoryDeploymentV1<
+  TService extends OwnerDatabaseServiceIdV1,
+> {
+  readonly owner_service: TService;
+  readonly verified_at: string;
+  readonly [verifiedOwnerDeploymentBrand]: true;
+}
+
+/**
+ * Called from service composition after inspecting pg_proc and information_schema.
+ * Application repositories cannot be constructed without this verified token.
+ */
+export function verifyOwnerRepositoryDeploymentV1<
+  const TContract extends OwnerRepositoryContractV1,
+>(
+  contract: TContract,
+  artifact: OwnerRepositoryDeploymentArtifactV1<TContract>,
+  verifiedAt: string,
+): VerifiedOwnerRepositoryDeploymentV1<TContract["owner_service"]> {
+  const expectedFunctions = [...contract.mutable_writers];
+  const deployedFunctions = [...artifact.executable_functions];
+  const signatureSnapshot = (signatures: readonly OwnerFunctionSignatureV1[]) =>
+    JSON.stringify(
+      signatures.map((signature) => ({
+        schema: signature.schema,
+        function_name: signature.function_name,
+        primary_table: signature.primary_table,
+        writer_kind: signature.writer_kind,
+        arguments: signature.arguments,
+        reads_tables: signature.reads_tables,
+        writes_tables: signature.writes_tables,
+        atomicity: signature.atomicity,
+        returns: signature.returns,
+        security_definer: signature.security_definer,
+        search_path: signature.search_path,
+      })),
+    );
+  if (
+    artifact.schema !== contract.schema ||
+    artifact.app_role !== contract.app_role ||
+    artifact.direct_table_mutation_privileges.length !== 0 ||
+    JSON.stringify(deployedFunctions) !== JSON.stringify(expectedFunctions) ||
+    signatureSnapshot(artifact.function_signatures) !==
+      signatureSnapshot(contract.function_signatures) ||
+    !Number.isFinite(Date.parse(verifiedAt))
+  ) {
+    throw new Error(
+      `deployed owner repository artifact drift for ${contract.owner_service}`,
+    );
+  }
+  return Object.freeze({
+    owner_service: contract.owner_service,
+    verified_at: verifiedAt,
+    [verifiedOwnerDeploymentBrand]: true,
+  }) as VerifiedOwnerRepositoryDeploymentV1<TContract["owner_service"]>;
+}
 
 export interface ExecuteOwnerWriterRequestV1<TWriter extends string> {
   readonly writer: TWriter;
   readonly arguments: Readonly<Record<string, unknown>>;
   readonly expected_rows: 1 | "one_or_more";
-}
-
-export interface AppendOwnerRowRequestV1<TTable extends string> {
-  readonly table: TTable;
-  readonly row: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -451,13 +447,12 @@ export interface OwnerRepositoryPortV1<
   TContract extends OwnerRepositoryContractV1,
 > {
   readonly contract: TContract;
+  readonly deployment: VerifiedOwnerRepositoryDeploymentV1<
+    TContract["owner_service"]
+  >;
   executeWriter<TResult>(
     transaction: OwnerTransactionV1<TContract["owner_service"]>,
     request: ExecuteOwnerWriterRequestV1<OwnerWriterNameV1<TContract>>,
-  ): Promise<TResult>;
-  appendImmutable<TResult>(
-    transaction: OwnerTransactionV1<TContract["owner_service"]>,
-    request: AppendOwnerRowRequestV1<OwnerAppendOnlyTableV1<TContract>>,
   ): Promise<TResult>;
 }
 

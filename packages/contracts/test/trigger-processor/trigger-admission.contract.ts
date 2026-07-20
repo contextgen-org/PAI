@@ -14,6 +14,7 @@ const acceptedDecision = {
     wait_reason: null,
     terminal_reason: null,
   },
+  foreground_slot_precondition: { process_id: null, generation: 7 },
 } as const;
 
 describe("TriggerAdmissionDecisionV1", () => {
@@ -25,6 +26,20 @@ describe("TriggerAdmissionDecisionV1", () => {
       Value.Check(TriggerAdmissionDecisionV1Schema, {
         ...acceptedDecision,
         reason_code: "invented_future_reason",
+      }),
+    ).toBe(false);
+  });
+
+  it("requires an exact foreground slot identity and generation precondition", () => {
+    const { foreground_slot_precondition: _, ...withoutPrecondition } =
+      acceptedDecision;
+    expect(
+      Value.Check(TriggerAdmissionDecisionV1Schema, withoutPrecondition),
+    ).toBe(false);
+    expect(
+      Value.Check(TriggerAdmissionDecisionV1Schema, {
+        ...acceptedDecision,
+        foreground_slot_precondition: { process_id: "process-a", generation: -1 },
       }),
     ).toBe(false);
   });

@@ -17,9 +17,9 @@ the separate `pai-infra` repository.
 
 ## Development baseline
 
-- [20-day development plan](docs/development-plan-2026-07-20-to-2026-08-08.md)
-- [architecture traceability matrix](docs/architecture-traceability-matrix.md)
-- [`pai-infra` handoff v1](docs/pai-infra-handoff-v1.md)
+The repository does not version local planning notes. Development follows the
+[live Feishu architecture](https://k1mai98sti.feishu.cn/wiki/Jiy6wPVJtiymK8kTeqqcBiYCnjb),
+its parent document, and its non-deprecated child documents.
 
 ## Locked toolchain
 
