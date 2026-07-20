@@ -1,0 +1,285 @@
+import { randomUUID } from "node:crypto";
+
+import { Pool } from "pg";
+import { afterAll, describe, expect, it } from "vitest";
+
+import {
+  defineOwnerRepositoryContractV1,
+  ownerFunctionSignatureV1,
+  verifyOwnerRepositoryDeploymentFromPostgresV1,
+} from "../src/index.js";
+
+const databaseUrl = process.env.PAI_TEST_DATABASE_URL;
+
+const POSTGRES_CONTRACT = defineOwnerRepositoryContractV1({
+  contract_version: "owner_repository_contract.v1",
+  owner_service: "timer_trigger_app",
+  schema: "timer",
+  app_role: "pai_timer_app",
+  fresh_migrations: ["0300_timer"],
+  manifest_source: "services/timer-trigger-app/src/db/permission-manifest.v1.ts",
+  generated_permission_sql: [
+    "pai-infra/supabase/generated/permissions/0300_timer.sql",
+  ],
+  tables: ["contract_parents", "contract_children", "contract_audits"],
+  table_permissions: [
+    {
+      table_name: "contract_parents",
+      select_columns: ["parent_key", "parent_version"],
+      insert_columns: [],
+      update_columns: [],
+      delete_allowed: false,
+      writer_kind: "state_transition",
+    },
+    {
+      table_name: "contract_children",
+      select_columns: ["child_id", "parent_key", "parent_version", "payload"],
+      insert_columns: [],
+      update_columns: [],
+      delete_allowed: false,
+      writer_kind: "state_transition",
+    },
+    {
+      table_name: "contract_audits",
+      select_columns: ["audit_id", "child_id", "created_at"],
+      insert_columns: [],
+      update_columns: [],
+      delete_allowed: false,
+      writer_kind: "immutable_append",
+    },
+  ],
+  mutable_writers: ["write_contract_child_v1"],
+  function_signatures: [
+    ownerFunctionSignatureV1({
+      schema: "timer",
+      function_name: "write_contract_child_v1",
+      primary_table: "contract_children",
+      writer_kind: "state_transition",
+      arguments: [
+        ["p_parent_key", "text"],
+        ["p_expected_parent_version", "bigint"],
+        ["p_child_id", "text"],
+        ["p_payload", "jsonb"],
+      ],
+      reads_tables: ["contract_parents"],
+      writes_tables: [
+        "contract_parents",
+        "contract_children",
+        "contract_audits",
+      ],
+      returns: "jsonb",
+    }),
+  ],
+  foreign_keys: [
+    {
+      constraint_name: "contract_children_parent_fk",
+      table_name: "contract_children",
+      columns: ["parent_key", "parent_version"],
+      referenced_table: "contract_parents",
+      referenced_columns: ["parent_key", "parent_version"],
+    },
+  ],
+  append_only_tables: ["contract_audits"],
+  outbox_tables: [],
+  inbox_tables: [],
+  dlq_tables: [],
+  object_metadata_tables: [],
+} as const);
+
+const setupSql = `
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_migrator') THEN
+    CREATE ROLE pai_migrator NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_timer_app') THEN
+    CREATE ROLE pai_timer_app NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    CREATE ROLE anon NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    CREATE ROLE authenticated NOLOGIN;
+  END IF;
+END $$;
+DROP SCHEMA IF EXISTS timer CASCADE;
+CREATE SCHEMA timer AUTHORIZATION pai_migrator;
+REVOKE ALL ON SCHEMA timer FROM PUBLIC, anon, authenticated;
+GRANT USAGE ON SCHEMA timer TO pai_timer_app;
+SET ROLE pai_migrator;
+CREATE TABLE timer.contract_parents (
+  parent_key text NOT NULL,
+  parent_version bigint NOT NULL,
+  PRIMARY KEY (parent_key, parent_version)
+);
+CREATE TABLE timer.contract_children (
+  child_id text PRIMARY KEY,
+  parent_key text NOT NULL,
+  parent_version bigint NOT NULL,
+  payload jsonb NOT NULL,
+  CONSTRAINT contract_children_parent_fk
+    FOREIGN KEY (parent_key, parent_version)
+    REFERENCES timer.contract_parents(parent_key, parent_version)
+);
+CREATE TABLE timer.contract_audits (
+  audit_id text PRIMARY KEY,
+  child_id text NOT NULL,
+  created_at timestamptz NOT NULL
+);
+CREATE FUNCTION timer.write_contract_child_v1(
+  p_parent_key text,
+  p_expected_parent_version bigint,
+  p_child_id text,
+  p_payload jsonb
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = timer, pg_temp
+AS $$
+DECLARE
+  current_version bigint;
+  next_version bigint;
+BEGIN
+  SELECT parent_version INTO current_version
+    FROM timer.contract_parents WHERE parent_key = p_parent_key
+    ORDER BY parent_version DESC LIMIT 1 FOR UPDATE;
+  current_version := COALESCE(current_version, 0);
+  IF current_version <> p_expected_parent_version THEN
+    RAISE EXCEPTION 'stale parent version';
+  END IF;
+  next_version := current_version + 1;
+  INSERT INTO timer.contract_parents(parent_key, parent_version)
+    VALUES (p_parent_key, next_version);
+  INSERT INTO timer.contract_children(child_id, parent_key, parent_version, payload)
+    VALUES (p_child_id, p_parent_key, next_version, p_payload);
+  INSERT INTO timer.contract_audits(audit_id, child_id, created_at)
+    VALUES ('audit-' || p_child_id, p_child_id, clock_timestamp());
+  IF p_payload ? 'force_failure' THEN
+    RAISE EXCEPTION 'forced writer failure';
+  END IF;
+  RETURN jsonb_build_object('parent_version', next_version, 'child_id', p_child_id);
+END;
+$$;
+RESET ROLE;
+REVOKE ALL ON ALL TABLES IN SCHEMA timer FROM PUBLIC, anon, authenticated, pai_timer_app;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA timer FROM PUBLIC, anon, authenticated, pai_timer_app;
+GRANT SELECT (parent_key, parent_version) ON timer.contract_parents TO pai_timer_app;
+GRANT SELECT (child_id, parent_key, parent_version, payload) ON timer.contract_children TO pai_timer_app;
+GRANT SELECT (audit_id, child_id, created_at) ON timer.contract_audits TO pai_timer_app;
+GRANT EXECUTE ON FUNCTION timer.write_contract_child_v1(text, bigint, text, jsonb) TO pai_timer_app;
+`;
+
+const describePostgres = databaseUrl === undefined ? describe.skip : describe;
+
+describePostgres("PostgreSQL owner deployment verification", () => {
+  const pool = databaseUrl === undefined ? undefined : new Pool({ connectionString: databaseUrl });
+
+  afterAll(async () => {
+    await pool?.end();
+  });
+
+  async function reset(): Promise<Pool> {
+    if (pool === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
+    await pool.query(setupSql);
+    return pool;
+  }
+
+  it("derives a verified capability from PostgreSQL catalogs", async () => {
+    const postgres = await reset();
+    const verified = await verifyOwnerRepositoryDeploymentFromPostgresV1(
+      POSTGRES_CONTRACT,
+      postgres,
+      { expected_schema_owner: "pai_migrator" },
+    );
+    expect(verified).toMatchObject({ owner_service: "timer_trigger_app" });
+    expect(verified.contract_fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(verified.database_fingerprint).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it.each([
+    ["missing function", "DROP FUNCTION timer.write_contract_child_v1(text, bigint, text, jsonb)"],
+    ["direct DML", "GRANT UPDATE ON timer.contract_children TO pai_timer_app"],
+    ["PUBLIC execute", "GRANT EXECUTE ON FUNCTION timer.write_contract_child_v1(text, bigint, text, jsonb) TO PUBLIC"],
+    ["wrong search_path", "ALTER FUNCTION timer.write_contract_child_v1(text, bigint, text, jsonb) SET search_path = public"],
+    ["missing composite FK", "ALTER TABLE timer.contract_children DROP CONSTRAINT contract_children_parent_fk"],
+  ])("fails closed on %s drift", async (_label, driftSql) => {
+    const postgres = await reset();
+    await postgres.query(driftSql);
+    await expect(
+      verifyOwnerRepositoryDeploymentFromPostgresV1(POSTGRES_CONTRACT, postgres, {
+        expected_schema_owner: "pai_migrator",
+      }),
+    ).rejects.toThrow(/drift|missing/);
+  });
+
+  it("proves rollback and function-level atomic side effects", async () => {
+    const postgres = await reset();
+    await expect(
+      postgres.query(
+        `SELECT timer.write_contract_child_v1($1, $2, $3, $4::jsonb)`,
+        ["parent-rollback", "0", "child-rollback", { force_failure: true }],
+      ),
+    ).rejects.toThrow(/forced writer failure/);
+    const result = await postgres.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM timer.contract_parents
+       WHERE parent_key = 'parent-rollback'`,
+    );
+    expect(result.rows[0]?.count).toBe("0");
+    const audit = await postgres.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM timer.contract_audits
+       WHERE child_id = 'child-rollback'`,
+    );
+    expect(audit.rows[0]?.count).toBe("0");
+  });
+
+  it("serializes competing expected-version writers", async () => {
+    const postgres = await reset();
+    await postgres.query(
+      `SELECT timer.write_contract_child_v1($1, $2, $3, $4::jsonb)`,
+      ["parent-race", "0", `seed-${randomUUID()}`, {}],
+    );
+    const first = await postgres.connect();
+    const second = await postgres.connect();
+    try {
+      await first.query("BEGIN");
+      await second.query("BEGIN");
+      await first.query(
+        `SELECT timer.write_contract_child_v1($1, $2, $3, $4::jsonb)`,
+        ["parent-race", "1", `winner-${randomUUID()}`, {}],
+      );
+      const staleWrite = second.query(
+        `SELECT timer.write_contract_child_v1($1, $2, $3, $4::jsonb)`,
+        ["parent-race", "1", `loser-${randomUUID()}`, {}],
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await first.query("COMMIT");
+      await expect(staleWrite).rejects.toThrow(/stale parent version/);
+      await second.query("ROLLBACK");
+    } finally {
+      first.release();
+      second.release();
+    }
+  });
+
+  it("denies the public application roles and direct app DML", async () => {
+    const postgres = await reset();
+    const client = await postgres.connect();
+    try {
+      await client.query("SET ROLE authenticated");
+      await expect(
+        client.query(
+          `SELECT timer.write_contract_child_v1('p', 0, 'c', '{}'::jsonb)`,
+        ),
+      ).rejects.toThrow(/permission denied/);
+      await client.query("RESET ROLE");
+      await client.query("SET ROLE pai_timer_app");
+      await expect(
+        client.query(
+          `UPDATE timer.contract_children SET payload = '{}'::jsonb WHERE false`,
+        ),
+      ).rejects.toThrow(/permission denied/);
+    } finally {
+      await client.query("RESET ROLE").catch(() => undefined);
+      client.release();
+    }
+  });
+});

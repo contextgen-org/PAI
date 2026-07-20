@@ -266,6 +266,12 @@ export const TriggerProcessTransitionEvidenceV1Schema = Type.Union(
     }),
     strictEvidenceObject({
       kind: Type.Literal("meta_finalization"),
+      persisted_meta_enqueue_reason: Type.Union([
+        Type.Literal("cooldown_expired"),
+        Type.Literal("user_retracted"),
+        Type.Literal("system_interrupted"),
+        Type.Literal("failed_with_learnable_snapshot"),
+      ]),
       ...terminalTransactionProperties,
     }),
   ],
@@ -460,11 +466,24 @@ export function isTriggerProcessTransitionV1Allowed(
     }
 
     if (evidence?.kind === "meta_finalization") {
+      const reasonOutcomeMatches =
+        (evidence.persisted_meta_enqueue_reason === "user_retracted" &&
+          to.status === "cancelled" &&
+          evidence.terminal_outcome === "cancelled_with_reason") ||
+        (evidence.persisted_meta_enqueue_reason === "system_interrupted" &&
+          to.status === "cancelled" &&
+          evidence.terminal_outcome === "interrupted_with_reason") ||
+        (evidence.persisted_meta_enqueue_reason ===
+          "failed_with_learnable_snapshot" &&
+          to.status === "failed" &&
+          evidence.terminal_outcome === "failed_with_reason") ||
+        (evidence.persisted_meta_enqueue_reason === "cooldown_expired" &&
+          (to.status === "completed" || to.status === "failed") &&
+          (to.status !== "failed" ||
+            evidence.terminal_outcome === "failed_with_reason"));
       return (
         from.phase === "meta_enqueued" &&
-        (to.status === "completed" || to.status === "failed") &&
-        (to.status !== "failed" ||
-          evidence.terminal_outcome === "failed_with_reason") &&
+        reasonOutcomeMatches &&
         hasTerminalTransactionEvidence(to, evidence)
       );
     }

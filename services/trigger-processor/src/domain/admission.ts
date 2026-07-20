@@ -13,6 +13,7 @@ export interface TrustedAdmissionFactsV1 {
   readonly active_process: "none" | "execution_running" | "cooldown_waiting";
   readonly active_process_id: string | null;
   readonly active_process_slot_generation: number | null;
+  readonly active_process_updated_at: string | null;
   readonly trusted_strong_hint: boolean;
   readonly explicit_interrupt: boolean;
   readonly is_catch_up: boolean;
@@ -38,10 +39,18 @@ export class StaleTriggerAdmissionDecisionError extends Error {
 export function assertTriggerAdmissionCommitPreconditionV1(
   decision: Extract<TriggerAdmissionDecisionV1, { trigger_status: "accepted" }>,
   currentSlot: { readonly process_id: string | null; readonly generation: number },
+  currentProcess: {
+    readonly process_id: string;
+    readonly phase: "execution" | "cooldown";
+    readonly status: "running" | "waiting";
+    readonly updated_at: string;
+  } | null,
 ): void {
   if (
     decision.foreground_slot_precondition.process_id !== currentSlot.process_id ||
-    decision.foreground_slot_precondition.generation !== currentSlot.generation
+    decision.foreground_slot_precondition.generation !== currentSlot.generation ||
+    JSON.stringify(decision.process_state_precondition) !==
+      JSON.stringify(currentProcess)
   ) {
     throw new StaleTriggerAdmissionDecisionError();
   }
@@ -53,11 +62,13 @@ function assertConsistentForegroundState(
   const hasActiveProcess = facts.active_process !== "none";
   const hasActiveProcessIdentity = facts.active_process_id !== null;
   const hasForegroundProcess = facts.foreground_slot_process_id !== null;
+  const hasProcessVersion = facts.active_process_updated_at !== null;
   if (
     !Number.isSafeInteger(facts.foreground_slot_generation) ||
     facts.foreground_slot_generation < 0 ||
     hasActiveProcess !== hasActiveProcessIdentity ||
     hasActiveProcess !== hasForegroundProcess ||
+    hasActiveProcess !== hasProcessVersion ||
     facts.active_process_id !== facts.foreground_slot_process_id ||
     (hasActiveProcess &&
       facts.active_process_slot_generation !== facts.foreground_slot_generation) ||
@@ -112,11 +123,41 @@ export function decideTriggerAdmissionV1(
 ): TriggerAdmissionDecisionV1 {
   assertConsistentForegroundState(facts);
   const priority = calculateTriggerPriorityV1(facts);
+  const processStatePrecondition:
+    | null
+    | {
+        readonly process_id: string;
+        readonly phase: "execution";
+        readonly status: "running";
+        readonly updated_at: string;
+      }
+    | {
+        readonly process_id: string;
+        readonly phase: "cooldown";
+        readonly status: "waiting";
+        readonly updated_at: string;
+      } =
+    facts.active_process === "none"
+      ? null
+      : facts.active_process === "execution_running"
+        ? {
+            process_id: facts.active_process_id as string,
+            phase: "execution",
+            status: "running",
+            updated_at: facts.active_process_updated_at as string,
+          }
+        : {
+            process_id: facts.active_process_id as string,
+            phase: "cooldown",
+            status: "waiting",
+            updated_at: facts.active_process_updated_at as string,
+          };
   const commitPrecondition = {
     foreground_slot_precondition: {
       process_id: facts.foreground_slot_process_id,
       generation: facts.foreground_slot_generation,
     },
+    process_state_precondition: processStatePrecondition,
   } as const;
 
   if (facts.bot_state !== "active") {
@@ -179,15 +220,33 @@ export function decideTriggerAdmissionV1(
 
   if (priority === "strong") {
     if (facts.active_process === "none") {
+      if (facts.explicit_interrupt) {
+        return {
+          ...commitPrecondition,
+          trigger_status: "accepted",
+          priority: "strong",
+          action: "dispatch",
+          reason_code: "explicit_interrupt",
+          initial_process_state: runningAdmissionState,
+        };
+      }
       return {
         ...commitPrecondition,
         trigger_status: "accepted",
         priority: "strong",
         action: "dispatch",
-        reason_code: facts.explicit_interrupt
-          ? "explicit_interrupt"
-          : "strong_no_active_dispatch",
+        reason_code: "strong_no_active_dispatch",
         initial_process_state: runningAdmissionState,
+      };
+    }
+    if (facts.explicit_interrupt) {
+      return {
+        ...commitPrecondition,
+        trigger_status: "accepted",
+        priority: "strong",
+        action: "dispatch_or_preempt",
+        reason_code: "explicit_interrupt",
+        initial_process_state: waitingAdmissionState("preempt_commit"),
       };
     }
     return {
@@ -195,9 +254,7 @@ export function decideTriggerAdmissionV1(
       trigger_status: "accepted",
       priority: "strong",
       action: "dispatch_or_preempt",
-      reason_code: facts.explicit_interrupt
-        ? "explicit_interrupt"
-        : "strong_preempt_active",
+      reason_code: "strong_preempt_active",
       initial_process_state: waitingAdmissionState("preempt_commit"),
     };
   }

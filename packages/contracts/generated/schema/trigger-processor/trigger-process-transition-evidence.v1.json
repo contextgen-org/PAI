@@ -807,6 +807,7 @@
       "type": "object",
       "required": [
         "kind",
+        "persisted_meta_enqueue_reason",
         "terminal_outcome",
         "terminal_outcome_finalized_at",
         "canonical_reason_code",
@@ -817,6 +818,26 @@
         "kind": {
           "const": "meta_finalization",
           "type": "string"
+        },
+        "persisted_meta_enqueue_reason": {
+          "anyOf": [
+            {
+              "const": "cooldown_expired",
+              "type": "string"
+            },
+            {
+              "const": "user_retracted",
+              "type": "string"
+            },
+            {
+              "const": "system_interrupted",
+              "type": "string"
+            },
+            {
+              "const": "failed_with_learnable_snapshot",
+              "type": "string"
+            }
+          ]
         },
         "terminal_outcome": {
           "$id": "urn:pai:trigger-processor:terminal-outcome:v1",

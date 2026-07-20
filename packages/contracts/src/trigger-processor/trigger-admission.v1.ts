@@ -23,6 +23,8 @@ export type TriggerSourceV1 = Static<typeof TriggerSourceV1Schema>;
 export type TriggerActorTypeV1 = Static<typeof TriggerActorTypeV1Schema>;
 export type TriggerPriorityV1 = Static<typeof TriggerPriorityV1Schema>;
 
+export const MAX_SAFE_SLOT_GENERATION_V1 = Number.MAX_SAFE_INTEGER;
+
 export const ACCEPTED_TRIGGER_ADMISSION_REASON_CODES_V1 = [
   "catch_up_foreground_busy",
   "timer_catch_up",
@@ -94,10 +96,36 @@ function acceptedDecisionSchema<
       foreground_slot_precondition: Type.Object(
         {
           process_id: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-          generation: Type.Integer({ minimum: 0 }),
+          generation: Type.Integer({
+            minimum: 0,
+            maximum: MAX_SAFE_SLOT_GENERATION_V1,
+          }),
         },
         { additionalProperties: false },
       ),
+      process_state_precondition: Type.Union([
+        Type.Null(),
+        Type.Union([
+          Type.Object(
+            {
+              process_id: Type.String({ minLength: 1 }),
+              phase: Type.Literal("execution"),
+              status: Type.Literal("running"),
+              updated_at: Type.String({ minLength: 1 }),
+            },
+            { additionalProperties: false },
+          ),
+          Type.Object(
+            {
+              process_id: Type.String({ minLength: 1 }),
+              phase: Type.Literal("cooldown"),
+              status: Type.Literal("waiting"),
+              updated_at: Type.String({ minLength: 1 }),
+            },
+            { additionalProperties: false },
+          ),
+        ]),
+      ]),
     },
     { additionalProperties: false },
   );

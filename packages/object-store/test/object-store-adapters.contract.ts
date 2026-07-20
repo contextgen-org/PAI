@@ -17,6 +17,7 @@ import {
   type ObjectRefV1,
   type ObjectScopeV1,
   type ObjectStorePortV1,
+  type ObjectStoreReconciliationPortV1,
 } from "../src/index.js";
 import {
   PAI_OBJECT_CLASS_POLICY_BASES_V1,
@@ -29,6 +30,11 @@ import {
 } from "../src/composition.js";
 import { InMemoryObjectStoreAdapterV1 } from "../src/in-memory-object-store-adapter.v1.js";
 import { InMemoryObjectMetadataRepositoryV1 } from "../src/object-metadata-repository.v1.js";
+import {
+  InMemoryObjectStorageBackendV1,
+  ObjectStorageBackendErrorV1,
+  type PutBackendObjectV1,
+} from "../src/object-storage-backend.v1.js";
 import { objectScopeFingerprintV1 } from "../src/object-store-adapter-core.v1.js";
 
 const policy: ObjectClassPolicyV1 = {
@@ -687,10 +693,16 @@ class CommitPutThenThrowRepository extends InMemoryObjectMetadataRepositoryV1 {
 }
 
 class RejectPutFinalizationRepository extends InMemoryObjectMetadataRepositoryV1 {
+  #rejectNext = true;
+
   public override async completePut(
-    _input: Parameters<InMemoryObjectMetadataRepositoryV1["completePut"]>[0],
-  ): Promise<never> {
-    throw new Error("injected pre-commit failure");
+    input: Parameters<InMemoryObjectMetadataRepositoryV1["completePut"]>[0],
+  ) {
+    if (this.#rejectNext) {
+      this.#rejectNext = false;
+      throw new Error("injected pre-commit failure");
+    }
+    return super.completePut(input);
   }
 }
 
@@ -702,8 +714,36 @@ class CommitDeleteThenThrowRepository extends InMemoryObjectMetadataRepositoryV1
 }
 
 class RejectDeleteFinalizationRepository extends InMemoryObjectMetadataRepositoryV1 {
-  public override async completeDelete(_reservationId: string): Promise<never> {
-    throw new Error("injected pre-commit delete finalization failure");
+  #rejectNext = true;
+
+  public override async completeDelete(reservationId: string) {
+    if (this.#rejectNext) {
+      this.#rejectNext = false;
+      throw new Error("injected pre-commit delete finalization failure");
+    }
+    return super.completeDelete(reservationId);
+  }
+}
+
+class FailFirstIntegrityCleanupBackend extends InMemoryObjectStorageBackendV1 {
+  #corruptNextHead = true;
+  #failNextDelete = true;
+
+  public override async putIfAbsent(request: PutBackendObjectV1) {
+    const head = await super.putIfAbsent(request);
+    if (!this.#corruptNextHead) return head;
+    this.#corruptNextHead = false;
+    return { ...head, sha256: `sha256:${"0".repeat(64)}` };
+  }
+
+  public override async delete(
+    ...input: Parameters<InMemoryObjectStorageBackendV1["delete"]>
+  ): Promise<void> {
+    if (this.#failNextDelete) {
+      this.#failNextDelete = false;
+      throw new ObjectStorageBackendErrorV1("unavailable", "injected delete failure");
+    }
+    return super.delete(...input);
   }
 }
 
@@ -735,9 +775,13 @@ describe("ObjectStore ambiguous finalization recovery", () => {
         error.details.reconciliation_required === true &&
         error.details.finalization_state === "pending",
     );
-    await expect(harness.store.putImmutable(putRequest(body))).rejects.toSatisfy(
-      expectCode("precondition_failed"),
-    );
+    await expect(harness.store.putImmutable(putRequest(body))).resolves.toMatchObject({
+      replayed: true,
+    });
+    await expect(
+      (harness.store as ObjectStorePortV1 & ObjectStoreReconciliationPortV1)
+        .reconcilePending({ worker_id: "duplicate-worker", limit: 10, lease_seconds: 30 }),
+    ).resolves.toEqual({ claimed: 0, completed: 0, retry_scheduled: 0 });
   });
 
   it("queries a delete reservation after commit-then-throw and reports the committed delete", async () => {
@@ -790,6 +834,62 @@ describe("ObjectStore ambiguous finalization recovery", () => {
     expect((await metadata.findByRef(created.object_ref))?.state).toBe(
       "delete_pending",
     );
+    await expect(
+      harness.store.deleteIfEligible(
+        authorizedRequest(harness, "delete", {
+          owner_service: "trigger_processor",
+          scope,
+          capability: "trigger_process.snapshot.manage",
+          object_ref: created.object_ref,
+          deletion_decision_version: "decision-v2",
+          idempotency_key: "delete-finalize-2",
+        }),
+      ),
+    ).resolves.toMatchObject({ deleted: true, replayed: true });
+  });
+
+  it("recovers a durable pending put after adapter restart", async () => {
+    const metadata = new RejectPutFinalizationRepository();
+    const backend = new InMemoryObjectStorageBackendV1();
+    const accessPolicy = new TestObjectAccessPolicyVerifierV1();
+    const options = {
+      metadataRepository: metadata,
+      backend,
+      accessPolicyVerifier: accessPolicy,
+      policies: [policy],
+      now: () => new Date("2026-07-20T00:00:00.000Z"),
+    };
+    const body = new TextEncoder().encode("restart-reconciliation");
+    const beforeRestart = new InMemoryObjectStoreAdapterV1(options);
+    await expect(beforeRestart.putImmutable(putRequest(body))).rejects.toSatisfy(
+      expectCode("storage_unavailable"),
+    );
+    const afterRestart = new InMemoryObjectStoreAdapterV1(options);
+    await expect(afterRestart.putImmutable(putRequest(body))).resolves.toMatchObject({
+      replayed: true,
+    });
+  });
+
+  it("keeps metadata traceability when integrity cleanup initially fails", async () => {
+    const metadata = new InMemoryObjectMetadataRepositoryV1();
+    const backend = new FailFirstIntegrityCleanupBackend();
+    const store = new InMemoryObjectStoreAdapterV1({
+      metadataRepository: metadata,
+      backend,
+      accessPolicyVerifier: new TestObjectAccessPolicyVerifierV1(),
+      policies: [policy],
+      now: () => new Date("2026-07-20T00:00:00.000Z"),
+    });
+    const body = new TextEncoder().encode("cleanup-reconciliation");
+    await expect(store.putImmutable(putRequest(body))).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof ObjectStoreErrorV1 &&
+        error.details.reconciliation_operation === "put_cleanup",
+    );
+    await expect(store.putImmutable(putRequest(body))).resolves.toMatchObject({
+      replayed: false,
+      sha256: digest(body),
+    });
   });
 });
 

@@ -53,6 +53,7 @@ export type ReservePutResultV1 =
     }
   | { readonly kind: "replay"; readonly record: ObjectMetadataRecordV1 }
   | { readonly kind: "conflict" }
+  | { readonly kind: "pending"; readonly reservation_id: string }
   | { readonly kind: "busy" };
 
 export interface CompletePutInputV1 {
@@ -83,8 +84,43 @@ export type ReserveDeleteResultV1 =
   | { readonly kind: "retention_active"; readonly retention_until: string }
   | { readonly kind: "hold_active" }
   | { readonly kind: "conflict" }
+  | { readonly kind: "pending"; readonly reservation_id: string }
   | { readonly kind: "busy" }
   | { readonly kind: "not_found" };
+
+export type ObjectReconciliationOperationV1 =
+  | "put_finalize"
+  | "put_cleanup"
+  | "delete_finalize";
+
+export interface ObjectReconciliationClaimV1 {
+  readonly reservation_id: string;
+  readonly claim_token: string;
+  readonly operation: ObjectReconciliationOperationV1;
+  readonly record: ObjectMetadataRecordV1;
+  readonly attempt: number;
+}
+
+export interface ClaimObjectReconciliationInputV1 {
+  readonly worker_id: string;
+  readonly now: Date;
+  readonly locked_until: Date;
+  readonly limit: number;
+  readonly reservation_id?: string;
+}
+
+export interface CompleteObjectReconciliationInputV1 {
+  readonly reservation_id: string;
+  readonly claim_token: string;
+  readonly version?: string;
+}
+
+export interface ReleaseObjectReconciliationInputV1 {
+  readonly reservation_id: string;
+  readonly claim_token: string;
+  readonly last_error: string;
+  readonly next_retry_at: Date;
+}
 
 /**
  * Implementations live in each owner schema. They must make every reserve/commit
@@ -100,15 +136,38 @@ export interface ObjectMetadataRepositoryV1 {
   completeDelete(reservationId: string): Promise<ObjectMetadataRecordV1>;
   findDeleteFinalization(reservationId: string): Promise<DeleteFinalizationV1>;
   abortDelete(reservationId: string): Promise<void>;
+  handoffPutReconciliation(
+    reservationId: string,
+    operation: "put_finalize" | "put_cleanup",
+  ): Promise<void>;
+  handoffDeleteReconciliation(reservationId: string): Promise<void>;
+  claimReconciliation(
+    input: ClaimObjectReconciliationInputV1,
+  ): Promise<readonly ObjectReconciliationClaimV1[]>;
+  completeReconciliation(
+    input: CompleteObjectReconciliationInputV1,
+  ): Promise<ObjectMetadataRecordV1 | undefined>;
+  releaseReconciliation(
+    input: ReleaseObjectReconciliationInputV1,
+  ): Promise<void>;
 }
 
-interface PendingPut {
+interface ReconciliationLease {
+  operation: ObjectReconciliationOperationV1 | null;
+  claimToken?: string;
+  lockedUntil?: Date;
+  attempt: number;
+  nextRetryAt?: Date;
+  lastError?: string;
+}
+
+interface PendingPut extends ReconciliationLease {
   readonly reservationId: string;
   readonly identityKey: string;
   readonly record: ObjectMetadataRecordV1;
 }
 
-interface PendingDelete {
+interface PendingDelete extends ReconciliationLease {
   readonly reservationId: string;
   readonly objectRef: ObjectRefV1;
   readonly previous: ObjectMetadataRecordV1;
@@ -150,6 +209,12 @@ export class InMemoryObjectMetadataRepositoryV1
       if (existing.state === "available") {
         return { kind: "replay", record: existing };
       }
+      const pending = [...this.#pendingPuts.values()].find(
+        ({ record }) => record.object_ref === existing.object_ref,
+      );
+      if (pending !== undefined && pending.operation !== null) {
+        return { kind: "pending", reservation_id: pending.reservationId };
+      }
       return { kind: "busy" };
     }
 
@@ -177,6 +242,8 @@ export class InMemoryObjectMetadataRepositoryV1
       reservationId,
       identityKey,
       record,
+      operation: null,
+      attempt: 0,
     });
     return {
       kind: "claimed",
@@ -243,6 +310,20 @@ export class InMemoryObjectMetadataRepositoryV1
         ? { kind: "replay", record }
         : { kind: "conflict" };
     }
+    if (record.state === "delete_pending") {
+      const pending = [...this.#pendingDeletes.values()].find(
+        ({ objectRef }) => objectRef === record.object_ref,
+      );
+      if (
+        pending !== undefined &&
+        pending.deletionDecisionVersion === input.deletion_decision_version &&
+        pending.idempotencyKey === input.idempotency_key &&
+        pending.operation !== null
+      ) {
+        return { kind: "pending", reservation_id: pending.reservationId };
+      }
+      return { kind: "busy" };
+    }
     if (record.state !== "available") return { kind: "busy" };
     if (record.legal_hold) return { kind: "hold_active" };
     if (new Date(record.retention_until).getTime() > input.now.getTime()) {
@@ -261,6 +342,8 @@ export class InMemoryObjectMetadataRepositoryV1
       previous: record,
       deletionDecisionVersion: input.deletion_decision_version,
       idempotencyKey: input.idempotency_key,
+      operation: null,
+      attempt: 0,
     };
     this.#pendingDeletes.set(reservationId, pending);
     this.#records.set(record.object_ref, {
@@ -309,6 +392,116 @@ export class InMemoryObjectMetadataRepositoryV1
     if (pending === undefined) return;
     this.#records.set(pending.objectRef, pending.previous);
     this.#pendingDeletes.delete(reservationId);
+  }
+
+  public async handoffPutReconciliation(
+    reservationId: string,
+    operation: "put_finalize" | "put_cleanup",
+  ): Promise<void> {
+    const pending = this.#pendingPuts.get(reservationId);
+    if (pending === undefined) return;
+    pending.operation = operation;
+    delete pending.claimToken;
+    delete pending.lockedUntil;
+    delete pending.nextRetryAt;
+  }
+
+  public async handoffDeleteReconciliation(reservationId: string): Promise<void> {
+    const pending = this.#pendingDeletes.get(reservationId);
+    if (pending === undefined) return;
+    pending.operation = "delete_finalize";
+    delete pending.claimToken;
+    delete pending.lockedUntil;
+    delete pending.nextRetryAt;
+  }
+
+  public async claimReconciliation(
+    input: ClaimObjectReconciliationInputV1,
+  ): Promise<readonly ObjectReconciliationClaimV1[]> {
+    const candidates: Array<PendingPut | PendingDelete> = [
+      ...this.#pendingPuts.values(),
+      ...this.#pendingDeletes.values(),
+    ];
+    const claims: ObjectReconciliationClaimV1[] = [];
+    for (const pending of candidates) {
+      if (claims.length >= input.limit) break;
+      if (
+        pending.operation === null ||
+        (input.reservation_id !== undefined &&
+          pending.reservationId !== input.reservation_id) ||
+        (pending.nextRetryAt !== undefined && pending.nextRetryAt > input.now) ||
+        (pending.lockedUntil !== undefined && pending.lockedUntil > input.now)
+      ) {
+        continue;
+      }
+      pending.attempt += 1;
+      pending.claimToken = `${input.worker_id}:${randomUUID()}`;
+      pending.lockedUntil = input.locked_until;
+      const record =
+        "record" in pending
+          ? pending.record
+          : this.#records.get(pending.objectRef);
+      if (record === undefined) continue;
+      claims.push({
+        reservation_id: pending.reservationId,
+        claim_token: pending.claimToken,
+        operation: pending.operation,
+        record,
+        attempt: pending.attempt,
+      });
+    }
+    return claims;
+  }
+
+  public async completeReconciliation(
+    input: CompleteObjectReconciliationInputV1,
+  ): Promise<ObjectMetadataRecordV1 | undefined> {
+    const put = this.#pendingPuts.get(input.reservation_id);
+    if (put !== undefined) {
+      if (put.claimToken !== input.claim_token) {
+        throw new Error("stale reconciliation claim");
+      }
+      if (put.operation === "put_cleanup") {
+        await this.abortPut(input.reservation_id);
+        return undefined;
+      }
+      if (put.operation !== "put_finalize") {
+        throw new Error("invalid put reconciliation completion");
+      }
+      if (input.version === undefined) {
+        await this.abortPut(input.reservation_id);
+        return undefined;
+      }
+      return this.completePut({
+        reservation_id: input.reservation_id,
+        version: input.version,
+      });
+    }
+    const deletion = this.#pendingDeletes.get(input.reservation_id);
+    if (
+      deletion === undefined ||
+      deletion.claimToken !== input.claim_token ||
+      deletion.operation !== "delete_finalize"
+    ) {
+      throw new Error("stale reconciliation claim");
+    }
+    return this.completeDelete(input.reservation_id);
+  }
+
+  public async releaseReconciliation(
+    input: ReleaseObjectReconciliationInputV1,
+  ): Promise<void> {
+    const pending =
+      this.#pendingPuts.get(input.reservation_id) ??
+      this.#pendingDeletes.get(input.reservation_id);
+    if (pending === undefined) return;
+    if (pending.claimToken !== input.claim_token) {
+      throw new Error("stale reconciliation claim");
+    }
+    delete pending.claimToken;
+    delete pending.lockedUntil;
+    pending.lastError = input.last_error;
+    pending.nextRetryAt = input.next_retry_at;
   }
 
   public setLegalHold(objectRef: ObjectRefV1, legalHold: boolean): void {

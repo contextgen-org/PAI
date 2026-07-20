@@ -29,6 +29,9 @@ import {
   type ObjectRefV1,
   type ObjectScopeV1,
   type ObjectStorePortV1,
+  type ObjectStoreReconciliationPortV1,
+  type ReconcileObjectStoreRequestV1,
+  type ReconcileObjectStoreResultV1,
   type ObjectStreamResultV1,
   type PutImmutableRequestV1,
   type PutImmutableResultV1,
@@ -265,7 +268,9 @@ function snapshotPolicy(policy: ObjectClassPolicyV1): ObjectClassPolicyV1 {
   });
 }
 
-export class ObjectStoreAdapterCoreV1 implements ObjectStorePortV1 {
+export class ObjectStoreAdapterCoreV1
+  implements ObjectStorePortV1, ObjectStoreReconciliationPortV1
+{
   readonly #backend: ObjectStorageBackendV1;
   readonly #metadata: ObjectMetadataRepositoryV1;
   readonly #accessPolicyVerifier: ObjectAccessPolicyVerifierV1;
@@ -356,7 +361,11 @@ export class ObjectStoreAdapterCoreV1 implements ObjectStorePortV1 {
     if (record === undefined || (!allowDeleted && record.state === "deleted")) {
       fail("object_not_found", "object was not found");
     }
-    if (record.state !== "available" && !(allowDeleted && record.state === "deleted")) {
+    if (
+      record.state !== "available" &&
+      !(allowDeleted &&
+        (record.state === "deleted" || record.state === "delete_pending"))
+    ) {
       fail("precondition_failed", "object is not available", true);
     }
     const policy = this.#policy(record.owner_service, record.object_class);
@@ -390,6 +399,112 @@ export class ObjectStoreAdapterCoreV1 implements ObjectStorePortV1 {
     }
   }
 
+  public async reconcilePending(
+    request: ReconcileObjectStoreRequestV1,
+  ): Promise<ReconcileObjectStoreResultV1> {
+    if (
+      !tokenPattern.test(request.worker_id) ||
+      !Number.isSafeInteger(request.limit) ||
+      request.limit < 1 ||
+      request.limit > 100 ||
+      !Number.isSafeInteger(request.lease_seconds) ||
+      request.lease_seconds < 1 ||
+      request.lease_seconds > 300
+    ) {
+      fail("precondition_failed", "invalid reconciliation claim request");
+    }
+    const now = this.#now();
+    const lockedUntil = new Date(now.getTime() + request.lease_seconds * 1_000);
+    let claims;
+    try {
+      claims = await this.#metadata.claimReconciliation({
+        worker_id: request.worker_id,
+        now,
+        locked_until: lockedUntil,
+        limit: request.limit,
+        ...(request.reservation_id === undefined
+          ? {}
+          : { reservation_id: request.reservation_id }),
+      });
+    } catch {
+      fail("storage_unavailable", "reconciliation claim is unavailable", true);
+    }
+    let completed = 0;
+    let retryScheduled = 0;
+    for (const claim of claims) {
+      const policy = this.#policy(
+        claim.record.owner_service,
+        claim.record.object_class,
+      );
+      const key = physicalObjectKey(claim.record);
+      try {
+        if (claim.operation === "put_finalize") {
+          let head: BackendObjectHeadV1 | undefined;
+          try {
+            head = await this.#backend.head(policy.bucket, key);
+          } catch (error) {
+            if (
+              error instanceof ObjectStorageBackendErrorV1 &&
+              error.code === "not_found" &&
+              claim.attempt >= 3
+            ) {
+              await this.#metadata.completeReconciliation({
+                reservation_id: claim.reservation_id,
+                claim_token: claim.claim_token,
+              });
+              completed += 1;
+              continue;
+            }
+            throw error;
+          }
+          if (
+            head.version.length === 0 ||
+            head.sha256 !== claim.record.sha256 ||
+            head.size_bytes !== claim.record.size_bytes ||
+            head.media_type !== claim.record.media_type
+          ) {
+            throw new Error("pending put physical metadata mismatch");
+          }
+          await this.#metadata.completeReconciliation({
+            reservation_id: claim.reservation_id,
+            claim_token: claim.claim_token,
+            version: head.version,
+          });
+        } else {
+          try {
+            await this.#backend.delete(policy.bucket, key);
+          } catch (error) {
+            if (
+              !(error instanceof ObjectStorageBackendErrorV1) ||
+              error.code !== "not_found"
+            ) {
+              throw error;
+            }
+          }
+          await this.#metadata.completeReconciliation({
+            reservation_id: claim.reservation_id,
+            claim_token: claim.claim_token,
+          });
+        }
+        completed += 1;
+      } catch (error) {
+        retryScheduled += 1;
+        await this.#metadata.releaseReconciliation({
+          reservation_id: claim.reservation_id,
+          claim_token: claim.claim_token,
+          last_error:
+            error instanceof Error ? error.message.slice(0, 1_024) : "unknown",
+          next_retry_at: new Date(now.getTime() + Math.min(60_000, claim.attempt * 1_000)),
+        });
+      }
+    }
+    return {
+      claimed: claims.length,
+      completed,
+      retry_scheduled: retryScheduled,
+    };
+  }
+
   public async putImmutable(
     request: PutImmutableRequestV1,
   ): Promise<PutImmutableResultV1> {
@@ -412,9 +527,8 @@ export class ObjectStoreAdapterCoreV1 implements ObjectStorePortV1 {
     const scopeFingerprint = objectScopeFingerprintV1(request.scope);
     const fingerprint = requestFingerprint(request, scopeFingerprint);
 
-    let reservation;
-    try {
-      reservation = await this.#metadata.reservePut({
+    const reservePut = () =>
+      this.#metadata.reservePut({
         owner_service: request.owner_service,
         object_class: request.object_class,
         scope: request.scope,
@@ -426,14 +540,33 @@ export class ObjectStoreAdapterCoreV1 implements ObjectStorePortV1 {
         media_type: request.media_type,
         retention_until: request.retention_until,
       });
+    let reservation;
+    try {
+      reservation = await reservePut();
     } catch {
       fail("storage_unavailable", "owner metadata is unavailable", true);
     }
     if (reservation.kind === "conflict") {
       fail("idempotency_conflict", "idempotency key was reused with different input");
     }
-    if (reservation.kind === "busy") {
-      fail("precondition_failed", "an object transition is already in progress", true);
+    if (reservation.kind === "pending") {
+      await this.reconcilePending({
+        worker_id: "inline-put-retry",
+        limit: 1,
+        lease_seconds: 30,
+        reservation_id: reservation.reservation_id,
+      });
+      try {
+        reservation = await reservePut();
+      } catch {
+        fail("storage_unavailable", "owner metadata is unavailable", true);
+      }
+    }
+    if (reservation.kind === "pending" || reservation.kind === "busy") {
+      fail("precondition_failed", "object reconciliation is still pending", true);
+    }
+    if (reservation.kind === "conflict") {
+      fail("idempotency_conflict", "idempotency key was reused with different input");
     }
     if (reservation.kind === "replay") {
       return resultFromRecord(reservation.record, true);
@@ -465,9 +598,43 @@ export class ObjectStoreAdapterCoreV1 implements ObjectStorePortV1 {
         }
       }
       if (upload.failure() instanceof ObjectStoreErrorV1) {
-        await this.#backend.delete(policy.bucket, key).catch(() => undefined);
-        await this.#metadata.abortPut(reservation.reservation_id).catch(() => undefined);
-        throw upload.failure();
+        let physicalCleanupComplete = false;
+        try {
+          await this.#backend.delete(policy.bucket, key);
+          physicalCleanupComplete = true;
+        } catch (cleanupError) {
+          if (
+            cleanupError instanceof ObjectStorageBackendErrorV1 &&
+            cleanupError.code === "not_found"
+          ) {
+            physicalCleanupComplete = true;
+          }
+        }
+        if (!physicalCleanupComplete) {
+          try {
+            await this.#backend.head(policy.bucket, key);
+          } catch (cleanupHeadError) {
+            if (
+              cleanupHeadError instanceof ObjectStorageBackendErrorV1 &&
+              cleanupHeadError.code === "not_found"
+            ) {
+              physicalCleanupComplete = true;
+            }
+          }
+        }
+        if (physicalCleanupComplete) {
+          await this.#metadata.abortPut(reservation.reservation_id);
+          throw upload.failure();
+        } else {
+          await this.#metadata
+            .handoffPutReconciliation(reservation.reservation_id, "put_cleanup")
+            .catch(() => undefined);
+          fail("storage_unavailable", "integrity cleanup requires reconciliation", true, {
+            reconciliation_required: true,
+            reservation_id: reservation.reservation_id,
+            reconciliation_operation: "put_cleanup",
+          });
+        }
       }
       if (
         error instanceof ObjectStorageBackendErrorV1 &&
@@ -476,6 +643,9 @@ export class ObjectStoreAdapterCoreV1 implements ObjectStorePortV1 {
         await this.#metadata.abortPut(reservation.reservation_id).catch(() => undefined);
         fail("precondition_failed", "physical object identity already exists");
       }
+      await this.#metadata
+        .handoffPutReconciliation(reservation.reservation_id, "put_finalize")
+        .catch(() => undefined);
       fail("storage_unavailable", "object storage outcome requires reconciliation", true, {
         reconciliation_required: true,
         reservation_id: reservation.reservation_id,
@@ -488,9 +658,21 @@ export class ObjectStoreAdapterCoreV1 implements ObjectStorePortV1 {
       head.size_bytes !== request.size_bytes ||
       head.media_type !== request.media_type
     ) {
-      await this.#backend.delete(policy.bucket, key).catch(() => undefined);
-      await this.#metadata.abortPut(reservation.reservation_id).catch(() => undefined);
-      fail("integrity_mismatch", "stored object does not match put request");
+      try {
+        await this.#backend.delete(policy.bucket, key);
+        await this.#metadata.abortPut(reservation.reservation_id);
+        fail("integrity_mismatch", "stored object does not match put request");
+      } catch (cleanupError) {
+        if (cleanupError instanceof ObjectStoreErrorV1) throw cleanupError;
+        await this.#metadata
+          .handoffPutReconciliation(reservation.reservation_id, "put_cleanup")
+          .catch(() => undefined);
+        fail("storage_unavailable", "integrity cleanup requires reconciliation", true, {
+          reconciliation_required: true,
+          reservation_id: reservation.reservation_id,
+          reconciliation_operation: "put_cleanup",
+        });
+      }
     }
     try {
       const record = await this.#metadata.completePut({
@@ -505,6 +687,9 @@ export class ObjectStoreAdapterCoreV1 implements ObjectStorePortV1 {
       if (finalization.kind === "committed") {
         return resultFromRecord(finalization.record, false);
       }
+      await this.#metadata
+        .handoffPutReconciliation(reservation.reservation_id, "put_finalize")
+        .catch(() => undefined);
       fail("storage_unavailable", "owner metadata finalization requires reconciliation", true, {
         reconciliation_required: true,
         reservation_id: reservation.reservation_id,
@@ -612,14 +797,16 @@ export class ObjectStoreAdapterCoreV1 implements ObjectStorePortV1 {
       "delete",
       true,
     );
-    let reservation;
-    try {
-      reservation = await this.#metadata.reserveDelete({
+    const reserveDelete = () =>
+      this.#metadata.reserveDelete({
         object_ref: record.object_ref,
         deletion_decision_version: request.deletion_decision_version,
         idempotency_key: request.idempotency_key,
         now: this.#now(),
       });
+    let reservation;
+    try {
+      reservation = await reserveDelete();
     } catch {
       fail("storage_unavailable", "owner metadata is unavailable", true);
     }
@@ -637,8 +824,35 @@ export class ObjectStoreAdapterCoreV1 implements ObjectStorePortV1 {
     if (reservation.kind === "conflict") {
       fail("idempotency_conflict", "deletion identity conflicts with prior decision");
     }
-    if (reservation.kind === "busy") {
-      fail("precondition_failed", "an object transition is already in progress", true);
+    if (reservation.kind === "pending") {
+      await this.reconcilePending({
+        worker_id: "inline-delete-retry",
+        limit: 1,
+        lease_seconds: 30,
+        reservation_id: reservation.reservation_id,
+      });
+      try {
+        reservation = await reserveDelete();
+      } catch {
+        fail("storage_unavailable", "owner metadata is unavailable", true);
+      }
+    }
+    if (reservation.kind === "pending" || reservation.kind === "busy") {
+      fail("precondition_failed", "object reconciliation is still pending", true);
+    }
+    if (reservation.kind === "conflict") {
+      fail("idempotency_conflict", "deletion identity conflicts with prior decision");
+    }
+    if (reservation.kind === "not_found") {
+      fail("object_not_found", "object was not found");
+    }
+    if (reservation.kind === "retention_active") {
+      fail("retention_active", "object retention is still active", false, {
+        retention_until: reservation.retention_until,
+      });
+    }
+    if (reservation.kind === "hold_active") {
+      fail("precondition_failed", "object is protected by a legal hold");
     }
     if (reservation.kind === "replay") {
       return { object_ref: record.object_ref, deleted: true, replayed: true };
@@ -651,6 +865,9 @@ export class ObjectStoreAdapterCoreV1 implements ObjectStorePortV1 {
         !(error instanceof ObjectStorageBackendErrorV1) ||
         error.code !== "not_found"
       ) {
+        await this.#metadata
+          .handoffDeleteReconciliation(reservation.reservation_id)
+          .catch(() => undefined);
         fail("storage_unavailable", "object deletion outcome requires reconciliation", true, {
           reconciliation_required: true,
           reservation_id: reservation.reservation_id,
@@ -666,6 +883,9 @@ export class ObjectStoreAdapterCoreV1 implements ObjectStorePortV1 {
       if (finalization.kind === "committed") {
         return { object_ref: record.object_ref, deleted: true, replayed: false };
       }
+      await this.#metadata
+        .handoffDeleteReconciliation(reservation.reservation_id)
+        .catch(() => undefined);
       fail("storage_unavailable", "owner metadata finalization requires reconciliation", true, {
         reconciliation_required: true,
         reservation_id: reservation.reservation_id,

@@ -14,6 +14,7 @@ const base = {
   active_process: "none" as const,
   active_process_id: null,
   active_process_slot_generation: null,
+  active_process_updated_at: null,
   trusted_strong_hint: false,
   explicit_interrupt: false,
   is_catch_up: false,
@@ -56,6 +57,7 @@ describe("Trigger admission", () => {
         active_process: "execution_running",
         active_process_id: "process-active",
         active_process_slot_generation: 7,
+        active_process_updated_at: "2026-07-20T08:00:00.000Z",
         foreground_slot_process_id: "process-active",
       }),
     ).toMatchObject({
@@ -93,6 +95,7 @@ describe("Trigger admission", () => {
         active_process: "execution_running",
         active_process_id: "process-active",
         active_process_slot_generation: 7,
+        active_process_updated_at: "2026-07-20T08:00:00.000Z",
         foreground_slot_process_id: "process-active",
       }),
     ).toMatchObject({
@@ -127,6 +130,7 @@ describe("Trigger admission", () => {
         active_process: "execution_running",
         active_process_id: "process-a",
         active_process_slot_generation: 6,
+        active_process_updated_at: "2026-07-20T08:00:00.000Z",
         foreground_slot_process_id: "process-a",
       }),
     ).toThrow("identity and foreground slot generation");
@@ -137,6 +141,7 @@ describe("Trigger admission", () => {
         active_process: "execution_running",
         active_process_id: "process-a",
         active_process_slot_generation: 7,
+        active_process_updated_at: "2026-07-20T08:00:00.000Z",
         foreground_slot_process_id: "process-b",
       }),
     ).toThrow("identity and foreground slot generation");
@@ -145,6 +150,7 @@ describe("Trigger admission", () => {
   it("returns the exact slot CAS precondition consumed by admit_trigger_v1", () => {
     expect(decideTriggerAdmissionV1(base)).toMatchObject({
       foreground_slot_precondition: { process_id: null, generation: 7 },
+      process_state_precondition: null,
     });
     expect(
       decideTriggerAdmissionV1({
@@ -152,12 +158,19 @@ describe("Trigger admission", () => {
         active_process: "cooldown_waiting",
         active_process_id: "process-active",
         active_process_slot_generation: 7,
+        active_process_updated_at: "2026-07-20T08:00:00.000Z",
         foreground_slot_process_id: "process-active",
       }),
     ).toMatchObject({
       foreground_slot_precondition: {
         process_id: "process-active",
         generation: 7,
+      },
+      process_state_precondition: {
+        process_id: "process-active",
+        phase: "cooldown",
+        status: "waiting",
+        updated_at: "2026-07-20T08:00:00.000Z",
       },
     });
   });
@@ -169,14 +182,38 @@ describe("Trigger admission", () => {
       assertTriggerAdmissionCommitPreconditionV1(decision, {
         process_id: "process-b",
         generation: 8,
-      }),
+      }, null),
     ).toThrow("changed before atomic trigger admission commit");
     expect(() =>
       assertTriggerAdmissionCommitPreconditionV1(decision, {
         process_id: null,
         generation: 7,
-      }),
+      }, null),
     ).not.toThrow();
+  });
+
+  it("rejects a same-slot decision after the active process phase changes", () => {
+    const decision = decideTriggerAdmissionV1({
+      ...base,
+      active_process: "execution_running",
+      active_process_id: "process-a",
+      active_process_slot_generation: 7,
+      active_process_updated_at: "2026-07-20T08:00:00.000Z",
+      foreground_slot_process_id: "process-a",
+    });
+    if (decision.trigger_status !== "accepted") throw new Error("expected accepted");
+    expect(() =>
+      assertTriggerAdmissionCommitPreconditionV1(
+        decision,
+        { process_id: "process-a", generation: 7 },
+        {
+          process_id: "process-a",
+          phase: "cooldown",
+          status: "waiting",
+          updated_at: "2026-07-20T08:00:01.000Z",
+        },
+      ),
+    ).toThrow("changed before atomic trigger admission commit");
   });
 
   it("rejects an inactive bot without producing a process state", () => {

@@ -131,3 +131,22 @@ export interface ObjectStorePortV1 {
     request: DeleteIfEligibleRequestV1,
   ): Promise<DeleteIfEligibleResultV1>;
 }
+
+export interface ReconcileObjectStoreRequestV1 {
+  readonly worker_id: string;
+  readonly limit: number;
+  readonly lease_seconds: number;
+  readonly reservation_id?: string;
+}
+
+export interface ReconcileObjectStoreResultV1 {
+  readonly claimed: number;
+  readonly completed: number;
+  readonly retry_scheduled: number;
+}
+
+export interface ObjectStoreReconciliationPortV1 {
+  reconcilePending(
+    request: ReconcileObjectStoreRequestV1,
+  ): Promise<ReconcileObjectStoreResultV1>;
+}

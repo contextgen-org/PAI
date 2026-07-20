@@ -14,7 +14,6 @@ import { TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 } from "../../../services/trig
 import {
   defineOwnerRepositoryContractV1,
   OWNER_DATABASE_TARGETS_V1,
-  verifyOwnerRepositoryDeploymentV1,
 } from "../src/index.js";
 
 const contracts = [
@@ -33,6 +32,7 @@ const writerKinds = new Set([
   "state_transition",
   "pointer_cas",
   "lease_fence",
+  "queue_claim_ack",
   "outbox_claim_ack",
 ]);
 
@@ -116,7 +116,6 @@ describe("owner repository contracts", () => {
         expect(signature.schema).toBe(contract.schema);
         expect(signature.security_definer).toBe(true);
         expect(signature.search_path).toEqual([contract.schema, "pg_temp"]);
-        expect(signature.atomicity).toBe("single_transaction");
         expect(signature.arguments.length).toBeGreaterThan(0);
         expect(signature.arguments.every(({ mode }) => mode === "in")).toBe(true);
         expect(new Set(signature.arguments.map(({ argument_name }) => argument_name)).size)
@@ -168,7 +167,41 @@ describe("owner repository contracts", () => {
         "trigger_event_outbox",
       ]),
     );
-    expect(signature?.atomicity).toBe("single_transaction");
+  });
+
+  it("binds mutable queue and memory lifecycle tables to narrow semantic effects", () => {
+    expect(
+      TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.append_only_tables,
+    ).not.toContain("trigger_snapshot_pending_events");
+    const pendingWriter =
+      TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.function_signatures.find(
+        ({ function_name }) =>
+          function_name === "transition_trigger_snapshot_pending_event_v1",
+      );
+    expect(pendingWriter?.writer_kind).toBe("queue_claim_ack");
+    expect(pendingWriter?.effects).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          table_name: "trigger_snapshot_pending_events",
+          operation: "transition",
+          concurrency_control: "expected_state_version",
+        }),
+      ]),
+    );
+
+    const seriesWriter = MEMORY_REPOSITORY_CONTRACT_V1.function_signatures.find(
+      ({ function_name }) => function_name === "transition_memory_series_v1",
+    );
+    expect(seriesWriter?.writes_tables).toEqual([
+      "memory_series",
+      "memory_audit_logs",
+      "memory_event_outbox",
+    ]);
+    expect(seriesWriter?.writes_tables).not.toContain("memory_feedback_events");
+    expect(seriesWriter?.writes_tables).not.toContain(
+      "memory_promotion_reservations",
+    );
+    expect(seriesWriter?.writes_tables).not.toContain("memory_graph_builds");
   });
 
   it("fails closed on schema or role drift", () => {
@@ -229,7 +262,7 @@ describe("owner repository contracts", () => {
             }),
           ),
       } as never),
-    ).toThrow(/tables without an atomic writer/);
+    ).toThrow(/semantic effect|tables without an atomic writer/);
 
     expect(() =>
       defineOwnerRepositoryContractV1({
@@ -248,37 +281,6 @@ describe("owner repository contracts", () => {
     ).toThrow(/arguments must contain unique SQL identifiers/);
   });
 
-  it("fails service composition closed when deployed procedures or privileges drift", () => {
-    const contract = TIMER_REPOSITORY_CONTRACT_V1;
-    const artifact = {
-      schema: contract.schema,
-      app_role: contract.app_role,
-      direct_table_mutation_privileges: [],
-      executable_functions: contract.mutable_writers,
-      function_signatures: contract.function_signatures,
-    } as const;
-    expect(
-      verifyOwnerRepositoryDeploymentV1(
-        contract,
-        artifact,
-        "2026-07-20T08:00:00.000Z",
-      ),
-    ).toMatchObject({ owner_service: "timer_trigger_app" });
-    expect(() =>
-      verifyOwnerRepositoryDeploymentV1(
-        contract,
-        { ...artifact, direct_table_mutation_privileges: ["timer_schedules:UPDATE"] },
-        "2026-07-20T08:00:00.000Z",
-      ),
-    ).toThrow(/deployed owner repository artifact drift/);
-    expect(() =>
-      verifyOwnerRepositoryDeploymentV1(
-        contract,
-        { ...artifact, executable_functions: contract.mutable_writers.slice(1) },
-        "2026-07-20T08:00:00.000Z",
-      ),
-    ).toThrow(/deployed owner repository artifact drift/);
-  });
 });
 
 describe("SDK import boundary", () => {

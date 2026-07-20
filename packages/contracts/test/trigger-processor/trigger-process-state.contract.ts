@@ -2,7 +2,6 @@ import { Value } from "@sinclair/typebox/value";
 import { describe, expect, it } from "vitest";
 
 import {
-  CLOSED_STATUS_TERMINAL_OUTCOMES_V1,
   TERMINAL_OUTCOMES_V1,
   TriggerProcessStateV1Schema,
   isTriggerProcessTransitionV1Allowed,
@@ -352,6 +351,7 @@ describe("TriggerProcessStateV1", () => {
     expect(
       isTriggerProcessTransitionV1Allowed(metaEnqueued, completed, {
         kind: "meta_finalization",
+        persisted_meta_enqueue_reason: "cooldown_expired",
         terminal_outcome: "executed",
         terminal_outcome_finalized_at: "2026-07-20T04:03:00.000Z",
         canonical_reason_code: "meta_completed",
@@ -386,6 +386,53 @@ describe("TriggerProcessStateV1", () => {
     ).toBe(false);
   });
 
+  it.each([
+    ["user_retracted", "cancelled_with_reason"],
+    ["system_interrupted", "interrupted_with_reason"],
+  ] as const)(
+    "closes the full %s Meta lifecycle as cancelled",
+    (enqueueReason, terminalOutcome) => {
+      const execution = running("execution");
+      const meta = {
+        phase: "meta_enqueued",
+        status: "waiting",
+        wait_reason: "meta_enqueue_wait",
+        terminal_reason: null,
+      } as const satisfies TriggerProcessStateV1;
+      expect(
+        isTriggerProcessTransitionV1Allowed(execution, meta, {
+          kind: "meta_enqueue",
+          enqueue_reason: enqueueReason,
+          boundary_system_event_ref: `system_event:${enqueueReason}`,
+          snapshot_ref: `snapshot-${enqueueReason}`,
+          snapshot_freeze_ref: `freeze-${enqueueReason}`,
+          learnable_snapshot_ready: true,
+          transition_audit_ref: `audit-${enqueueReason}`,
+          meta_enqueue_outbox_ref: `outbox-${enqueueReason}`,
+          runtime_state: "stopped_or_isolated",
+          runtime_stop_or_isolation_proof_ref: `runtime-${enqueueReason}`,
+        }),
+      ).toBe(true);
+      const closed = {
+        phase: "closed",
+        status: "cancelled",
+        wait_reason: null,
+        terminal_reason: enqueueReason,
+      } as const satisfies TriggerProcessStateV1;
+      expect(
+        isTriggerProcessTransitionV1Allowed(meta, closed, {
+          kind: "meta_finalization",
+          persisted_meta_enqueue_reason: enqueueReason,
+          terminal_outcome: terminalOutcome,
+          terminal_outcome_finalized_at: "2026-07-20T04:03:00.000Z",
+          canonical_reason_code: enqueueReason,
+          transition_audit_ref: `close-audit-${enqueueReason}`,
+          outbox_event_ref: `close-outbox-${enqueueReason}`,
+        }),
+      ).toBe(true);
+    },
+  );
+
   it("keeps the accountable terminal outcome closed set", () => {
     expect(TERMINAL_OUTCOMES_V1).toEqual([
       "executed",
@@ -401,14 +448,17 @@ describe("TriggerProcessStateV1", () => {
   });
 
   it.each([
-    ["completed", "executed", true],
-    ["completed", "failed_with_reason", false],
-    ["completed", "cancelled_with_reason", false],
-    ["failed", "failed_with_reason", true],
-    ["failed", "executed", false],
+    ["cooldown_expired", "completed", "executed", true],
+    ["cooldown_expired", "completed", "failed_with_reason", false],
+    ["cooldown_expired", "failed", "failed_with_reason", true],
+    ["user_retracted", "cancelled", "cancelled_with_reason", true],
+    ["user_retracted", "cancelled", "interrupted_with_reason", false],
+    ["system_interrupted", "cancelled", "interrupted_with_reason", true],
+    ["system_interrupted", "completed", "executed", false],
+    ["failed_with_learnable_snapshot", "failed", "failed_with_reason", true],
   ] as const)(
-    "enforces meta finalization status %s with outcome %s",
-    (status, terminalOutcome, expected) => {
+    "enforces meta reason %s finalization status %s with outcome %s",
+    (persistedReason, status, terminalOutcome, expected) => {
       const from = {
         phase: "meta_enqueued",
         status: "waiting",
@@ -424,17 +474,13 @@ describe("TriggerProcessStateV1", () => {
       expect(
         isTriggerProcessTransitionV1Allowed(from, to, {
           kind: "meta_finalization",
+          persisted_meta_enqueue_reason: persistedReason,
           terminal_outcome: terminalOutcome,
           terminal_outcome_finalized_at: "2026-07-20T04:03:00.000Z",
           canonical_reason_code: `meta_${status}`,
           transition_audit_ref: "transition-audit-table",
           outbox_event_ref: "outbox-table",
         }),
-      ).toBe(expected);
-      expect(
-        (CLOSED_STATUS_TERMINAL_OUTCOMES_V1[status] as readonly string[]).includes(
-          terminalOutcome,
-        ),
       ).toBe(expected);
     },
   );

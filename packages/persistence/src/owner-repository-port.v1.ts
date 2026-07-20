@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { ServiceIdV1 } from "@pai/contracts";
 
 export const OWNER_DATABASE_TARGETS_V1 = {
@@ -32,6 +34,7 @@ export type OwnerWriterKindV1 =
   | "state_transition"
   | "pointer_cas"
   | "lease_fence"
+  | "queue_claim_ack"
   | "outbox_claim_ack";
 
 export interface OwnerTablePermissionV1<TTable extends string = string> {
@@ -57,28 +60,71 @@ export interface OwnerFunctionArgumentV1 {
   readonly mode: "in";
 }
 
+export interface OwnerFunctionEffectV1<TTable extends string = string> {
+  readonly table_name: TTable;
+  readonly operation:
+    | "append"
+    | "upsert"
+    | "transition"
+    | "cas"
+    | "enqueue"
+    | "claim"
+    | "ack";
+  readonly concurrency_control:
+    | "idempotency_key"
+    | "expected_state_version"
+    | "expected_version"
+    | "generation_fence"
+    | "slot_and_process_state_fence"
+    | "lease_fence";
+}
+
 export interface OwnerFunctionSignatureV1<
   TSchema extends string = string,
   TTable extends string = string,
   TWriter extends string = string,
+  TArguments extends readonly OwnerFunctionArgumentV1[] = readonly OwnerFunctionArgumentV1[],
 > {
   readonly schema: TSchema;
   readonly function_name: TWriter;
   readonly primary_table: TTable;
   readonly writer_kind: OwnerWriterKindV1;
-  readonly arguments: readonly OwnerFunctionArgumentV1[];
+  readonly arguments: TArguments;
   readonly reads_tables: readonly TTable[];
   readonly writes_tables: readonly TTable[];
-  readonly atomicity: "single_transaction";
+  readonly effects?: readonly OwnerFunctionEffectV1<TTable>[];
   readonly returns: "jsonb" | "setof jsonb";
   readonly security_definer: true;
   readonly search_path: readonly [TSchema, "pg_temp"];
+}
+
+export interface OwnerForeignKeyV1<TTable extends string = string> {
+  readonly constraint_name: string;
+  readonly table_name: TTable;
+  readonly columns: readonly string[];
+  readonly referenced_table: TTable;
+  readonly referenced_columns: readonly string[];
+}
+
+export interface OwnerDatabaseCheckV1<TTable extends string = string> {
+  readonly constraint_name: string;
+  readonly table_name: TTable;
+  readonly required_definition_fragments: readonly string[];
 }
 
 export interface OwnerRepositoryContractV1<
   TService extends OwnerDatabaseServiceIdV1 = OwnerDatabaseServiceIdV1,
   TTable extends string = string,
   TWriter extends string = string,
+  TSignatures extends readonly OwnerFunctionSignatureV1<
+    (typeof OWNER_DATABASE_TARGETS_V1)[TService]["schema"],
+    TTable,
+    TWriter
+  >[] = readonly OwnerFunctionSignatureV1<
+    (typeof OWNER_DATABASE_TARGETS_V1)[TService]["schema"],
+    TTable,
+    TWriter
+  >[],
 > {
   readonly contract_version: "owner_repository_contract.v1";
   readonly owner_service: TService;
@@ -90,11 +136,9 @@ export interface OwnerRepositoryContractV1<
   readonly tables: readonly TTable[];
   readonly table_permissions: readonly OwnerTablePermissionV1<TTable>[];
   readonly mutable_writers: readonly TWriter[];
-  readonly function_signatures: readonly OwnerFunctionSignatureV1<
-    (typeof OWNER_DATABASE_TARGETS_V1)[TService]["schema"],
-    TTable,
-    TWriter
-  >[];
+  readonly function_signatures: TSignatures;
+  readonly foreign_keys?: readonly OwnerForeignKeyV1<TTable>[];
+  readonly database_checks?: readonly OwnerDatabaseCheckV1<TTable>[];
   readonly append_only_tables: readonly TTable[];
   readonly outbox_tables: readonly TTable[];
   readonly inbox_tables: readonly TTable[];
@@ -123,26 +167,64 @@ const writerKinds = new Set<OwnerWriterKindV1>([
   "state_transition",
   "pointer_cas",
   "lease_fence",
+  "queue_claim_ack",
   "outbox_claim_ack",
 ]);
+const effectOperations = new Set<OwnerFunctionEffectV1["operation"]>([
+  "append", "upsert", "transition", "cas", "enqueue", "claim", "ack",
+]);
+const concurrencyControls = new Set<
+  OwnerFunctionEffectV1["concurrency_control"]
+>([
+  "idempotency_key",
+  "expected_state_version",
+  "expected_version",
+  "generation_fence",
+  "slot_and_process_state_fence",
+  "lease_fence",
+]);
+
+type OwnerFunctionArgumentsFromTuplesV1<
+  TArguments extends readonly (
+    readonly [argument_name: string, postgres_type: OwnerPostgresTypeV1]
+  )[],
+> = {
+  readonly [TIndex in keyof TArguments]: TArguments[TIndex] extends readonly [
+    infer TName extends string,
+    infer TType extends OwnerPostgresTypeV1,
+  ]
+    ? Readonly<{
+        argument_name: TName;
+        postgres_type: TType;
+        mode: "in";
+      }>
+    : never;
+};
 
 export function ownerFunctionSignatureV1<
   const TSchema extends OwnerSchemaV1,
   const TTable extends string,
   const TWriter extends string,
+  const TArguments extends readonly (
+    readonly [argument_name: string, postgres_type: OwnerPostgresTypeV1]
+  )[],
 >(input: {
   readonly schema: TSchema;
   readonly function_name: TWriter;
   readonly primary_table: TTable;
   readonly writer_kind: OwnerWriterKindV1;
-  readonly arguments: readonly (
-    readonly [argument_name: string, postgres_type: OwnerPostgresTypeV1]
-  )[];
+  readonly arguments: TArguments;
   readonly reads_tables: readonly TTable[];
   readonly writes_tables: readonly TTable[];
+  readonly effects?: readonly OwnerFunctionEffectV1<TTable>[];
   readonly returns: "jsonb" | "setof jsonb";
-}): OwnerFunctionSignatureV1<TSchema, TTable, TWriter> {
-  const signature: OwnerFunctionSignatureV1<TSchema, TTable, TWriter> = {
+}): OwnerFunctionSignatureV1<
+  TSchema,
+  TTable,
+  TWriter,
+  OwnerFunctionArgumentsFromTuplesV1<TArguments>
+> {
+  const signature = {
     schema: input.schema,
     function_name: input.function_name,
     primary_table: input.primary_table,
@@ -156,14 +238,23 @@ export function ownerFunctionSignatureV1<
     ),
     reads_tables: [...input.reads_tables],
     writes_tables: [...input.writes_tables],
-    atomicity: "single_transaction",
+    ...(input.effects === undefined ? {} : { effects: [...input.effects] }),
     returns: input.returns,
     security_definer: true,
     search_path: [input.schema, "pg_temp"],
-  };
+  } as unknown as OwnerFunctionSignatureV1<
+    TSchema,
+    TTable,
+    TWriter,
+    OwnerFunctionArgumentsFromTuplesV1<TArguments>
+  >;
   Object.freeze(signature.arguments);
   Object.freeze(signature.reads_tables);
   Object.freeze(signature.writes_tables);
+  if (signature.effects !== undefined) {
+    for (const effect of signature.effects) Object.freeze(effect);
+    Object.freeze(signature.effects);
+  }
   Object.freeze(signature.search_path);
   return Object.freeze(signature);
 }
@@ -172,9 +263,14 @@ export function defineOwnerRepositoryContractV1<
   const TService extends OwnerDatabaseServiceIdV1,
   const TTable extends string,
   const TWriter extends string,
+  const TSignatures extends readonly OwnerFunctionSignatureV1<
+    (typeof OWNER_DATABASE_TARGETS_V1)[TService]["schema"],
+    TTable,
+    TWriter
+  >[],
 >(
-  contract: OwnerRepositoryContractV1<TService, TTable, TWriter>,
-): OwnerRepositoryContractV1<TService, TTable, TWriter> {
+  contract: OwnerRepositoryContractV1<TService, TTable, TWriter, TSignatures>,
+): OwnerRepositoryContractV1<TService, TTable, TWriter, TSignatures> {
   const target = OWNER_DATABASE_TARGETS_V1[contract.owner_service];
   if (contract.schema !== target.schema || contract.app_role !== target.app_role) {
     throw new Error(`owner database target drift for ${contract.owner_service}`);
@@ -232,6 +328,46 @@ export function defineOwnerRepositoryContractV1<
       );
     }
   }
+  assertUniqueIdentifiers(
+    "foreign_keys.constraint_name",
+    (contract.foreign_keys ?? []).map(({ constraint_name }) => constraint_name),
+  );
+  for (const foreignKey of contract.foreign_keys ?? []) {
+    assertUniqueIdentifiers(
+      `${foreignKey.constraint_name}.columns`,
+      foreignKey.columns,
+    );
+    assertUniqueIdentifiers(
+      `${foreignKey.constraint_name}.referenced_columns`,
+      foreignKey.referenced_columns,
+    );
+    if (
+      !tableSet.has(foreignKey.table_name) ||
+      !tableSet.has(foreignKey.referenced_table) ||
+      foreignKey.columns.length === 0 ||
+      foreignKey.columns.length !== foreignKey.referenced_columns.length
+    ) {
+      throw new Error(`invalid owner foreign key: ${foreignKey.constraint_name}`);
+    }
+    Object.freeze(foreignKey.columns);
+    Object.freeze(foreignKey.referenced_columns);
+    Object.freeze(foreignKey);
+  }
+  assertUniqueIdentifiers(
+    "database_checks.constraint_name",
+    (contract.database_checks ?? []).map(({ constraint_name }) => constraint_name),
+  );
+  for (const check of contract.database_checks ?? []) {
+    if (
+      !tableSet.has(check.table_name) ||
+      check.required_definition_fragments.length === 0 ||
+      check.required_definition_fragments.some((fragment) => fragment.length === 0)
+    ) {
+      throw new Error(`invalid owner database check: ${check.constraint_name}`);
+    }
+    Object.freeze(check.required_definition_fragments);
+    Object.freeze(check);
+  }
   const signatureNames = contract.function_signatures.map(
     ({ function_name }) => function_name,
   );
@@ -261,7 +397,6 @@ export function defineOwnerRepositoryContractV1<
       signature.search_path.length !== 2 ||
       signature.search_path[0] !== contract.schema ||
       signature.search_path[1] !== "pg_temp" ||
-      signature.atomicity !== "single_transaction" ||
       signature.arguments.length === 0 ||
       signature.arguments.some((argument) => argument.mode !== "in") ||
       signature.reads_tables.length === 0 ||
@@ -286,6 +421,28 @@ export function defineOwnerRepositoryContractV1<
       `${signature.function_name}.writes_tables`,
       signature.writes_tables,
     );
+    if (
+      contract.owner_service === "trigger_processor" ||
+      contract.owner_service === "memory"
+    ) {
+      const effects = signature.effects ?? [];
+      const effectTables = effects.map(({ table_name }) => table_name);
+      if (
+        effects.length !== signature.writes_tables.length ||
+        new Set(effectTables).size !== effectTables.length ||
+        effects.some(
+          ({ operation, concurrency_control }) =>
+            !effectOperations.has(operation) ||
+            !concurrencyControls.has(concurrency_control),
+        ) ||
+        sorted(effectTables).join("\u0000") !==
+          sorted(signature.writes_tables).join("\u0000")
+      ) {
+        throw new Error(
+          `${contract.owner_service}.${signature.function_name} must declare one semantic effect for every written table`,
+        );
+      }
+    }
     for (const table of signature.writes_tables) tablesWithWriter.add(table);
   }
   const tablesWithoutWriter = contract.tables.filter(
@@ -366,76 +523,338 @@ export type OwnerWriterNameV1<TContract extends OwnerRepositoryContractV1> =
 
 const verifiedOwnerDeploymentBrand = Symbol("verifiedOwnerDeploymentV1");
 
-export interface OwnerRepositoryDeploymentArtifactV1<
-  TContract extends OwnerRepositoryContractV1,
-> {
-  readonly schema: TContract["schema"];
-  readonly app_role: TContract["app_role"];
-  readonly direct_table_mutation_privileges: readonly string[];
-  readonly executable_functions: readonly TContract["mutable_writers"][number][];
-  readonly function_signatures: TContract["function_signatures"];
-}
-
 export interface VerifiedOwnerRepositoryDeploymentV1<
   TService extends OwnerDatabaseServiceIdV1,
 > {
   readonly owner_service: TService;
   readonly verified_at: string;
+  readonly contract_fingerprint: string;
+  readonly database_fingerprint: string;
   readonly [verifiedOwnerDeploymentBrand]: true;
 }
 
+export interface PostgresQueryPortV1 {
+  query<TRow extends Record<string, unknown>>(
+    sql: string,
+    values?: readonly unknown[],
+  ): Promise<{ readonly rows: readonly TRow[] }>;
+}
+
+function fingerprint(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function sorted(values: Iterable<string>): string[] {
+  return [...values].sort((left, right) => left.localeCompare(right));
+}
+
+function assertSameSet(label: string, actual: Iterable<string>, expected: Iterable<string>): void {
+  const actualValues = sorted(actual);
+  const expectedValues = sorted(expected);
+  if (JSON.stringify(actualValues) !== JSON.stringify(expectedValues)) {
+    throw new Error(
+      `${label} drift: expected ${expectedValues.join(",")}; observed ${actualValues.join(",")}`,
+    );
+  }
+}
+
 /**
- * Called from service composition after inspecting pg_proc and information_schema.
- * Application repositories cannot be constructed without this verified token.
+ * Reads PostgreSQL catalogs directly. Callers cannot supply a deployment
+ * artifact, verification timestamp, grants, function configuration, or table
+ * shape. The returned capability is bound to both contract and observed facts.
  */
-export function verifyOwnerRepositoryDeploymentV1<
+export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
   const TContract extends OwnerRepositoryContractV1,
 >(
   contract: TContract,
-  artifact: OwnerRepositoryDeploymentArtifactV1<TContract>,
-  verifiedAt: string,
-): VerifiedOwnerRepositoryDeploymentV1<TContract["owner_service"]> {
-  const expectedFunctions = [...contract.mutable_writers];
-  const deployedFunctions = [...artifact.executable_functions];
-  const signatureSnapshot = (signatures: readonly OwnerFunctionSignatureV1[]) =>
-    JSON.stringify(
-      signatures.map((signature) => ({
-        schema: signature.schema,
-        function_name: signature.function_name,
-        primary_table: signature.primary_table,
-        writer_kind: signature.writer_kind,
-        arguments: signature.arguments,
-        reads_tables: signature.reads_tables,
-        writes_tables: signature.writes_tables,
-        atomicity: signature.atomicity,
-        returns: signature.returns,
-        security_definer: signature.security_definer,
-        search_path: signature.search_path,
-      })),
-    );
+  postgres: PostgresQueryPortV1,
+  options: Readonly<{ expected_schema_owner: string }>,
+): Promise<VerifiedOwnerRepositoryDeploymentV1<TContract["owner_service"]>> {
+  const schemaResult = await postgres.query<{
+    schema_name: string;
+    schema_owner: string;
+  }>(
+    `SELECT n.nspname AS schema_name, pg_get_userbyid(n.nspowner) AS schema_owner
+       FROM pg_catalog.pg_namespace n
+      WHERE n.nspname = $1`,
+    [contract.schema],
+  );
   if (
-    artifact.schema !== contract.schema ||
-    artifact.app_role !== contract.app_role ||
-    artifact.direct_table_mutation_privileges.length !== 0 ||
-    JSON.stringify(deployedFunctions) !== JSON.stringify(expectedFunctions) ||
-    signatureSnapshot(artifact.function_signatures) !==
-      signatureSnapshot(contract.function_signatures) ||
-    !Number.isFinite(Date.parse(verifiedAt))
+    schemaResult.rows.length !== 1 ||
+    schemaResult.rows[0]?.schema_owner !== options.expected_schema_owner
   ) {
-    throw new Error(
-      `deployed owner repository artifact drift for ${contract.owner_service}`,
+    throw new Error(`PostgreSQL schema owner drift for ${contract.schema}`);
+  }
+
+  const columnResult = await postgres.query<{
+    table_name: string;
+    column_name: string;
+  }>(
+    `SELECT c.relname AS table_name, a.attname AS column_name
+       FROM pg_catalog.pg_class c
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+       JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+      WHERE n.nspname = $1 AND c.relkind IN ('r','p')
+        AND a.attnum > 0 AND NOT a.attisdropped
+      ORDER BY c.relname, a.attnum`,
+    [contract.schema],
+  );
+  assertSameSet(
+    `${contract.schema} tables`,
+    new Set(columnResult.rows.map(({ table_name }) => table_name)),
+    contract.tables,
+  );
+  const observedColumns = new Set(
+    columnResult.rows.map(({ table_name, column_name }) => `${table_name}.${column_name}`),
+  );
+  for (const permission of contract.table_permissions) {
+    for (const column of permission.select_columns) {
+      if (!observedColumns.has(`${permission.table_name}.${column}`)) {
+        throw new Error(`PostgreSQL column missing: ${permission.table_name}.${column}`);
+      }
+    }
+  }
+
+  const directMutationResult = await postgres.query<{
+    table_name: string;
+    privilege_type: string;
+  }>(
+    `SELECT table_name, privilege_type
+       FROM information_schema.table_privileges
+      WHERE table_schema = $1 AND grantee = $2
+        AND privilege_type IN ('INSERT','UPDATE','DELETE')
+      UNION ALL
+     SELECT table_name, privilege_type
+       FROM information_schema.column_privileges
+      WHERE table_schema = $1 AND grantee = $2
+        AND privilege_type IN ('INSERT','UPDATE')`,
+    [contract.schema, contract.app_role],
+  );
+  if (directMutationResult.rows.length !== 0) {
+    throw new Error(`direct table mutation privilege drift for ${contract.app_role}`);
+  }
+
+  const selectGrantResult = await postgres.query<{
+    table_name: string;
+    column_name: string;
+  }>(
+    `SELECT table_name, column_name
+       FROM information_schema.column_privileges
+      WHERE table_schema = $1 AND grantee = $2 AND privilege_type = 'SELECT'`,
+    [contract.schema, contract.app_role],
+  );
+  assertSameSet(
+    `${contract.app_role} SELECT columns`,
+    selectGrantResult.rows.map(({ table_name, column_name }) => `${table_name}.${column_name}`),
+    contract.table_permissions.flatMap(({ table_name, select_columns }) =>
+      select_columns.map((column) => `${table_name}.${column}`),
+    ),
+  );
+
+  const functionResult = await postgres.query<{
+    oid: string;
+    function_name: string;
+    function_owner: string;
+    security_definer: boolean;
+    settings: string[] | null;
+    argument_names: string[] | null;
+    argument_types: string[] | null;
+    returns_set: boolean;
+    result_type: string;
+  }>(
+    `SELECT p.oid::text AS oid, p.proname AS function_name,
+            pg_get_userbyid(p.proowner) AS function_owner,
+            p.prosecdef AS security_definer, p.proconfig AS settings,
+            p.proargnames AS argument_names,
+            CASE WHEN p.pronargs = 0 THEN ARRAY[]::text[]
+                 ELSE string_to_array(pg_catalog.oidvectortypes(p.proargtypes), ', ')
+            END AS argument_types,
+            p.proretset AS returns_set,
+            pg_catalog.format_type(p.prorettype, NULL) AS result_type
+       FROM pg_catalog.pg_proc p
+       JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = $1`,
+    [contract.schema],
+  );
+  const postgresType = (type: OwnerPostgresTypeV1): string =>
+    type === "timestamptz" ? "timestamp with time zone" : type;
+  for (const signature of contract.function_signatures) {
+    const deployed = functionResult.rows.find(
+      ({ function_name }) => function_name === signature.function_name,
+    );
+    const expectedSettings = `search_path=${contract.schema}, pg_temp`;
+    if (
+      deployed === undefined ||
+      deployed.function_owner !== options.expected_schema_owner ||
+      deployed.security_definer !== true ||
+      JSON.stringify(deployed.settings ?? []) !== JSON.stringify([expectedSettings]) ||
+      JSON.stringify(deployed.argument_names ?? []) !==
+        JSON.stringify(signature.arguments.map(({ argument_name }) => argument_name)) ||
+      JSON.stringify(deployed.argument_types ?? []) !==
+        JSON.stringify(signature.arguments.map(({ postgres_type }) => postgresType(postgres_type))) ||
+      deployed.returns_set !== (signature.returns === "setof jsonb") ||
+      deployed.result_type !== "jsonb"
+    ) {
+      throw new Error(`PostgreSQL function signature/security drift: ${contract.schema}.${signature.function_name}`);
+    }
+  }
+
+  const executeGrantResult = await postgres.query<{
+    function_name: string;
+    grantee: string;
+  }>(
+    `SELECT p.proname AS function_name, COALESCE(r.rolname, 'PUBLIC') AS grantee
+       FROM pg_catalog.pg_proc p
+       JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+       CROSS JOIN LATERAL pg_catalog.aclexplode(
+         COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))
+       ) acl
+       LEFT JOIN pg_catalog.pg_roles r ON r.oid = acl.grantee
+      WHERE n.nspname = $1 AND acl.privilege_type = 'EXECUTE'`,
+    [contract.schema],
+  );
+  const appExecutableFunctions = executeGrantResult.rows
+    .filter(({ grantee }) => grantee === contract.app_role)
+    .map(({ function_name }) => function_name);
+  assertSameSet(`${contract.app_role} EXECUTE functions`, appExecutableFunctions, contract.mutable_writers);
+  const forbiddenGrantees = new Set(["PUBLIC", "anon", "authenticated"]);
+  if (executeGrantResult.rows.some(({ grantee }) => forbiddenGrantees.has(grantee))) {
+    throw new Error(`PUBLIC/anon/authenticated EXECUTE privilege drift for ${contract.schema}`);
+  }
+
+  const schemaUsageResult = await postgres.query<{ grantee: string }>(
+    `SELECT COALESCE(r.rolname, 'PUBLIC') AS grantee
+       FROM pg_catalog.pg_namespace n
+       CROSS JOIN LATERAL pg_catalog.aclexplode(
+         COALESCE(n.nspacl, pg_catalog.acldefault('n', n.nspowner))
+       ) acl
+       LEFT JOIN pg_catalog.pg_roles r ON r.oid = acl.grantee
+      WHERE n.nspname = $1 AND acl.privilege_type = 'USAGE'`,
+    [contract.schema],
+  );
+  if (
+    schemaUsageResult.rows.some(({ grantee }) =>
+      forbiddenGrantees.has(grantee),
+    )
+  ) {
+    throw new Error(`PUBLIC/anon/authenticated schema USAGE privilege drift for ${contract.schema}`);
+  }
+
+  const foreignKeyResult = await postgres.query<{
+    constraint_name: string;
+    table_name: string;
+    columns: string[];
+    referenced_table: string;
+    referenced_columns: string[];
+  }>(
+    `SELECT con.conname AS constraint_name, src.relname AS table_name,
+            ARRAY(SELECT a.attname::text FROM unnest(con.conkey) WITH ORDINALITY k(attnum, ord)
+                    JOIN pg_catalog.pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum
+                   ORDER BY k.ord)::text[] AS columns,
+            dst.relname AS referenced_table,
+            ARRAY(SELECT a.attname::text FROM unnest(con.confkey) WITH ORDINALITY k(attnum, ord)
+                    JOIN pg_catalog.pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = k.attnum
+                   ORDER BY k.ord)::text[] AS referenced_columns
+       FROM pg_catalog.pg_constraint con
+       JOIN pg_catalog.pg_class src ON src.oid = con.conrelid
+       JOIN pg_catalog.pg_class dst ON dst.oid = con.confrelid
+       JOIN pg_catalog.pg_namespace n ON n.oid = src.relnamespace
+      WHERE n.nspname = $1 AND con.contype = 'f'`,
+    [contract.schema],
+  );
+  if (contract.foreign_keys !== undefined) {
+    const fkSnapshot = (row: OwnerForeignKeyV1 | (typeof foreignKeyResult.rows)[number]) =>
+      `${row.constraint_name}:${row.table_name}(${row.columns.join(",")})->${row.referenced_table}(${row.referenced_columns.join(",")})`;
+    assertSameSet(
+      `${contract.schema} foreign keys`,
+      foreignKeyResult.rows.map(fkSnapshot),
+      contract.foreign_keys.map(fkSnapshot),
     );
   }
+
+  const checkConstraintResult = await postgres.query<{
+    constraint_name: string;
+    table_name: string;
+    definition: string;
+  }>(
+    `SELECT con.conname AS constraint_name, c.relname AS table_name,
+            pg_catalog.pg_get_constraintdef(con.oid, true) AS definition
+       FROM pg_catalog.pg_constraint con
+       JOIN pg_catalog.pg_class c ON c.oid = con.conrelid
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1 AND con.contype = 'c'`,
+    [contract.schema],
+  );
+  for (const expectation of contract.database_checks ?? []) {
+    const observed = checkConstraintResult.rows.find(
+      ({ constraint_name, table_name }) =>
+        constraint_name === expectation.constraint_name &&
+        table_name === expectation.table_name,
+    );
+    if (
+      observed === undefined ||
+      expectation.required_definition_fragments.some(
+        (fragment) => !observed.definition.includes(fragment),
+      )
+    ) {
+      throw new Error(
+        `PostgreSQL CHECK constraint drift: ${expectation.table_name}.${expectation.constraint_name}`,
+      );
+    }
+  }
+
+  const contractFingerprint = fingerprint(contract);
+  const databaseFingerprint = fingerprint({
+    schema: schemaResult.rows,
+    columns: columnResult.rows,
+    direct_mutation: directMutationResult.rows,
+    select_grants: selectGrantResult.rows,
+    functions: functionResult.rows,
+    execute_grants: executeGrantResult.rows,
+    schema_usage: schemaUsageResult.rows,
+    foreign_keys: foreignKeyResult.rows,
+    check_constraints: checkConstraintResult.rows,
+  });
   return Object.freeze({
     owner_service: contract.owner_service,
-    verified_at: verifiedAt,
+    verified_at: new Date().toISOString(),
+    contract_fingerprint: contractFingerprint,
+    database_fingerprint: databaseFingerprint,
     [verifiedOwnerDeploymentBrand]: true,
   }) as VerifiedOwnerRepositoryDeploymentV1<TContract["owner_service"]>;
 }
 
-export interface ExecuteOwnerWriterRequestV1<TWriter extends string> {
+type OwnerPostgresValueV1<TType extends OwnerPostgresTypeV1> =
+  TType extends "text" | "bigint" | "timestamptz"
+    ? string | null
+    : TType extends "integer"
+      ? number | null
+      : TType extends "boolean"
+        ? boolean | null
+        : Readonly<Record<string, unknown>> | readonly unknown[] | null;
+
+type OwnerWriterSignatureForV1<
+  TContract extends OwnerRepositoryContractV1,
+  TWriter extends OwnerWriterNameV1<TContract>,
+> = Extract<TContract["function_signatures"][number], { function_name: TWriter }>;
+
+type OwnerWriterArgumentsV1<
+  TContract extends OwnerRepositoryContractV1,
+  TWriter extends OwnerWriterNameV1<TContract>,
+> = OwnerWriterSignatureForV1<TContract, TWriter>["arguments"] extends infer TArguments extends
+  readonly OwnerFunctionArgumentV1[]
+  ? {
+      readonly [TArgument in TArguments[number] as TArgument["argument_name"]]:
+        OwnerPostgresValueV1<TArgument["postgres_type"]>;
+    }
+  : never;
+
+export interface ExecuteOwnerWriterRequestV1<
+  TContract extends OwnerRepositoryContractV1,
+  TWriter extends OwnerWriterNameV1<TContract>,
+> {
   readonly writer: TWriter;
-  readonly arguments: Readonly<Record<string, unknown>>;
+  readonly arguments: OwnerWriterArgumentsV1<TContract, TWriter>;
   readonly expected_rows: 1 | "one_or_more";
 }
 
@@ -450,9 +869,9 @@ export interface OwnerRepositoryPortV1<
   readonly deployment: VerifiedOwnerRepositoryDeploymentV1<
     TContract["owner_service"]
   >;
-  executeWriter<TResult>(
+  executeWriter<TResult, const TWriter extends OwnerWriterNameV1<TContract>>(
     transaction: OwnerTransactionV1<TContract["owner_service"]>,
-    request: ExecuteOwnerWriterRequestV1<OwnerWriterNameV1<TContract>>,
+    request: ExecuteOwnerWriterRequestV1<TContract, TWriter>,
   ): Promise<TResult>;
 }
 

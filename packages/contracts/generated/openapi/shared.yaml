@@ -1011,7 +1011,8 @@
               "action",
               "reason_code",
               "initial_process_state",
-              "foreground_slot_precondition"
+              "foreground_slot_precondition",
+              "process_state_precondition"
             ],
             "properties": {
               "trigger_status": {
@@ -1078,9 +1079,77 @@
                   },
                   "generation": {
                     "minimum": 0,
+                    "maximum": 9007199254740991,
                     "type": "integer"
                   }
                 }
+              },
+              "process_state_precondition": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "execution",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "running",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "cooldown",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "waiting",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -1093,7 +1162,8 @@
               "action",
               "reason_code",
               "initial_process_state",
-              "foreground_slot_precondition"
+              "foreground_slot_precondition",
+              "process_state_precondition"
             ],
             "properties": {
               "trigger_status": {
@@ -1159,9 +1229,77 @@
                   },
                   "generation": {
                     "minimum": 0,
+                    "maximum": 9007199254740991,
                     "type": "integer"
                   }
                 }
+              },
+              "process_state_precondition": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "execution",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "running",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "cooldown",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "waiting",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -1174,7 +1312,8 @@
               "action",
               "reason_code",
               "initial_process_state",
-              "foreground_slot_precondition"
+              "foreground_slot_precondition",
+              "process_state_precondition"
             ],
             "properties": {
               "trigger_status": {
@@ -1240,9 +1379,77 @@
                   },
                   "generation": {
                     "minimum": 0,
+                    "maximum": 9007199254740991,
                     "type": "integer"
                   }
                 }
+              },
+              "process_state_precondition": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "execution",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "running",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "cooldown",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "waiting",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -1255,7 +1462,8 @@
               "action",
               "reason_code",
               "initial_process_state",
-              "foreground_slot_precondition"
+              "foreground_slot_precondition",
+              "process_state_precondition"
             ],
             "properties": {
               "trigger_status": {
@@ -1322,9 +1530,77 @@
                   },
                   "generation": {
                     "minimum": 0,
+                    "maximum": 9007199254740991,
                     "type": "integer"
                   }
                 }
+              },
+              "process_state_precondition": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "execution",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "running",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "cooldown",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "waiting",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -1337,7 +1613,8 @@
               "action",
               "reason_code",
               "initial_process_state",
-              "foreground_slot_precondition"
+              "foreground_slot_precondition",
+              "process_state_precondition"
             ],
             "properties": {
               "trigger_status": {
@@ -1403,9 +1680,77 @@
                   },
                   "generation": {
                     "minimum": 0,
+                    "maximum": 9007199254740991,
                     "type": "integer"
                   }
                 }
+              },
+              "process_state_precondition": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "execution",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "running",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "cooldown",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "waiting",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -1418,7 +1763,8 @@
               "action",
               "reason_code",
               "initial_process_state",
-              "foreground_slot_precondition"
+              "foreground_slot_precondition",
+              "process_state_precondition"
             ],
             "properties": {
               "trigger_status": {
@@ -1485,9 +1831,77 @@
                   },
                   "generation": {
                     "minimum": 0,
+                    "maximum": 9007199254740991,
                     "type": "integer"
                   }
                 }
+              },
+              "process_state_precondition": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "execution",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "running",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "cooldown",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "waiting",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -1500,7 +1914,8 @@
               "action",
               "reason_code",
               "initial_process_state",
-              "foreground_slot_precondition"
+              "foreground_slot_precondition",
+              "process_state_precondition"
             ],
             "properties": {
               "trigger_status": {
@@ -1566,9 +1981,77 @@
                   },
                   "generation": {
                     "minimum": 0,
+                    "maximum": 9007199254740991,
                     "type": "integer"
                   }
                 }
+              },
+              "process_state_precondition": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "execution",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "running",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "cooldown",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "waiting",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -1581,7 +2064,8 @@
               "action",
               "reason_code",
               "initial_process_state",
-              "foreground_slot_precondition"
+              "foreground_slot_precondition",
+              "process_state_precondition"
             ],
             "properties": {
               "trigger_status": {
@@ -1648,9 +2132,77 @@
                   },
                   "generation": {
                     "minimum": 0,
+                    "maximum": 9007199254740991,
                     "type": "integer"
                   }
                 }
+              },
+              "process_state_precondition": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "execution",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "running",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "cooldown",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "waiting",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -1663,7 +2215,8 @@
               "action",
               "reason_code",
               "initial_process_state",
-              "foreground_slot_precondition"
+              "foreground_slot_precondition",
+              "process_state_precondition"
             ],
             "properties": {
               "trigger_status": {
@@ -1729,9 +2282,77 @@
                   },
                   "generation": {
                     "minimum": 0,
+                    "maximum": 9007199254740991,
                     "type": "integer"
                   }
                 }
+              },
+              "process_state_precondition": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "execution",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "running",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "cooldown",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "waiting",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -1744,7 +2365,8 @@
               "action",
               "reason_code",
               "initial_process_state",
-              "foreground_slot_precondition"
+              "foreground_slot_precondition",
+              "process_state_precondition"
             ],
             "properties": {
               "trigger_status": {
@@ -1811,9 +2433,77 @@
                   },
                   "generation": {
                     "minimum": 0,
+                    "maximum": 9007199254740991,
                     "type": "integer"
                   }
                 }
+              },
+              "process_state_precondition": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "execution",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "running",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "cooldown",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "waiting",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -1826,7 +2516,8 @@
               "action",
               "reason_code",
               "initial_process_state",
-              "foreground_slot_precondition"
+              "foreground_slot_precondition",
+              "process_state_precondition"
             ],
             "properties": {
               "trigger_status": {
@@ -1893,9 +2584,77 @@
                   },
                   "generation": {
                     "minimum": 0,
+                    "maximum": 9007199254740991,
                     "type": "integer"
                   }
                 }
+              },
+              "process_state_precondition": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "execution",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "running",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "process_id",
+                          "phase",
+                          "status",
+                          "updated_at"
+                        ],
+                        "properties": {
+                          "process_id": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "phase": {
+                            "const": "cooldown",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "waiting",
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -2758,6 +3517,7 @@
             "type": "object",
             "required": [
               "kind",
+              "persisted_meta_enqueue_reason",
               "terminal_outcome",
               "terminal_outcome_finalized_at",
               "canonical_reason_code",
@@ -2768,6 +3528,26 @@
               "kind": {
                 "const": "meta_finalization",
                 "type": "string"
+              },
+              "persisted_meta_enqueue_reason": {
+                "anyOf": [
+                  {
+                    "const": "cooldown_expired",
+                    "type": "string"
+                  },
+                  {
+                    "const": "user_retracted",
+                    "type": "string"
+                  },
+                  {
+                    "const": "system_interrupted",
+                    "type": "string"
+                  },
+                  {
+                    "const": "failed_with_learnable_snapshot",
+                    "type": "string"
+                  }
+                ]
               },
               "terminal_outcome": {
                 "$id": "urn:pai:trigger-processor:terminal-outcome:v1",
