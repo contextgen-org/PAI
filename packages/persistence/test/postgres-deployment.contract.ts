@@ -139,6 +139,7 @@ DECLARE
   current_version bigint;
   next_version bigint;
 BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended(p_parent_key, 0));
   SELECT parent_version INTO current_version
     FROM timer.contract_parents WHERE parent_key = p_parent_key
     ORDER BY parent_version DESC LIMIT 1 FOR UPDATE;
@@ -255,6 +256,8 @@ describePostgres("PostgreSQL owner deployment verification", () => {
       await expect(staleWrite).rejects.toThrow(/stale parent version/);
       await second.query("ROLLBACK");
     } finally {
+      await first.query("ROLLBACK").catch(() => undefined);
+      await second.query("ROLLBACK").catch(() => undefined);
       first.release();
       second.release();
     }
