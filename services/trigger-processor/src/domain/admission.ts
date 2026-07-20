@@ -24,6 +24,17 @@ export class InvalidTrustedAdmissionFactsError extends Error {
   }
 }
 
+function assertConsistentForegroundState(
+  facts: TrustedAdmissionFactsV1,
+): void {
+  const hasActiveProcess = facts.active_process !== "none";
+  if (hasActiveProcess !== facts.foreground_slot_occupied) {
+    throw new InvalidTrustedAdmissionFactsError(
+      "active_process and foreground_slot_occupied must come from one consistent admission snapshot",
+    );
+  }
+}
+
 export function calculateTriggerPriorityV1(
   facts: Pick<
     TrustedAdmissionFactsV1,
@@ -65,6 +76,7 @@ const waitingAdmissionState = (
 export function decideTriggerAdmissionV1(
   facts: TrustedAdmissionFactsV1,
 ): TriggerAdmissionDecisionV1 {
+  assertConsistentForegroundState(facts);
   const priority = calculateTriggerPriorityV1(facts);
 
   if (facts.bot_state !== "active") {
@@ -122,21 +134,25 @@ export function decideTriggerAdmissionV1(
   }
 
   if (priority === "strong") {
+    if (facts.active_process === "none") {
+      return {
+        trigger_status: "accepted",
+        priority: "strong",
+        action: "dispatch",
+        reason_code: facts.explicit_interrupt
+          ? "explicit_interrupt"
+          : "strong_no_active_dispatch",
+        initial_process_state: runningAdmissionState,
+      };
+    }
     return {
       trigger_status: "accepted",
-      priority,
-      action:
-        facts.active_process === "none" ? "dispatch" : "dispatch_or_preempt",
-      reason_code:
-        facts.explicit_interrupt || facts.trusted_strong_hint
-          ? "explicit_interrupt"
-          : facts.active_process === "none"
-            ? "strong_no_active_dispatch"
-            : "strong_preempt_active",
-      initial_process_state:
-        facts.active_process === "none"
-          ? runningAdmissionState
-          : waitingAdmissionState("preempt_commit"),
+      priority: "strong",
+      action: "dispatch_or_preempt",
+      reason_code: facts.explicit_interrupt
+        ? "explicit_interrupt"
+        : "strong_preempt_active",
+      initial_process_state: waitingAdmissionState("preempt_commit"),
     };
   }
 
@@ -150,17 +166,20 @@ export function decideTriggerAdmissionV1(
     };
   }
 
+  if (facts.active_process === "cooldown_waiting") {
+    return {
+      trigger_status: "accepted",
+      priority: "weak",
+      action: "merge_or_enqueue_weak",
+      reason_code: "cooldown_merge_candidate",
+      initial_process_state: waitingAdmissionState("weak_queue"),
+    };
+  }
   return {
     trigger_status: "accepted",
     priority: "weak",
-    action:
-      facts.active_process === "cooldown_waiting"
-        ? "merge_or_enqueue_weak"
-        : "enqueue_weak",
-    reason_code:
-      facts.active_process === "cooldown_waiting"
-        ? "cooldown_merge_candidate"
-        : "active_process_running",
+    action: "enqueue_weak",
+    reason_code: "active_process_running",
     initial_process_state: waitingAdmissionState("weak_queue"),
   };
 }

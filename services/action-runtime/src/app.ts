@@ -1,5 +1,7 @@
-import { createServiceApp } from "@pai/service-kit";
+import { createServiceApp, type ServiceAppOptions } from "@pai/service-kit";
 
-export function buildActionRuntimeApp(): ReturnType<typeof createServiceApp> {
-  return createServiceApp("action_runtime");
+export function buildActionRuntimeApp(
+  options: ServiceAppOptions = {},
+): ReturnType<typeof createServiceApp> {
+  return createServiceApp("action_runtime", options);
 }

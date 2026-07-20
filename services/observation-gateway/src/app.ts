@@ -1,5 +1,7 @@
-import { createServiceApp } from "@pai/service-kit";
+import { createServiceApp, type ServiceAppOptions } from "@pai/service-kit";
 
-export function buildObservationGatewayApp(): ReturnType<typeof createServiceApp> {
-  return createServiceApp("observation_gateway");
+export function buildObservationGatewayApp(
+  options: ServiceAppOptions = {},
+): ReturnType<typeof createServiceApp> {
+  return createServiceApp("observation_gateway", options);
 }

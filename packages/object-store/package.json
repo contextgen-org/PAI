@@ -7,6 +7,10 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./composition": {
+      "types": "./src/composition.ts",
+      "default": "./dist/composition.js"
     }
   },
   "files": ["dist"],
@@ -16,9 +20,11 @@
     "test": "vitest run test"
   },
   "dependencies": {
-    "@pai/contracts": "workspace:*"
+    "@pai/contracts": "workspace:*",
+    "@supabase/supabase-js": "catalog:"
   },
   "devDependencies": {
+    "@types/node": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

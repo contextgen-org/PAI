@@ -9,9 +9,14 @@
   "scripts": {
     "verify:toolchain": "node scripts/verify-toolchain.mjs",
     "build": "pnpm -r --if-present build",
+    "contracts:check": "pnpm --filter @pai/contracts generate:check",
+    "smoke:invalid-config": "node scripts/smoke-invalid-service-config.mjs",
+    "smoke:services": "node scripts/smoke-service-probes.mjs",
+    "smoke:auth": "node scripts/smoke-auth-boundaries.mjs",
+    "smoke:shutdown": "node scripts/smoke-graceful-shutdown.mjs",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
-    "check": "pnpm verify:toolchain && pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm verify:toolchain && pnpm typecheck && pnpm contracts:check && pnpm test && pnpm build && pnpm smoke:invalid-config && pnpm smoke:services && pnpm smoke:auth && pnpm smoke:shutdown"
   },
   "devDependencies": {
     "@types/node": "24.10.13",

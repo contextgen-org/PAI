@@ -1,5 +1,7 @@
-import { createServiceApp } from "@pai/service-kit";
+import { createServiceApp, type ServiceAppOptions } from "@pai/service-kit";
 
-export function buildMemoryApp(): ReturnType<typeof createServiceApp> {
-  return createServiceApp("memory");
+export function buildMemoryApp(
+  options: ServiceAppOptions = {},
+): ReturnType<typeof createServiceApp> {
+  return createServiceApp("memory", options);
 }

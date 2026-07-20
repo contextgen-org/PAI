@@ -1,5 +1,5 @@
-import { listen } from "@pai/service-kit";
+import { startService } from "@pai/service-kit";
 
 import { buildSkillRegistryApp } from "./app.js";
 
-await listen(buildSkillRegistryApp(), 3007);
+await startService({ serviceId: "skill_registry", defaultPort: 3007, buildApp: buildSkillRegistryApp });

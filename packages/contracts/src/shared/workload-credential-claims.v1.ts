@@ -122,11 +122,15 @@ export function validateWorkloadCredentialClaimsV1(
 
   const claims = value as WorkloadCredentialClaimsV1;
   const issues: ContractValidationIssue[] = [];
-  if (claims.exp <= claims.iat || claims.nbf > claims.exp) {
+  if (
+    claims.iat > claims.nbf ||
+    claims.exp <= claims.iat ||
+    claims.nbf >= claims.exp
+  ) {
     issues.push({
       code: "invalid_time_window",
       fieldPath: "/exp",
-      message: "exp must be after iat and not earlier than nbf",
+      message: "credential time must satisfy iat <= nbf < exp",
     });
   }
   if (claims.exp - claims.iat > 300) {

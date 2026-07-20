@@ -1,5 +1,5 @@
-import { listen } from "@pai/service-kit";
+import { startService } from "@pai/service-kit";
 
 import { buildTriggerProcessorApp } from "./app.js";
 
-await listen(buildTriggerProcessorApp(), 3001);
+await startService({ serviceId: "trigger_processor", defaultPort: 3001, buildApp: buildTriggerProcessorApp });

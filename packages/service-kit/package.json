@@ -16,7 +16,10 @@
     "test": "vitest run test"
   },
   "dependencies": {
+    "@opentelemetry/api": "catalog:",
+    "@pai/auth": "workspace:*",
     "@pai/contracts": "workspace:*",
+    "@sinclair/typebox": "catalog:",
     "fastify": "catalog:"
   },
   "devDependencies": {

@@ -1,5 +1,5 @@
-import { listen } from "@pai/service-kit";
+import { startService } from "@pai/service-kit";
 
 import { buildMemoryApp } from "./app.js";
 
-await listen(buildMemoryApp(), 3004);
+await startService({ serviceId: "memory", defaultPort: 3004, buildApp: buildMemoryApp });

@@ -47,6 +47,22 @@ describe("WorkloadCredentialClaimsV1", () => {
     });
   });
 
+  it("rejects a future iat paired with an already-active nbf", () => {
+    expect(
+      validateWorkloadCredentialClaimsV1({
+        ...baseClaims,
+        iat: 200,
+        nbf: 100,
+        exp: 400,
+      }),
+    ).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({ code: "invalid_time_window" }),
+      ]),
+    });
+  });
+
   it("rejects unsorted capabilities and delegated scope drift", () => {
     const result = validateWorkloadCredentialClaimsV1({
       ...baseClaims,

@@ -1,5 +1,7 @@
 import { Type, type Static, type TLiteral } from "@sinclair/typebox";
 
+import type { TypedEvidenceRefV1 } from "../shared/typed-evidence-ref.v1.js";
+
 export const TERMINAL_OUTCOMES_V1 = [
   "executed",
   "merged_and_executed",
@@ -130,18 +132,175 @@ const directEdges = new Set([
   "execution/running/-->execution/preempt_requested/-",
   "execution/running/-->execution/cancelling/-",
   "execution/preempt_requested/-->execution/cancelling/-",
-  "execution/running/-->cooldown/waiting/cooldown_until",
-  "execution/preempt_requested/-->cooldown/waiting/cooldown_until",
-  "cooldown/waiting/cooldown_until->meta_enqueued/waiting/meta_enqueue_wait",
 ]);
 
 const retryablePhases = new Set(["admission", "context", "intent", "execution"]);
 
+type RuntimeBoundaryEvidenceV1 =
+  | {
+      readonly runtime_state: "not_running";
+      readonly runtime_stop_or_isolation_proof_ref?: never;
+    }
+  | {
+      readonly runtime_state: "stopped_or_isolated";
+      readonly runtime_stop_or_isolation_proof_ref: string;
+    };
+
+interface TerminalTransactionEvidenceV1 {
+  readonly terminal_outcome: TerminalOutcomeV1;
+  readonly terminal_outcome_finalized_at: string;
+  readonly canonical_reason_code: string;
+  readonly transition_audit_ref: string;
+  readonly outbox_event_ref: string;
+}
+
+/**
+ * Durable facts that must already be part of the same owner transaction as the
+ * requested state transition. References are used instead of caller assertions
+ * so repository code has to pass the persisted evidence it committed.
+ */
+export type TriggerProcessTransitionEvidenceV1 =
+  | {
+      readonly kind: "execution_completed";
+      readonly runtime_terminal_outcome: "completed";
+      readonly runtime_terminal_event_ref: TypedEvidenceRefV1;
+      readonly snapshot_append_ref: string;
+      readonly cooldown_until: string;
+      readonly completion_won_preempt_race: boolean;
+      readonly preempt_race_proof_ref: string | null;
+      readonly transition_audit_ref: string;
+      readonly outbox_event_ref: string;
+    }
+  | {
+      readonly kind: "cooldown_expired_meta_enqueue";
+      readonly enqueue_reason: "cooldown_expired";
+      readonly trigger_process_id: string;
+      readonly meta_enqueue_idempotency_key: string;
+      readonly process_lock_ref: string;
+      readonly cooldown_expired_at: string;
+      readonly snapshot_retention_until: string;
+      readonly preempted_by_process_id: null;
+      readonly existing_meta_enqueue_intent_ref: null;
+      readonly transition_audit_ref: string;
+      readonly meta_enqueue_outbox_ref: string;
+    }
+  | ({
+      readonly kind: "meta_enqueue";
+      readonly enqueue_reason:
+        | "user_retracted"
+        | "system_interrupted"
+        | "failed_with_learnable_snapshot";
+      readonly boundary_system_event_ref: TypedEvidenceRefV1;
+      readonly snapshot_ref: string;
+      readonly snapshot_freeze_ref: string;
+      readonly learnable_snapshot_ready: true;
+      readonly transition_audit_ref: string;
+      readonly meta_enqueue_outbox_ref: string;
+    } & RuntimeBoundaryEvidenceV1)
+  | ({
+      readonly kind: "explicit_cancel";
+      readonly terminal_outcome:
+        | "cancelled_with_reason"
+        | "superseded_by_later_trigger";
+      readonly superseded_by_process_id?: string;
+    } & RuntimeBoundaryEvidenceV1 &
+      Omit<TerminalTransactionEvidenceV1, "terminal_outcome">)
+  | ({
+      readonly kind: "unrecoverable_failure";
+      readonly terminal_outcome: "failed_with_reason";
+    } & RuntimeBoundaryEvidenceV1 &
+      Omit<TerminalTransactionEvidenceV1, "terminal_outcome">)
+  | ({
+      readonly kind: "preempt_handoff";
+      readonly terminal_outcome: "preempted_and_handed_off";
+      readonly snapshot_freeze_ref: string;
+      readonly successor_process_id: string;
+      readonly snapshot_transfer_ref: string;
+      readonly foreground_slot_transfer_ref: string;
+    } & RuntimeBoundaryEvidenceV1 &
+      Omit<TerminalTransactionEvidenceV1, "terminal_outcome">)
+  | {
+      readonly kind: "weak_merge";
+      readonly terminal_outcome: null;
+      readonly terminal_outcome_finalized_at: null;
+      readonly canonical_process_id: string;
+      readonly merged_into_process_id: string;
+      readonly transition_audit_ref: string;
+      readonly outbox_event_ref: string;
+    }
+  | ({
+      readonly kind: "meta_finalization";
+    } & TerminalTransactionEvidenceV1);
+
+function isNonEmptyRef(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0 &&
+    !value.includes("\r") &&
+    !value.includes("\n")
+  );
+}
+
+function isSystemEventRef(value: unknown): value is TypedEvidenceRefV1 {
+  return typeof value === "string" && /^system_event:[^\r\n]+$/.test(value);
+}
+
+function isTriggerEventRef(value: unknown): value is TypedEvidenceRefV1 {
+  return typeof value === "string" && /^trigger_event:[^\r\n]+$/.test(value);
+}
+
+function isTerminalOutcome(value: unknown): value is TerminalOutcomeV1 {
+  return (TERMINAL_OUTCOMES_V1 as readonly unknown[]).includes(value);
+}
+
+function isTimestamp(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0 &&
+    !Number.isNaN(Date.parse(value))
+  );
+}
+
+function hasRuntimeBoundaryEvidence(
+  from: TriggerProcessStateV1,
+  evidence: RuntimeBoundaryEvidenceV1,
+): boolean {
+  if (from.phase !== "execution") return evidence.runtime_state === "not_running";
+  return (
+    evidence.runtime_state === "stopped_or_isolated" &&
+    isNonEmptyRef(evidence.runtime_stop_or_isolation_proof_ref)
+  );
+}
+
+function hasTerminalTransactionEvidence(
+  to: Extract<TriggerProcessStateV1, { phase: "closed" }>,
+  evidence: TerminalTransactionEvidenceV1,
+): boolean {
+  return (
+    to.terminal_reason !== "merged" &&
+    isTerminalOutcome(evidence.terminal_outcome) &&
+    evidence.canonical_reason_code === to.terminal_reason &&
+    isNonEmptyRef(evidence.canonical_reason_code) &&
+    isTimestamp(evidence.terminal_outcome_finalized_at) &&
+    isNonEmptyRef(evidence.transition_audit_ref) &&
+    isNonEmptyRef(evidence.outbox_event_ref)
+  );
+}
+
+function isInitialAdmissionState(state: TriggerProcessStateV1): boolean {
+  return (
+    state.phase === "admission" &&
+    (state.status === "running" ||
+      (state.status === "waiting" && state.wait_reason !== "stage_retry_wait"))
+  );
+}
+
 export function isTriggerProcessTransitionV1Allowed(
   from: TriggerProcessStateV1 | null,
   to: TriggerProcessStateV1,
+  evidence?: TriggerProcessTransitionEvidenceV1,
 ): boolean {
-  if (from === null) return to.phase === "admission";
+  if (from === null) return isInitialAdmissionState(to);
   if (from.phase === "closed") return false;
 
   if (
@@ -159,19 +318,150 @@ export function isTriggerProcessTransitionV1Allowed(
 
   if (directEdges.has(`${stateKey(from)}->${stateKey(to)}`)) return true;
 
+  if (
+    to.phase === "cooldown" &&
+    to.status === "waiting" &&
+    to.wait_reason === "cooldown_until"
+  ) {
+    return (
+      from.phase === "execution" &&
+      (from.status === "running" || from.status === "preempt_requested") &&
+      evidence?.kind === "execution_completed" &&
+      evidence.runtime_terminal_outcome === "completed" &&
+      isTriggerEventRef(evidence.runtime_terminal_event_ref) &&
+      isNonEmptyRef(evidence.snapshot_append_ref) &&
+      isTimestamp(evidence.cooldown_until) &&
+      evidence.completion_won_preempt_race ===
+        (from.status === "preempt_requested") &&
+      (evidence.completion_won_preempt_race
+        ? isNonEmptyRef(evidence.preempt_race_proof_ref)
+        : evidence.preempt_race_proof_ref === null) &&
+      isNonEmptyRef(evidence.transition_audit_ref) &&
+      isNonEmptyRef(evidence.outbox_event_ref)
+    );
+  }
+
   if (to.phase === "meta_enqueued") {
-    return to.wait_reason === "meta_enqueue_wait";
+    if (evidence?.kind === "cooldown_expired_meta_enqueue") {
+      const cooldownExpiredAt = Date.parse(evidence.cooldown_expired_at);
+      const snapshotRetentionUntil = Date.parse(
+        evidence.snapshot_retention_until,
+      );
+      return (
+        from.phase === "cooldown" &&
+        from.status === "waiting" &&
+        from.wait_reason === "cooldown_until" &&
+        to.wait_reason === "meta_enqueue_wait" &&
+        isNonEmptyRef(evidence.trigger_process_id) &&
+        evidence.meta_enqueue_idempotency_key === evidence.trigger_process_id &&
+        isNonEmptyRef(evidence.process_lock_ref) &&
+        Number.isFinite(cooldownExpiredAt) &&
+        Number.isFinite(snapshotRetentionUntil) &&
+        snapshotRetentionUntil > cooldownExpiredAt &&
+        evidence.preempted_by_process_id === null &&
+        evidence.existing_meta_enqueue_intent_ref === null &&
+        isNonEmptyRef(evidence.transition_audit_ref) &&
+        isNonEmptyRef(evidence.meta_enqueue_outbox_ref)
+      );
+    }
+    return (
+      to.wait_reason === "meta_enqueue_wait" &&
+      evidence?.kind === "meta_enqueue" &&
+      from.phase !== "meta_enqueued" &&
+      from.phase !== "cooldown" &&
+      isSystemEventRef(evidence.boundary_system_event_ref) &&
+      isNonEmptyRef(evidence.snapshot_ref) &&
+      isNonEmptyRef(evidence.snapshot_freeze_ref) &&
+      evidence.learnable_snapshot_ready === true &&
+      isNonEmptyRef(evidence.transition_audit_ref) &&
+      isNonEmptyRef(evidence.meta_enqueue_outbox_ref) &&
+      hasRuntimeBoundaryEvidence(from, evidence)
+    );
   }
 
   if (to.phase === "closed") {
-    if (from.phase === "meta_enqueued") {
-      return to.status === "completed" || to.status === "failed";
+    if (
+      to.terminal_reason === "failed_not_isolated" ||
+      to.terminal_reason === "failed_but_isolated"
+    ) {
+      return false;
     }
-    return (
-      to.status === "cancelled" ||
-      to.status === "failed" ||
-      to.status === "preempted"
-    );
+
+    if (evidence?.kind === "weak_merge") {
+      return (
+        from.phase === "admission" &&
+        from.status === "waiting" &&
+        from.wait_reason === "weak_queue" &&
+        to.status === "completed" &&
+        to.terminal_reason === "merged" &&
+        evidence.terminal_outcome === null &&
+        evidence.terminal_outcome_finalized_at === null &&
+        isNonEmptyRef(evidence.canonical_process_id) &&
+        evidence.merged_into_process_id === evidence.canonical_process_id &&
+        isNonEmptyRef(evidence.transition_audit_ref) &&
+        isNonEmptyRef(evidence.outbox_event_ref)
+      );
+    }
+
+    if (evidence?.kind === "meta_finalization") {
+      return (
+        from.phase === "meta_enqueued" &&
+        (to.status === "completed" || to.status === "failed") &&
+        (to.status !== "failed" ||
+          evidence.terminal_outcome === "failed_with_reason") &&
+        hasTerminalTransactionEvidence(to, evidence)
+      );
+    }
+
+    if (evidence?.kind === "explicit_cancel") {
+      const superseded =
+        evidence.terminal_outcome === "superseded_by_later_trigger";
+      const sourceAllowed =
+        from.phase === "execution"
+          ? from.status === "cancelling"
+          : from.phase !== "meta_enqueued";
+      return (
+        to.status === "cancelled" &&
+        (evidence.terminal_outcome === "cancelled_with_reason" || superseded) &&
+        sourceAllowed &&
+        hasRuntimeBoundaryEvidence(from, evidence) &&
+        hasTerminalTransactionEvidence(to, evidence) &&
+        (!superseded ||
+          (from.phase === "admission" &&
+            from.status === "waiting" &&
+            isNonEmptyRef(evidence.superseded_by_process_id)))
+      );
+    }
+
+    if (evidence?.kind === "unrecoverable_failure") {
+      return (
+        to.status === "failed" &&
+        evidence.terminal_outcome === "failed_with_reason" &&
+        hasRuntimeBoundaryEvidence(from, evidence) &&
+        hasTerminalTransactionEvidence(to, evidence)
+      );
+    }
+
+    if (evidence?.kind === "preempt_handoff") {
+      const sourceAllowed =
+        (from.phase === "execution" && from.status === "preempt_requested") ||
+        (from.phase === "cooldown" &&
+          from.status === "waiting" &&
+          from.wait_reason === "cooldown_until");
+      return (
+        to.status === "preempted" &&
+        evidence.terminal_outcome === "preempted_and_handed_off" &&
+        sourceAllowed &&
+        hasRuntimeBoundaryEvidence(from, evidence) &&
+        hasTerminalTransactionEvidence(to, evidence) &&
+        isNonEmptyRef(evidence.snapshot_freeze_ref) &&
+        isNonEmptyRef(evidence.successor_process_id) &&
+        isNonEmptyRef(evidence.snapshot_transfer_ref) &&
+        isNonEmptyRef(evidence.foreground_slot_transfer_ref)
+      );
+    }
+
+    return false;
   }
 
   return false;

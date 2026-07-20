@@ -1,5 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { SHARED_SCHEMA_CATALOG } from "../dist/catalog.js";
@@ -10,8 +10,28 @@ import {
 import { TriggerAdmissionDecisionV1Schema } from "../dist/trigger-processor/trigger-admission.v1.js";
 import { evaluateConflictPolicyV1 } from "../dist/policy/conflict-policy.v1.js";
 import { evaluateDirectActivePolicyV1 } from "../dist/policy/direct-active-policy.v1.js";
+import { findUnexpectedGeneratedFiles } from "./generated-output-drift.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const checkMode = process.argv.includes("--check");
+const expectedOutputs = new Set();
+const driftedOutputs = [];
+
+async function emitGeneratedFile(outputPath, content) {
+  const relativePath = relative(packageRoot, outputPath);
+  expectedOutputs.add(relativePath);
+  if (checkMode) {
+    try {
+      const existing = await readFile(outputPath, "utf8");
+      if (existing !== content) driftedOutputs.push(relativePath);
+    } catch {
+      driftedOutputs.push(relativePath);
+    }
+    return;
+  }
+  await mkdir(dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, content);
+}
 
 for (const entry of SHARED_SCHEMA_CATALOG) {
   const schemaOutput = entry.generated_outputs.find((output) =>
@@ -19,13 +39,11 @@ for (const entry of SHARED_SCHEMA_CATALOG) {
   );
   if (schemaOutput === undefined) continue;
   const outputPath = resolve(packageRoot, schemaOutput);
-  await mkdir(dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, `${JSON.stringify(entry.schema, null, 2)}\n`);
+  await emitGeneratedFile(outputPath, `${JSON.stringify(entry.schema, null, 2)}\n`);
 }
 
 const openApiPath = resolve(packageRoot, "generated/openapi/shared.yaml");
-await mkdir(dirname(openApiPath), { recursive: true });
-await writeFile(
+await emitGeneratedFile(
   openApiPath,
   `${JSON.stringify(
     {
@@ -44,14 +62,13 @@ await writeFile(
 );
 
 const typesPath = resolve(packageRoot, "generated/types/shared.d.ts");
-await mkdir(dirname(typesPath), { recursive: true });
-await writeFile(
+await emitGeneratedFile(
   typesPath,
   'export * from "../../dist/index.js";\n',
 );
 
 const policyTypesPath = resolve(packageRoot, "generated/types/shared-policy.d.ts");
-await writeFile(
+await emitGeneratedFile(
   policyTypesPath,
   [
     'export * from "../../dist/policy/conflict-policy.v1.js";',
@@ -61,7 +78,7 @@ await writeFile(
 );
 
 const authTypesPath = resolve(packageRoot, "generated/types/shared-auth.d.ts");
-await writeFile(
+await emitGeneratedFile(
   authTypesPath,
   [
     'export * from "../../dist/shared/workload-credential-claims.v1.js";',
@@ -74,8 +91,7 @@ const triggerProcessSchemaPath = resolve(
   packageRoot,
   "generated/schema/trigger-processor/trigger-process-state.v1.json",
 );
-await mkdir(dirname(triggerProcessSchemaPath), { recursive: true });
-await writeFile(
+await emitGeneratedFile(
   triggerProcessSchemaPath,
   `${JSON.stringify(TriggerProcessStateV1Schema, null, 2)}\n`,
 );
@@ -84,8 +100,7 @@ const triggerProcessCheckPath = resolve(
   packageRoot,
   "generated/sql/trigger-processor/trigger-process-state.v1.check.sql",
 );
-await mkdir(dirname(triggerProcessCheckPath), { recursive: true });
-await writeFile(
+await emitGeneratedFile(
   triggerProcessCheckPath,
   `${TRIGGER_PROCESS_STATE_V1_DATABASE_CHECK.trim()}\n`,
 );
@@ -94,8 +109,7 @@ const triggerAdmissionSchemaPath = resolve(
   packageRoot,
   "generated/schema/trigger-processor/trigger-admission-decision.v1.json",
 );
-await mkdir(dirname(triggerAdmissionSchemaPath), { recursive: true });
-await writeFile(
+await emitGeneratedFile(
   triggerAdmissionSchemaPath,
   `${JSON.stringify(TriggerAdmissionDecisionV1Schema, null, 2)}\n`,
 );
@@ -163,13 +177,11 @@ const policyFixtures = [
 
 for (const [relativePath, fixtures] of policyFixtures) {
   const outputPath = resolve(packageRoot, relativePath);
-  await mkdir(dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, `${JSON.stringify(fixtures, null, 2)}\n`);
+  await emitGeneratedFile(outputPath, `${JSON.stringify(fixtures, null, 2)}\n`);
 }
 
 const authFixtureDirectory = resolve(packageRoot, "generated/fixtures/auth");
-await mkdir(authFixtureDirectory, { recursive: true });
-await writeFile(
+await emitGeneratedFile(
   resolve(authFixtureDirectory, "workload-credential-claims.v1.json"),
   `${JSON.stringify(
     {
@@ -196,7 +208,7 @@ await writeFile(
     2,
   )}\n`,
 );
-await writeFile(
+await emitGeneratedFile(
   resolve(authFixtureDirectory, "delegated-principal-context.v1.json"),
   `${JSON.stringify(
     {
@@ -211,3 +223,17 @@ await writeFile(
     2,
   )}\n`,
 );
+
+if (checkMode) {
+  const generatedRoot = resolve(packageRoot, "generated");
+  driftedOutputs.push(
+    ...(await findUnexpectedGeneratedFiles(generatedRoot, expectedOutputs)),
+  );
+  if (driftedOutputs.length > 0) {
+    const uniqueOutputs = [...new Set(driftedOutputs)].sort();
+    console.error(
+      `generated contract drift detected:\n${uniqueOutputs.map((output) => `- ${output}`).join("\n")}\nRun pnpm --filter @pai/contracts build and commit the generated outputs.`,
+    );
+    process.exitCode = 1;
+  }
+}

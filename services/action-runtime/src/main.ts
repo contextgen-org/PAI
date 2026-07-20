@@ -1,5 +1,5 @@
-import { listen } from "@pai/service-kit";
+import { startService } from "@pai/service-kit";
 
 import { buildActionRuntimeApp } from "./app.js";
 
-await listen(buildActionRuntimeApp(), 3002);
+await startService({ serviceId: "action_runtime", defaultPort: 3002, buildApp: buildActionRuntimeApp });

@@ -74,6 +74,10 @@ export interface PutImmutableResultV1 {
 
 export interface ObjectReadRequestV1 extends ObjectAuthorizationV1 {
   readonly object_ref: ObjectRefV1;
+  /** Opaque owner-issued decision; the adapter resolves it before metadata lookup. */
+  readonly access_decision_ref: string;
+  readonly retention_policy_version: string;
+  readonly redaction_policy_version: string;
 }
 
 export interface ObjectRangeReadRequestV1 extends ObjectReadRequestV1 {
@@ -99,7 +103,6 @@ export interface ObjectStreamResultV1 extends ObjectHeadV1 {
 
 export interface IssueReadGrantRequestV1 extends ObjectReadRequestV1 {
   readonly ttl_seconds: number;
-  readonly redaction_policy_version: string;
 }
 
 export interface ObjectReadGrantV1 {

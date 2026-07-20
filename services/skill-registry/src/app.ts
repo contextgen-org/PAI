@@ -1,5 +1,7 @@
-import { createServiceApp } from "@pai/service-kit";
+import { createServiceApp, type ServiceAppOptions } from "@pai/service-kit";
 
-export function buildSkillRegistryApp(): ReturnType<typeof createServiceApp> {
-  return createServiceApp("skill_registry");
+export function buildSkillRegistryApp(
+  options: ServiceAppOptions = {},
+): ReturnType<typeof createServiceApp> {
+  return createServiceApp("skill_registry", options);
 }

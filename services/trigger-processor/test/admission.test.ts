@@ -50,6 +50,7 @@ describe("Trigger admission", () => {
       decideTriggerAdmissionV1({
         ...base,
         active_process: "execution_running",
+        foreground_slot_occupied: true,
       }),
     ).toMatchObject({
       priority: "weak",
@@ -63,6 +64,19 @@ describe("Trigger admission", () => {
     });
   });
 
+  it("does not mislabel a trusted strong hint as an explicit interrupt", () => {
+    expect(
+      decideTriggerAdmissionV1({
+        ...base,
+        trusted_strong_hint: true,
+      }),
+    ).toMatchObject({
+      priority: "strong",
+      action: "dispatch",
+      reason_code: "strong_no_active_dispatch",
+    });
+  });
+
   it("serializes timer catch-up without preempting an occupied foreground slot", () => {
     expect(
       decideTriggerAdmissionV1({
@@ -70,6 +84,7 @@ describe("Trigger admission", () => {
         source: "timer",
         actor_type: "system",
         is_catch_up: true,
+        active_process: "execution_running",
         foreground_slot_occupied: true,
       }),
     ).toMatchObject({
@@ -83,6 +98,27 @@ describe("Trigger admission", () => {
         wait_reason: "deferred_strong_queue",
       },
     });
+  });
+
+  it("rejects admission facts that disagree about the foreground slot", () => {
+    expect(() =>
+      decideTriggerAdmissionV1({
+        ...base,
+        source: "timer",
+        actor_type: "system",
+        foreground_slot_occupied: true,
+      }),
+    ).toThrow("must come from one consistent admission snapshot");
+
+    expect(() =>
+      decideTriggerAdmissionV1({
+        ...base,
+        source: "timer",
+        actor_type: "system",
+        is_catch_up: true,
+        active_process: "execution_running",
+      }),
+    ).toThrow("must come from one consistent admission snapshot");
   });
 
   it("rejects an inactive bot without producing a process state", () => {

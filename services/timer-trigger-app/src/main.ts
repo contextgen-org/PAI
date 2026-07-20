@@ -1,5 +1,5 @@
-import { listen } from "@pai/service-kit";
+import { startService } from "@pai/service-kit";
 
 import { buildTimerTriggerApp } from "./app.js";
 
-await listen(buildTimerTriggerApp(), 3006);
+await startService({ serviceId: "timer_trigger_app", defaultPort: 3006, buildApp: buildTimerTriggerApp });

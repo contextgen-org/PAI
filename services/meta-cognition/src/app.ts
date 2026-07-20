@@ -1,5 +1,7 @@
-import { createServiceApp } from "@pai/service-kit";
+import { createServiceApp, type ServiceAppOptions } from "@pai/service-kit";
 
-export function buildMetaCognitionApp(): ReturnType<typeof createServiceApp> {
-  return createServiceApp("meta_cognition");
+export function buildMetaCognitionApp(
+  options: ServiceAppOptions = {},
+): ReturnType<typeof createServiceApp> {
+  return createServiceApp("meta_cognition", options);
 }
