@@ -122,6 +122,13 @@ export interface ReleaseObjectReconciliationInputV1 {
   readonly next_retry_at: Date;
 }
 
+export interface RedirectObjectReconciliationInputV1 {
+  readonly reservation_id: string;
+  readonly claim_token: string;
+  readonly operation: "put_cleanup";
+  readonly last_error: string;
+}
+
 /**
  * Implementations live in each owner schema. They must make every reserve/commit
  * transition atomic and never persist a bucket, physical key, or signed URL.
@@ -150,10 +157,13 @@ export interface ObjectMetadataRepositoryV1 {
   releaseReconciliation(
     input: ReleaseObjectReconciliationInputV1,
   ): Promise<void>;
+  redirectReconciliation(
+    input: RedirectObjectReconciliationInputV1,
+  ): Promise<void>;
 }
 
 interface ReconciliationLease {
-  operation: ObjectReconciliationOperationV1 | null;
+  operation: ObjectReconciliationOperationV1;
   claimToken?: string;
   lockedUntil?: Date;
   attempt: number;
@@ -212,7 +222,7 @@ export class InMemoryObjectMetadataRepositoryV1
       const pending = [...this.#pendingPuts.values()].find(
         ({ record }) => record.object_ref === existing.object_ref,
       );
-      if (pending !== undefined && pending.operation !== null) {
+      if (pending !== undefined) {
         return { kind: "pending", reservation_id: pending.reservationId };
       }
       return { kind: "busy" };
@@ -242,7 +252,7 @@ export class InMemoryObjectMetadataRepositoryV1
       reservationId,
       identityKey,
       record,
-      operation: null,
+      operation: "put_finalize",
       attempt: 0,
     });
     return {
@@ -317,8 +327,7 @@ export class InMemoryObjectMetadataRepositoryV1
       if (
         pending !== undefined &&
         pending.deletionDecisionVersion === input.deletion_decision_version &&
-        pending.idempotencyKey === input.idempotency_key &&
-        pending.operation !== null
+        pending.idempotencyKey === input.idempotency_key
       ) {
         return { kind: "pending", reservation_id: pending.reservationId };
       }
@@ -342,7 +351,7 @@ export class InMemoryObjectMetadataRepositoryV1
       previous: record,
       deletionDecisionVersion: input.deletion_decision_version,
       idempotencyKey: input.idempotency_key,
-      operation: null,
+      operation: "delete_finalize",
       attempt: 0,
     };
     this.#pendingDeletes.set(reservationId, pending);
@@ -426,7 +435,6 @@ export class InMemoryObjectMetadataRepositoryV1
     for (const pending of candidates) {
       if (claims.length >= input.limit) break;
       if (
-        pending.operation === null ||
         (input.reservation_id !== undefined &&
           pending.reservationId !== input.reservation_id) ||
         (pending.nextRetryAt !== undefined && pending.nextRetryAt > input.now) ||
@@ -502,6 +510,20 @@ export class InMemoryObjectMetadataRepositoryV1
     delete pending.lockedUntil;
     pending.lastError = input.last_error;
     pending.nextRetryAt = input.next_retry_at;
+  }
+
+  public async redirectReconciliation(
+    input: RedirectObjectReconciliationInputV1,
+  ): Promise<void> {
+    const pending = this.#pendingPuts.get(input.reservation_id);
+    if (pending === undefined || pending.claimToken !== input.claim_token) {
+      throw new Error("stale reconciliation claim");
+    }
+    pending.operation = input.operation;
+    pending.lastError = input.last_error;
+    delete pending.claimToken;
+    delete pending.lockedUntil;
+    delete pending.nextRetryAt;
   }
 
   public setLegalHold(objectRef: ObjectRefV1, legalHold: boolean): void {

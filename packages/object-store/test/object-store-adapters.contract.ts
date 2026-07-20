@@ -725,6 +725,73 @@ class RejectDeleteFinalizationRepository extends InMemoryObjectMetadataRepositor
   }
 }
 
+class PutMetadataOutageRepository extends InMemoryObjectMetadataRepositoryV1 {
+  #failComplete = true;
+  #failLookup = true;
+  #failHandoff = true;
+
+  public override async completePut(
+    input: Parameters<InMemoryObjectMetadataRepositoryV1["completePut"]>[0],
+  ) {
+    if (this.#failComplete) {
+      this.#failComplete = false;
+      throw new Error("injected metadata outage during put finalization");
+    }
+    return super.completePut(input);
+  }
+
+  public override async findPutFinalization(reservationId: string) {
+    if (this.#failLookup) {
+      this.#failLookup = false;
+      throw new Error("injected metadata outage during put lookup");
+    }
+    return super.findPutFinalization(reservationId);
+  }
+
+  public override async handoffPutReconciliation(
+    reservationId: string,
+    operation: "put_finalize" | "put_cleanup",
+  ): Promise<void> {
+    if (this.#failHandoff) {
+      this.#failHandoff = false;
+      throw new Error("injected metadata outage during put handoff");
+    }
+    return super.handoffPutReconciliation(reservationId, operation);
+  }
+}
+
+class DeleteMetadataOutageRepository extends InMemoryObjectMetadataRepositoryV1 {
+  #failComplete = true;
+  #failLookup = true;
+  #failHandoff = true;
+
+  public override async completeDelete(reservationId: string) {
+    if (this.#failComplete) {
+      this.#failComplete = false;
+      throw new Error("injected metadata outage during delete finalization");
+    }
+    return super.completeDelete(reservationId);
+  }
+
+  public override async findDeleteFinalization(reservationId: string) {
+    if (this.#failLookup) {
+      this.#failLookup = false;
+      throw new Error("injected metadata outage during delete lookup");
+    }
+    return super.findDeleteFinalization(reservationId);
+  }
+
+  public override async handoffDeleteReconciliation(
+    reservationId: string,
+  ): Promise<void> {
+    if (this.#failHandoff) {
+      this.#failHandoff = false;
+      throw new Error("injected metadata outage during delete handoff");
+    }
+    return super.handoffDeleteReconciliation(reservationId);
+  }
+}
+
 class FailFirstIntegrityCleanupBackend extends InMemoryObjectStorageBackendV1 {
   #corruptNextHead = true;
   #failNextDelete = true;
@@ -747,7 +814,56 @@ class FailFirstIntegrityCleanupBackend extends InMemoryObjectStorageBackendV1 {
   }
 }
 
+class MismatchOnFirstReconciliationHeadBackend extends InMemoryObjectStorageBackendV1 {
+  #mismatchNextHead = true;
+
+  public override async head(
+    ...input: Parameters<InMemoryObjectStorageBackendV1["head"]>
+  ) {
+    const head = await super.head(...input);
+    if (!this.#mismatchNextHead) return head;
+    this.#mismatchNextHead = false;
+    return { ...head, sha256: `sha256:${"0".repeat(64)}` };
+  }
+}
+
 describe("ObjectStore ambiguous finalization recovery", () => {
+  it("recovers a put when finalize, lookup, and handoff all fail", async () => {
+    const harness = createHarness("memory", new PutMetadataOutageRepository());
+    const body = new TextEncoder().encode("full-put-metadata-outage");
+    await expect(harness.store.putImmutable(putRequest(body))).rejects.toSatisfy(
+      expectCode("storage_unavailable"),
+    );
+    await expect(harness.store.putImmutable(putRequest(body))).resolves.toMatchObject({
+      replayed: true,
+      sha256: digest(body),
+    });
+  });
+
+  it("recovers a delete when finalize, lookup, and handoff all fail", async () => {
+    const metadata = new DeleteMetadataOutageRepository();
+    const harness = createHarness("memory", metadata);
+    const created = await harness.store.putImmutable(
+      putRequest(new TextEncoder().encode("full-delete-metadata-outage")),
+    );
+    harness.setNow("2026-07-22T00:00:00.000Z");
+    const request = authorizedRequest(harness, "delete", {
+      owner_service: "trigger_processor",
+      scope,
+      capability: "trigger_process.snapshot.manage",
+      object_ref: created.object_ref,
+      deletion_decision_version: "decision-outage",
+      idempotency_key: "delete-outage",
+    });
+    await expect(harness.store.deleteIfEligible(request)).rejects.toSatisfy(
+      expectCode("storage_unavailable"),
+    );
+    await expect(harness.store.deleteIfEligible(request)).resolves.toMatchObject({
+      deleted: true,
+      replayed: true,
+    });
+  });
+
   it("queries a put reservation after commit-then-throw and never compensates the committed object", async () => {
     const harness = createHarness("memory", new CommitPutThenThrowRepository());
     const body = new TextEncoder().encode("commit-survives-disconnect");
@@ -886,6 +1002,32 @@ describe("ObjectStore ambiguous finalization recovery", () => {
         error instanceof ObjectStoreErrorV1 &&
         error.details.reconciliation_operation === "put_cleanup",
     );
+    await expect(store.putImmutable(putRequest(body))).resolves.toMatchObject({
+      replayed: false,
+      sha256: digest(body),
+    });
+  });
+
+  it("redirects a terminal put-finalize mismatch to cleanup instead of retrying forever", async () => {
+    const metadata = new RejectPutFinalizationRepository();
+    const backend = new MismatchOnFirstReconciliationHeadBackend();
+    const store = new InMemoryObjectStoreAdapterV1({
+      metadataRepository: metadata,
+      backend,
+      accessPolicyVerifier: new TestObjectAccessPolicyVerifierV1(),
+      policies: [policy],
+      now: () => new Date("2026-07-20T00:00:00.000Z"),
+    });
+    const body = new TextEncoder().encode("terminal-reconciliation-mismatch");
+    await expect(store.putImmutable(putRequest(body))).rejects.toSatisfy(
+      expectCode("storage_unavailable"),
+    );
+    await expect(
+      store.reconcilePending({ worker_id: "mismatch-worker", limit: 1, lease_seconds: 30 }),
+    ).resolves.toEqual({ claimed: 1, completed: 0, retry_scheduled: 1 });
+    await expect(
+      store.reconcilePending({ worker_id: "cleanup-worker", limit: 1, lease_seconds: 30 }),
+    ).resolves.toEqual({ claimed: 1, completed: 1, retry_scheduled: 0 });
     await expect(store.putImmutable(putRequest(body))).resolves.toMatchObject({
       replayed: false,
       sha256: digest(body),

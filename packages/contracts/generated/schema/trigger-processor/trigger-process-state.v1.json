@@ -343,7 +343,8 @@
         "phase",
         "status",
         "wait_reason",
-        "terminal_reason"
+        "terminal_reason",
+        "meta_enqueue_reason"
       ],
       "properties": {
         "phase": {
@@ -360,6 +361,26 @@
         },
         "terminal_reason": {
           "type": "null"
+        },
+        "meta_enqueue_reason": {
+          "anyOf": [
+            {
+              "const": "cooldown_expired",
+              "type": "string"
+            },
+            {
+              "const": "user_retracted",
+              "type": "string"
+            },
+            {
+              "const": "system_interrupted",
+              "type": "string"
+            },
+            {
+              "const": "failed_with_learnable_snapshot",
+              "type": "string"
+            }
+          ]
         }
       }
     },

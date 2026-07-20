@@ -80,6 +80,7 @@ describe("TriggerProcessStateV1", () => {
       status: "waiting",
       wait_reason: "meta_enqueue_wait",
       terminal_reason: null,
+      meta_enqueue_reason: "system_interrupted",
     } as const satisfies TriggerProcessStateV1;
     const cancelled = {
       phase: "closed",
@@ -218,6 +219,10 @@ describe("TriggerProcessStateV1", () => {
       wait_reason: "cooldown_until",
       terminal_reason: null,
     } as const satisfies TriggerProcessStateV1;
+    const cooldownMetaEnqueued = {
+      ...metaEnqueued,
+      meta_enqueue_reason: "cooldown_expired",
+    } as const satisfies TriggerProcessStateV1;
     expect(
       isTriggerProcessTransitionV1Allowed(executionRunning, cooldown),
     ).toBe(false);
@@ -260,11 +265,11 @@ describe("TriggerProcessStateV1", () => {
         outbox_event_ref: "outbox-completed-2",
       }),
     ).toBe(true);
-    expect(isTriggerProcessTransitionV1Allowed(cooldown, metaEnqueued)).toBe(
+    expect(isTriggerProcessTransitionV1Allowed(cooldown, cooldownMetaEnqueued)).toBe(
       false,
     );
     expect(
-      isTriggerProcessTransitionV1Allowed(cooldown, metaEnqueued, {
+      isTriggerProcessTransitionV1Allowed(cooldown, cooldownMetaEnqueued, {
         kind: "cooldown_expired_meta_enqueue",
         enqueue_reason: "cooldown_expired",
         trigger_process_id: "process-1",
@@ -351,14 +356,13 @@ describe("TriggerProcessStateV1", () => {
     expect(
       isTriggerProcessTransitionV1Allowed(metaEnqueued, completed, {
         kind: "meta_finalization",
-        persisted_meta_enqueue_reason: "cooldown_expired",
         terminal_outcome: "executed",
         terminal_outcome_finalized_at: "2026-07-20T04:03:00.000Z",
         canonical_reason_code: "meta_completed",
         transition_audit_ref: "transition-audit-6",
         outbox_event_ref: "outbox-6",
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("accepts canonical transitions and rejects invented phases", () => {
@@ -384,6 +388,14 @@ describe("TriggerProcessStateV1", () => {
         terminal_reason: null,
       }),
     ).toBe(false);
+    expect(
+      Value.Check(TriggerProcessStateV1Schema, {
+        phase: "meta_enqueued",
+        status: "waiting",
+        wait_reason: "meta_enqueue_wait",
+        terminal_reason: null,
+      }),
+    ).toBe(false);
   });
 
   it.each([
@@ -398,6 +410,7 @@ describe("TriggerProcessStateV1", () => {
         status: "waiting",
         wait_reason: "meta_enqueue_wait",
         terminal_reason: null,
+        meta_enqueue_reason: enqueueReason,
       } as const satisfies TriggerProcessStateV1;
       expect(
         isTriggerProcessTransitionV1Allowed(execution, meta, {
@@ -422,7 +435,6 @@ describe("TriggerProcessStateV1", () => {
       expect(
         isTriggerProcessTransitionV1Allowed(meta, closed, {
           kind: "meta_finalization",
-          persisted_meta_enqueue_reason: enqueueReason,
           terminal_outcome: terminalOutcome,
           terminal_outcome_finalized_at: "2026-07-20T04:03:00.000Z",
           canonical_reason_code: enqueueReason,
@@ -464,6 +476,7 @@ describe("TriggerProcessStateV1", () => {
         status: "waiting",
         wait_reason: "meta_enqueue_wait",
         terminal_reason: null,
+        meta_enqueue_reason: persistedReason,
       } as const satisfies TriggerProcessStateV1;
       const to = {
         phase: "closed",
@@ -474,7 +487,6 @@ describe("TriggerProcessStateV1", () => {
       expect(
         isTriggerProcessTransitionV1Allowed(from, to, {
           kind: "meta_finalization",
-          persisted_meta_enqueue_reason: persistedReason,
           terminal_outcome: terminalOutcome,
           terminal_outcome_finalized_at: "2026-07-20T04:03:00.000Z",
           canonical_reason_code: `meta_${status}`,

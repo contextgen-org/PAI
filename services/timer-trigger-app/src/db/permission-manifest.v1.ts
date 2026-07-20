@@ -141,6 +141,11 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
       ],
       reads_tables: ["timer_schedules"],
       writes_tables: ["timer_schedules", "timer_audit_logs", "timer_event_outbox"],
+      effects: [
+        { table_name: "timer_schedules", operation: "cas", concurrency_control: "expected_version" },
+        { table_name: "timer_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "timer_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
       returns: "jsonb",
     }),
     ownerFunctionSignatureV1({
@@ -157,6 +162,10 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
       ],
       reads_tables: ["timer_scanner_checkpoints"],
       writes_tables: ["timer_scanner_checkpoints", "timer_audit_logs"],
+      effects: [
+        { table_name: "timer_scanner_checkpoints", operation: "cas", concurrency_control: "expected_version" },
+        { table_name: "timer_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+      ],
       returns: "jsonb",
     }),
     ownerFunctionSignatureV1({
@@ -167,6 +176,7 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
       arguments: [
         ["p_occurrence_id", "text"],
         ["p_expected_occurrence_version", "bigint"],
+        ["p_expected_dispatch_generation", "bigint"],
         ["p_expected_status", "text"],
         ["p_next_status", "text"],
         ["p_dispatch", "jsonb"],
@@ -178,6 +188,15 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
         "timer_occurrences", "timer_dispatch_attempts", "timer_audit_logs",
         "timer_command_requests", "timer_query_requests", "timer_event_inbox",
         "timer_event_outbox",
+      ],
+      effects: [
+        { table_name: "timer_occurrences", operation: "transition", concurrency_control: "expected_version" },
+        { table_name: "timer_dispatch_attempts", operation: "upsert", concurrency_control: "generation_fence" },
+        { table_name: "timer_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "timer_command_requests", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "timer_query_requests", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "timer_event_inbox", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "timer_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
       ],
       returns: "jsonb",
     }),
@@ -196,6 +215,11 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
       ],
       reads_tables: ["timer_catch_up_batches", "timer_occurrences"],
       writes_tables: ["timer_catch_up_batches", "timer_audit_logs", "timer_event_outbox"],
+      effects: [
+        { table_name: "timer_catch_up_batches", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "timer_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "timer_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
       returns: "jsonb",
     }),
     ownerFunctionSignatureV1({
@@ -209,6 +233,9 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
       ],
       reads_tables: ["timer_event_outbox"],
       writes_tables: ["timer_event_outbox"],
+      effects: [
+        { table_name: "timer_event_outbox", operation: "claim", concurrency_control: "lease_fence" },
+      ],
       returns: "setof jsonb",
     }),
     ownerFunctionSignatureV1({
@@ -223,9 +250,14 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
       ],
       reads_tables: ["timer_event_outbox"],
       writes_tables: ["timer_event_outbox", "timer_event_dlq"],
+      effects: [
+        { table_name: "timer_event_outbox", operation: "ack", concurrency_control: "lease_fence" },
+        { table_name: "timer_event_dlq", operation: "append", concurrency_control: "idempotency_key" },
+      ],
       returns: "jsonb",
     }),
     ],
+  foreign_keys: [],
   append_only_tables: [
     "timer_audit_logs",
     "timer_command_requests",

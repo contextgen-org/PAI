@@ -149,8 +149,11 @@ describe("Trigger admission", () => {
 
   it("returns the exact slot CAS precondition consumed by admit_trigger_v1", () => {
     expect(decideTriggerAdmissionV1(base)).toMatchObject({
-      foreground_slot_precondition: { process_id: null, generation: 7 },
-      process_state_precondition: null,
+      admission_precondition: {
+        kind: "idle",
+        process_id: null,
+        slot_generation: 7,
+      },
     });
     expect(
       decideTriggerAdmissionV1({
@@ -162,15 +165,13 @@ describe("Trigger admission", () => {
         foreground_slot_process_id: "process-active",
       }),
     ).toMatchObject({
-      foreground_slot_precondition: {
+      admission_precondition: {
+        kind: "occupied",
         process_id: "process-active",
-        generation: 7,
-      },
-      process_state_precondition: {
-        process_id: "process-active",
+        slot_generation: 7,
         phase: "cooldown",
         status: "waiting",
-        updated_at: "2026-07-20T08:00:00.000Z",
+        process_updated_at: "2026-07-20T08:00:00.000Z",
       },
     });
   });
@@ -214,6 +215,31 @@ describe("Trigger admission", () => {
         },
       ),
     ).toThrow("changed before atomic trigger admission commit");
+  });
+
+  it("compares occupied process state semantically, independent of property insertion order", () => {
+    const decision = decideTriggerAdmissionV1({
+      ...base,
+      active_process: "execution_running",
+      active_process_id: "process-a",
+      active_process_slot_generation: 7,
+      active_process_updated_at: "2026-07-20T08:00:00.000Z",
+      foreground_slot_process_id: "process-a",
+    });
+    if (decision.trigger_status !== "accepted") throw new Error("expected accepted");
+    const currentProcess = {
+      updated_at: "2026-07-20T08:00:00.000Z",
+      status: "running" as const,
+      phase: "execution" as const,
+      process_id: "process-a",
+    };
+    expect(() =>
+      assertTriggerAdmissionCommitPreconditionV1(
+        decision,
+        { process_id: "process-a", generation: 7 },
+        currentProcess,
+      ),
+    ).not.toThrow();
   });
 
   it("rejects an inactive bot without producing a process state", () => {

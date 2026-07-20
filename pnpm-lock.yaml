@@ -113,6 +113,9 @@ importers:
       '@pai/contracts':
         specifier: workspace:*
         version: link:../contracts
+      pg:
+        specifier: 'catalog:'
+        version: 8.22.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -120,9 +123,6 @@ importers:
       '@types/pg':
         specifier: 'catalog:'
         version: 8.20.0
-      pg:
-        specifier: 'catalog:'
-        version: 8.22.0
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -254,13 +254,7 @@ importers:
       '@pai/service-kit':
         specifier: workspace:*
         version: link:../../packages/service-kit
-      pg:
-        specifier: 'catalog:'
-        version: 8.22.0
     devDependencies:
-      '@types/pg':
-        specifier: 'catalog:'
-        version: 8.20.0
       typescript:
         specifier: 'catalog:'
         version: 7.0.2

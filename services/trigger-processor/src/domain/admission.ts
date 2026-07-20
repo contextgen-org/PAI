@@ -46,12 +46,21 @@ export function assertTriggerAdmissionCommitPreconditionV1(
     readonly updated_at: string;
   } | null,
 ): void {
-  if (
-    decision.foreground_slot_precondition.process_id !== currentSlot.process_id ||
-    decision.foreground_slot_precondition.generation !== currentSlot.generation ||
-    JSON.stringify(decision.process_state_precondition) !==
-      JSON.stringify(currentProcess)
-  ) {
+  const expected = decision.admission_precondition;
+  const matches =
+    expected.kind === "idle"
+      ? expected.process_id === null &&
+        currentSlot.process_id === null &&
+        expected.slot_generation === currentSlot.generation &&
+        currentProcess === null
+      : currentSlot.process_id === expected.process_id &&
+        currentSlot.generation === expected.slot_generation &&
+        currentProcess !== null &&
+        currentProcess.process_id === expected.process_id &&
+        currentProcess.phase === expected.phase &&
+        currentProcess.status === expected.status &&
+        currentProcess.updated_at === expected.process_updated_at;
+  if (!matches) {
     throw new StaleTriggerAdmissionDecisionError();
   }
 }
@@ -123,41 +132,35 @@ export function decideTriggerAdmissionV1(
 ): TriggerAdmissionDecisionV1 {
   assertConsistentForegroundState(facts);
   const priority = calculateTriggerPriorityV1(facts);
-  const processStatePrecondition:
-    | null
-    | {
-        readonly process_id: string;
-        readonly phase: "execution";
-        readonly status: "running";
-        readonly updated_at: string;
-      }
-    | {
-        readonly process_id: string;
-        readonly phase: "cooldown";
-        readonly status: "waiting";
-        readonly updated_at: string;
-      } =
+  const admissionPrecondition: Extract<
+    TriggerAdmissionDecisionV1,
+    { trigger_status: "accepted" }
+  >["admission_precondition"] =
     facts.active_process === "none"
-      ? null
+      ? {
+          kind: "idle" as const,
+          process_id: null,
+          slot_generation: facts.foreground_slot_generation,
+        }
       : facts.active_process === "execution_running"
         ? {
+            kind: "occupied" as const,
             process_id: facts.active_process_id as string,
+            slot_generation: facts.foreground_slot_generation,
             phase: "execution",
             status: "running",
-            updated_at: facts.active_process_updated_at as string,
+            process_updated_at: facts.active_process_updated_at as string,
           }
         : {
+            kind: "occupied" as const,
             process_id: facts.active_process_id as string,
+            slot_generation: facts.foreground_slot_generation,
             phase: "cooldown",
             status: "waiting",
-            updated_at: facts.active_process_updated_at as string,
+            process_updated_at: facts.active_process_updated_at as string,
           };
   const commitPrecondition = {
-    foreground_slot_precondition: {
-      process_id: facts.foreground_slot_process_id,
-      generation: facts.foreground_slot_generation,
-    },
-    process_state_precondition: processStatePrecondition,
+    admission_precondition: admissionPrecondition,
   } as const;
 
   if (facts.bot_state !== "active") {

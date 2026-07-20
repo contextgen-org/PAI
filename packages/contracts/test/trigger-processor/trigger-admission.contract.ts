@@ -14,8 +14,11 @@ const acceptedDecision = {
     wait_reason: null,
     terminal_reason: null,
   },
-  foreground_slot_precondition: { process_id: null, generation: 7 },
-  process_state_precondition: null,
+  admission_precondition: {
+    kind: "idle",
+    process_id: null,
+    slot_generation: 7,
+  },
 } as const;
 
 describe("TriggerAdmissionDecisionV1", () => {
@@ -32,7 +35,7 @@ describe("TriggerAdmissionDecisionV1", () => {
   });
 
   it("requires an exact foreground slot identity and generation precondition", () => {
-    const { foreground_slot_precondition: _, ...withoutPrecondition } =
+    const { admission_precondition: _, ...withoutPrecondition } =
       acceptedDecision;
     expect(
       Value.Check(TriggerAdmissionDecisionV1Schema, withoutPrecondition),
@@ -40,15 +43,26 @@ describe("TriggerAdmissionDecisionV1", () => {
     expect(
       Value.Check(TriggerAdmissionDecisionV1Schema, {
         ...acceptedDecision,
-        foreground_slot_precondition: { process_id: "process-a", generation: -1 },
+        admission_precondition: {
+          kind: "occupied",
+          process_id: "process-a",
+          slot_generation: -1,
+          phase: "execution",
+          status: "running",
+          process_updated_at: "2026-07-20T08:00:00.000Z",
+        },
       }),
     ).toBe(false);
     expect(
       Value.Check(TriggerAdmissionDecisionV1Schema, {
         ...acceptedDecision,
-        foreground_slot_precondition: {
+        admission_precondition: {
+          kind: "occupied",
           process_id: "process-a",
-          generation: Number.MAX_SAFE_INTEGER + 1,
+          slot_generation: Number.MAX_SAFE_INTEGER + 1,
+          phase: "execution",
+          status: "running",
+          process_updated_at: "2026-07-20T08:00:00.000Z",
         },
       }),
     ).toBe(false);
@@ -58,23 +72,37 @@ describe("TriggerAdmissionDecisionV1", () => {
     expect(
       Value.Check(TriggerAdmissionDecisionV1Schema, {
         ...acceptedDecision,
-        foreground_slot_precondition: { process_id: "process-a", generation: 7 },
-        process_state_precondition: {
+        admission_precondition: {
+          kind: "occupied",
           process_id: "process-a",
+          slot_generation: 7,
           phase: "execution",
           status: "running",
-          updated_at: "2026-07-20T08:00:00.000Z",
+          process_updated_at: "2026-07-20T08:00:00.000Z",
         },
       }),
     ).toBe(true);
     expect(
       Value.Check(TriggerAdmissionDecisionV1Schema, {
         ...acceptedDecision,
-        process_state_precondition: {
+        admission_precondition: {
+          kind: "occupied",
           process_id: "process-a",
+          slot_generation: 7,
           phase: "execution",
           status: "waiting",
-          updated_at: "2026-07-20T08:00:00.000Z",
+          process_updated_at: "2026-07-20T08:00:00.000Z",
+        },
+      }),
+    ).toBe(false);
+
+    expect(
+      Value.Check(TriggerAdmissionDecisionV1Schema, {
+        ...acceptedDecision,
+        admission_precondition: {
+          kind: "idle",
+          process_id: "process-a",
+          slot_generation: 7,
         },
       }),
     ).toBe(false);

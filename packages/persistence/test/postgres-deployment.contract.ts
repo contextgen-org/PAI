@@ -5,6 +5,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import {
   defineOwnerRepositoryContractV1,
+  openVerifiedOwnerPostgresCompositionV1,
   ownerFunctionSignatureV1,
   verifyOwnerRepositoryDeploymentFromPostgresV1,
 } from "../src/index.js";
@@ -67,6 +68,11 @@ const POSTGRES_CONTRACT = defineOwnerRepositoryContractV1({
         "contract_children",
         "contract_audits",
       ],
+      effects: [
+        { table_name: "contract_parents", operation: "append", concurrency_control: "expected_version" },
+        { table_name: "contract_children", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "contract_audits", operation: "append", concurrency_control: "idempotency_key" },
+      ],
       returns: "jsonb",
     }),
   ],
@@ -94,6 +100,15 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_timer_app') THEN
     CREATE ROLE pai_timer_app NOLOGIN;
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_timer_runtime') THEN
+    CREATE ROLE pai_timer_runtime LOGIN PASSWORD 'timer-runtime-test';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_runtime_bridge') THEN
+    CREATE ROLE pai_runtime_bridge NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_memory_app') THEN
+    CREATE ROLE pai_memory_app NOLOGIN;
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
     CREATE ROLE anon NOLOGIN;
   END IF;
@@ -101,9 +116,13 @@ DO $$ BEGIN
     CREATE ROLE authenticated NOLOGIN;
   END IF;
 END $$;
+ALTER ROLE pai_timer_runtime LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD 'timer-runtime-test';
+REVOKE pai_runtime_bridge FROM pai_timer_runtime;
+REVOKE pai_memory_app FROM pai_timer_runtime;
+GRANT pai_timer_app TO pai_timer_runtime;
 DROP SCHEMA IF EXISTS timer CASCADE;
 CREATE SCHEMA timer AUTHORIZATION pai_migrator;
-REVOKE ALL ON SCHEMA timer FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON SCHEMA timer FROM PUBLIC, anon, authenticated, pai_timer_runtime, pai_runtime_bridge, pai_memory_app;
 GRANT USAGE ON SCHEMA timer TO pai_timer_app;
 SET ROLE pai_migrator;
 CREATE TABLE timer.contract_parents (
@@ -161,8 +180,8 @@ BEGIN
 END;
 $$;
 RESET ROLE;
-REVOKE ALL ON ALL TABLES IN SCHEMA timer FROM PUBLIC, anon, authenticated, pai_timer_app;
-REVOKE ALL ON ALL FUNCTIONS IN SCHEMA timer FROM PUBLIC, anon, authenticated, pai_timer_app;
+REVOKE ALL ON ALL TABLES IN SCHEMA timer FROM PUBLIC, anon, authenticated, pai_timer_app, pai_timer_runtime, pai_runtime_bridge, pai_memory_app;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA timer FROM PUBLIC, anon, authenticated, pai_timer_app, pai_timer_runtime, pai_runtime_bridge, pai_memory_app;
 GRANT SELECT (parent_key, parent_version) ON timer.contract_parents TO pai_timer_app;
 GRANT SELECT (child_id, parent_key, parent_version, payload) ON timer.contract_children TO pai_timer_app;
 GRANT SELECT (audit_id, child_id, created_at) ON timer.contract_audits TO pai_timer_app;
@@ -173,9 +192,20 @@ const describePostgres = databaseUrl === undefined ? describe.skip : describe;
 
 describePostgres("PostgreSQL owner deployment verification", () => {
   const pool = databaseUrl === undefined ? undefined : new Pool({ connectionString: databaseUrl });
+  const runtimePool =
+    databaseUrl === undefined
+      ? undefined
+      : new Pool({
+          connectionString: (() => {
+            const value = new URL(databaseUrl);
+            value.username = "pai_timer_runtime";
+            value.password = "timer-runtime-test";
+            return value.toString();
+          })(),
+        });
 
   afterAll(async () => {
-    await pool?.end();
+    await Promise.all([pool?.end(), runtimePool?.end()]);
   });
 
   async function reset(): Promise<Pool> {
@@ -184,16 +214,70 @@ describePostgres("PostgreSQL owner deployment verification", () => {
     return pool;
   }
 
+  function runtime(): Pool {
+    if (runtimePool === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
+    return runtimePool;
+  }
+
   it("derives a verified capability from PostgreSQL catalogs", async () => {
     const postgres = await reset();
     const verified = await verifyOwnerRepositoryDeploymentFromPostgresV1(
       POSTGRES_CONTRACT,
       postgres,
-      { expected_schema_owner: "pai_migrator" },
+      {
+        expected_schema_owner: "pai_migrator",
+        runtime_postgres: runtime(),
+      },
     );
     expect(verified).toMatchObject({ owner_service: "timer_trigger_app" });
     expect(verified.contract_fingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(verified.database_fingerprint).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("binds the verified capability to the executable repository and unit of work", async () => {
+    const postgres = await reset();
+    if (databaseUrl === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
+    const runtimeUrl = new URL(databaseUrl);
+    runtimeUrl.username = "pai_timer_runtime";
+    runtimeUrl.password = "timer-runtime-test";
+    const composition = await openVerifiedOwnerPostgresCompositionV1(
+      POSTGRES_CONTRACT,
+      runtimeUrl.toString(),
+    );
+    try {
+      const childId = `composition-${randomUUID()}`;
+      const result = await composition.unit_of_work.withTransaction(
+        {
+          operation: "write_contract_child",
+          idempotency_key: childId,
+          trace_id: `trace-${childId}`,
+          isolation: "serializable",
+          retry: "serialization_failures",
+        },
+        async (transaction, { owner }) =>
+          owner.executeWriter<{
+            readonly parent_version: number;
+            readonly child_id: string;
+          }, "write_contract_child_v1">(transaction, {
+            writer: "write_contract_child_v1",
+            arguments: {
+              p_parent_key: `parent-${childId}`,
+              p_expected_parent_version: "0",
+              p_child_id: childId,
+              p_payload: {},
+            },
+            expected_rows: 1,
+          }),
+      );
+      expect(result).toMatchObject({ child_id: childId, parent_version: 1 });
+      const persisted = await postgres.query<{ count: string }>(
+        "SELECT count(*)::text AS count FROM timer.contract_children WHERE child_id = $1",
+        [childId],
+      );
+      expect(persisted.rows[0]?.count).toBe("1");
+    } finally {
+      await composition.close();
+    }
   });
 
   it.each([
@@ -202,12 +286,30 @@ describePostgres("PostgreSQL owner deployment verification", () => {
     ["PUBLIC execute", "GRANT EXECUTE ON FUNCTION timer.write_contract_child_v1(text, bigint, text, jsonb) TO PUBLIC"],
     ["wrong search_path", "ALTER FUNCTION timer.write_contract_child_v1(text, bigint, text, jsonb) SET search_path = public"],
     ["missing composite FK", "ALTER TABLE timer.contract_children DROP CONSTRAINT contract_children_parent_fk"],
+    [
+      "declared effects missing from the function body",
+      `CREATE OR REPLACE FUNCTION timer.write_contract_child_v1(
+         p_parent_key text,
+         p_expected_parent_version bigint,
+         p_child_id text,
+         p_payload jsonb
+       ) RETURNS jsonb
+       LANGUAGE plpgsql
+       SECURITY DEFINER
+       SET search_path = timer, pg_temp
+       AS $body$
+       BEGIN
+         RETURN '{}'::jsonb;
+       END;
+       $body$`,
+    ],
   ])("fails closed on %s drift", async (_label, driftSql) => {
     const postgres = await reset();
     await postgres.query(driftSql);
     await expect(
       verifyOwnerRepositoryDeploymentFromPostgresV1(POSTGRES_CONTRACT, postgres, {
         expected_schema_owner: "pai_migrator",
+        runtime_postgres: runtime(),
       }),
     ).rejects.toThrow(/drift|missing/);
   });
@@ -284,5 +386,41 @@ describePostgres("PostgreSQL owner deployment verification", () => {
       await client.query("RESET ROLE").catch(() => undefined);
       client.release();
     }
+  });
+
+  it("fails closed on inherited DML through an intermediate role", async () => {
+    const postgres = await reset();
+    await postgres.query("GRANT UPDATE ON timer.contract_children TO pai_runtime_bridge");
+    await postgres.query("GRANT pai_runtime_bridge TO pai_timer_runtime");
+    await expect(
+      verifyOwnerRepositoryDeploymentFromPostgresV1(POSTGRES_CONTRACT, postgres, {
+        expected_schema_owner: "pai_migrator",
+        runtime_postgres: runtime(),
+      }),
+    ).rejects.toThrow(/membership|privilege drift/);
+  });
+
+  it("fails closed on a cross-owner schema and function grant", async () => {
+    const postgres = await reset();
+    await postgres.query("GRANT USAGE ON SCHEMA timer TO pai_memory_app");
+    await postgres.query(
+      "GRANT EXECUTE ON FUNCTION timer.write_contract_child_v1(text, bigint, text, jsonb) TO pai_memory_app",
+    );
+    await expect(
+      verifyOwnerRepositoryDeploymentFromPostgresV1(POSTGRES_CONTRACT, postgres, {
+        expected_schema_owner: "pai_migrator",
+        runtime_postgres: runtime(),
+      }),
+    ).rejects.toThrow(/cross-owner/);
+  });
+
+  it("fails closed when the runtime DSN is an admin connection", async () => {
+    const postgres = await reset();
+    await expect(
+      verifyOwnerRepositoryDeploymentFromPostgresV1(POSTGRES_CONTRACT, postgres, {
+        expected_schema_owner: "pai_migrator",
+        runtime_postgres: postgres,
+      }),
+    ).rejects.toThrow(/least-privilege LOGIN/);
   });
 });

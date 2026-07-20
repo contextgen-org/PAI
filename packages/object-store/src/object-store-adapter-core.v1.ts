@@ -463,7 +463,14 @@ export class ObjectStoreAdapterCoreV1
             head.size_bytes !== claim.record.size_bytes ||
             head.media_type !== claim.record.media_type
           ) {
-            throw new Error("pending put physical metadata mismatch");
+            await this.#metadata.redirectReconciliation({
+              reservation_id: claim.reservation_id,
+              claim_token: claim.claim_token,
+              operation: "put_cleanup",
+              last_error: "pending put physical metadata mismatch",
+            });
+            retryScheduled += 1;
+            continue;
           }
           await this.#metadata.completeReconciliation({
             reservation_id: claim.reservation_id,

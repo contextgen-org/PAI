@@ -185,6 +185,18 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       arguments: [["p_job_id", "text"], ["p_expected_status", "text"], ["p_next_status", "text"], ["p_result", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
       reads_tables: ["meta_jobs", "trigger_process_events"],
       writes_tables: ["meta_jobs", "trigger_process_events", "experience_records", "meta_results", "quality_signals", "meta_job_audit_logs", "meta_memory_split_plans", "meta_memory_split_chunks", "meta_event_inbox", "meta_event_outbox"],
+      effects: [
+        { table_name: "meta_jobs", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_process_events", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "experience_records", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "meta_results", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "quality_signals", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "meta_job_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "meta_memory_split_plans", operation: "upsert", concurrency_control: "expected_version" },
+        { table_name: "meta_memory_split_chunks", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "meta_event_inbox", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "meta_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
       returns: "jsonb",
     }),
     ownerFunctionSignatureV1({
@@ -195,6 +207,11 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       arguments: [["p_job_id", "text"], ["p_expected_fence_generation", "bigint"], ["p_holder_id", "text"], ["p_lease_until", "timestamptz"], ["p_trace_id", "text"]],
       reads_tables: ["meta_job_leases"],
       writes_tables: ["meta_job_leases", "meta_job_audit_logs", "meta_event_outbox"],
+      effects: [
+        { table_name: "meta_job_leases", operation: "cas", concurrency_control: "generation_fence" },
+        { table_name: "meta_job_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "meta_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
       returns: "jsonb",
     }),
     ownerFunctionSignatureV1({
@@ -205,6 +222,12 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       arguments: [["p_request_id", "text"], ["p_expected_status", "text"], ["p_next_status", "text"], ["p_feedback", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
       reads_tables: ["feedback_requests"],
       writes_tables: ["feedback_requests", "meta_job_audit_logs", "meta_event_outbox", "meta_command_outbox"],
+      effects: [
+        { table_name: "feedback_requests", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "meta_job_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "meta_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+        { table_name: "meta_command_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
       returns: "jsonb",
     }),
     ownerFunctionSignatureV1({
@@ -215,6 +238,12 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       arguments: [["p_candidate_id", "text"], ["p_expected_status", "text"], ["p_next_status", "text"], ["p_candidate", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
       reads_tables: ["skill_candidates"],
       writes_tables: ["skill_candidates", "meta_job_audit_logs", "meta_event_outbox", "meta_command_outbox"],
+      effects: [
+        { table_name: "skill_candidates", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "meta_job_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "meta_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+        { table_name: "meta_command_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
       returns: "jsonb",
     }),
     ownerFunctionSignatureV1({
@@ -225,6 +254,12 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       arguments: [["p_suggestion_id", "text"], ["p_expected_status", "text"], ["p_next_status", "text"], ["p_suggestion", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
       reads_tables: ["personality_suggestions"],
       writes_tables: ["personality_suggestions", "meta_job_audit_logs", "meta_event_outbox", "meta_command_outbox"],
+      effects: [
+        { table_name: "personality_suggestions", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "meta_job_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "meta_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+        { table_name: "meta_command_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
       returns: "jsonb",
     }),
     ownerFunctionSignatureV1({
@@ -233,7 +268,8 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       primary_table: "meta_event_outbox",
       writer_kind: "outbox_claim_ack",
       arguments: [["p_worker_id", "text"], ["p_limit", "integer"], ["p_lease_seconds", "integer"], ["p_now", "timestamptz"]],
-      reads_tables: ["meta_event_outbox"], writes_tables: ["meta_event_outbox"], returns: "setof jsonb",
+      reads_tables: ["meta_event_outbox"], writes_tables: ["meta_event_outbox"],
+      effects: [{ table_name: "meta_event_outbox", operation: "claim", concurrency_control: "lease_fence" }], returns: "setof jsonb",
     }),
     ownerFunctionSignatureV1({
       schema: "meta_cognition",
@@ -241,7 +277,11 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       primary_table: "meta_event_outbox",
       writer_kind: "outbox_claim_ack",
       arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_now", "timestamptz"]],
-      reads_tables: ["meta_event_outbox"], writes_tables: ["meta_event_outbox", "meta_event_dlq"], returns: "jsonb",
+      reads_tables: ["meta_event_outbox"], writes_tables: ["meta_event_outbox", "meta_event_dlq"],
+      effects: [
+        { table_name: "meta_event_outbox", operation: "ack", concurrency_control: "lease_fence" },
+        { table_name: "meta_event_dlq", operation: "append", concurrency_control: "idempotency_key" },
+      ], returns: "jsonb",
     }),
     ownerFunctionSignatureV1({
       schema: "meta_cognition",
@@ -249,7 +289,8 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       primary_table: "meta_command_outbox",
       writer_kind: "outbox_claim_ack",
       arguments: [["p_worker_id", "text"], ["p_limit", "integer"], ["p_lease_seconds", "integer"], ["p_now", "timestamptz"]],
-      reads_tables: ["meta_command_outbox"], writes_tables: ["meta_command_outbox"], returns: "setof jsonb",
+      reads_tables: ["meta_command_outbox"], writes_tables: ["meta_command_outbox"],
+      effects: [{ table_name: "meta_command_outbox", operation: "claim", concurrency_control: "lease_fence" }], returns: "setof jsonb",
     }),
     ownerFunctionSignatureV1({
       schema: "meta_cognition",
@@ -257,10 +298,15 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       primary_table: "meta_command_outbox",
       writer_kind: "outbox_claim_ack",
       arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_now", "timestamptz"]],
-      reads_tables: ["meta_command_outbox"], writes_tables: ["meta_command_outbox", "meta_event_dlq"], returns: "jsonb",
+      reads_tables: ["meta_command_outbox"], writes_tables: ["meta_command_outbox", "meta_event_dlq"],
+      effects: [
+        { table_name: "meta_command_outbox", operation: "ack", concurrency_control: "lease_fence" },
+        { table_name: "meta_event_dlq", operation: "append", concurrency_control: "idempotency_key" },
+      ], returns: "jsonb",
     }),
     ],
-    append_only_tables: [
+  foreign_keys: [],
+  append_only_tables: [
       "trigger_process_events",
       "experience_records",
       "meta_results",

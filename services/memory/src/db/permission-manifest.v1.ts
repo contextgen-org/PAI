@@ -198,7 +198,7 @@ export const MEMORY_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
-      writer_kind: "projection_upsert",
+      writer_kind: "immutable_append",
     },
     {
       table_name: "memory_promotion_reservations",
@@ -523,6 +523,7 @@ export const MEMORY_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
       ],
     }),
     ],
+  foreign_keys: [],
   append_only_tables: [
     "memory_points",
     "memory_conflicts",
@@ -535,6 +536,7 @@ export const MEMORY_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
     "memory_feedback_revision_refs",
     "memory_feedback_audit_refs",
     "memory_feedback_event_refs",
+    "memory_pre_promotion_checks",
     "memory_promotion_reservation_targets",
     "memory_command_outbox",
     "memory_command_dlq",

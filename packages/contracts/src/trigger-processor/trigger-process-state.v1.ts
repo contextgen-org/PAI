@@ -24,6 +24,19 @@ export const TerminalOutcomeV1Schema = Type.Union(
 
 export type TerminalOutcomeV1 = Static<typeof TerminalOutcomeV1Schema>;
 
+export const META_ENQUEUE_REASONS_V1 = [
+  "cooldown_expired",
+  "user_retracted",
+  "system_interrupted",
+  "failed_with_learnable_snapshot",
+] as const;
+
+export const MetaEnqueueReasonV1Schema = Type.Union(
+  META_ENQUEUE_REASONS_V1.map((reason) => Type.Literal(reason)),
+);
+
+export type MetaEnqueueReasonV1 = Static<typeof MetaEnqueueReasonV1Schema>;
+
 export const CLOSED_STATUS_TERMINAL_OUTCOMES_V1 = {
   completed: [
     "executed",
@@ -88,6 +101,17 @@ function waitingState<
   );
 }
 
+const metaEnqueuedStateSchema = Type.Object(
+  {
+    phase: Type.Literal("meta_enqueued"),
+    status: Type.Literal("waiting"),
+    wait_reason: Type.Literal("meta_enqueue_wait"),
+    terminal_reason: Type.Null(),
+    meta_enqueue_reason: MetaEnqueueReasonV1Schema,
+  },
+  { additionalProperties: false },
+);
+
 export const TriggerProcessStateV1Schema = Type.Union(
   [
     activeState("admission", "running"),
@@ -110,7 +134,7 @@ export const TriggerProcessStateV1Schema = Type.Union(
     activeState("execution", "preempt_requested"),
     activeState("execution", "cancelling"),
     waitingState("cooldown", ["cooldown_until"]),
-    waitingState("meta_enqueued", ["meta_enqueue_wait"]),
+    metaEnqueuedStateSchema,
     Type.Object(
       {
         phase: Type.Literal("closed"),
@@ -266,12 +290,6 @@ export const TriggerProcessTransitionEvidenceV1Schema = Type.Union(
     }),
     strictEvidenceObject({
       kind: Type.Literal("meta_finalization"),
-      persisted_meta_enqueue_reason: Type.Union([
-        Type.Literal("cooldown_expired"),
-        Type.Literal("user_retracted"),
-        Type.Literal("system_interrupted"),
-        Type.Literal("failed_with_learnable_snapshot"),
-      ]),
       ...terminalTransactionProperties,
     }),
   ],
@@ -414,6 +432,7 @@ export function isTriggerProcessTransitionV1Allowed(
         from.status === "waiting" &&
         from.wait_reason === "cooldown_until" &&
         to.wait_reason === "meta_enqueue_wait" &&
+        to.meta_enqueue_reason === "cooldown_expired" &&
         isNonEmptyRef(evidence.trigger_process_id) &&
         evidence.meta_enqueue_idempotency_key === evidence.trigger_process_id &&
         isNonEmptyRef(evidence.process_lock_ref) &&
@@ -429,6 +448,7 @@ export function isTriggerProcessTransitionV1Allowed(
     return (
       to.wait_reason === "meta_enqueue_wait" &&
       evidence?.kind === "meta_enqueue" &&
+      to.meta_enqueue_reason === evidence.enqueue_reason &&
       from.phase !== "meta_enqueued" &&
       from.phase !== "cooldown" &&
       isSystemEventRef(evidence.boundary_system_event_ref) &&
@@ -467,17 +487,21 @@ export function isTriggerProcessTransitionV1Allowed(
 
     if (evidence?.kind === "meta_finalization") {
       const reasonOutcomeMatches =
-        (evidence.persisted_meta_enqueue_reason === "user_retracted" &&
+        (from.phase === "meta_enqueued" &&
+          from.meta_enqueue_reason === "user_retracted" &&
           to.status === "cancelled" &&
           evidence.terminal_outcome === "cancelled_with_reason") ||
-        (evidence.persisted_meta_enqueue_reason === "system_interrupted" &&
+        (from.phase === "meta_enqueued" &&
+          from.meta_enqueue_reason === "system_interrupted" &&
           to.status === "cancelled" &&
           evidence.terminal_outcome === "interrupted_with_reason") ||
-        (evidence.persisted_meta_enqueue_reason ===
-          "failed_with_learnable_snapshot" &&
+        (from.phase === "meta_enqueued" &&
+          from.meta_enqueue_reason ===
+            "failed_with_learnable_snapshot" &&
           to.status === "failed" &&
           evidence.terminal_outcome === "failed_with_reason") ||
-        (evidence.persisted_meta_enqueue_reason === "cooldown_expired" &&
+        (from.phase === "meta_enqueued" &&
+          from.meta_enqueue_reason === "cooldown_expired" &&
           (to.status === "completed" || to.status === "failed") &&
           (to.status !== "failed" ||
             evidence.terminal_outcome === "failed_with_reason"));
@@ -545,6 +569,8 @@ export function isTriggerProcessTransitionV1Allowed(
 export const TRIGGER_PROCESS_STATE_V1_DATABASE_CHECK = String.raw`
 CHECK ((status = 'waiting') = (wait_reason IS NOT NULL)),
 CHECK ((phase = 'closed') = (terminal_reason IS NOT NULL)),
+CHECK (meta_enqueue_reason IS NULL OR meta_enqueue_reason IN ('cooldown_expired', 'user_retracted', 'system_interrupted', 'failed_with_learnable_snapshot')),
+CHECK (phase <> 'meta_enqueued' OR meta_enqueue_reason IS NOT NULL),
 CHECK (
   (phase = 'admission' AND status = 'running' AND wait_reason IS NULL)
   OR (phase = 'admission' AND status = 'waiting' AND wait_reason IN ('weak_queue', 'preempt_commit', 'deferred_strong_queue', 'stage_retry_wait'))

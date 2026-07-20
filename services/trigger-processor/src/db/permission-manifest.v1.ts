@@ -316,11 +316,7 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
         ["p_scope", "jsonb"], ["p_source", "text"], ["p_actor", "jsonb"],
         ["p_payload", "jsonb"], ["p_dedupe_key", "text"],
         ["p_request_hash", "text"], ["p_priority", "text"],
-        ["p_expected_slot_process_id", "text"],
-        ["p_expected_slot_generation", "bigint"],
-        ["p_expected_process_phase", "text"],
-        ["p_expected_process_status", "text"],
-        ["p_expected_process_updated_at", "timestamptz"],
+        ["p_admission_precondition", "jsonb"],
         ["p_admission_decision", "jsonb"], ["p_idempotency_key", "text"],
         ["p_trace_id", "text"],
       ],
@@ -354,7 +350,7 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
       primary_table: "bots",
       writer_kind: "projection_upsert",
       arguments: [
-        ["p_bot_id", "text"], ["p_source_version", "bigint"],
+        ["p_bot_id", "text"], ["p_expected_source_version", "bigint"],
         ["p_bot", "jsonb"], ["p_permission_bindings", "jsonb"],
         ["p_idempotency_key", "text"], ["p_payload_hash", "text"],
         ["p_trace_id", "text"],
@@ -575,7 +571,8 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
         ],
       },
     ],
-    append_only_tables: [
+  foreign_keys: [],
+  append_only_tables: [
       "trigger_process_transitions",
       "trigger_context_source_outcomes",
       "trigger_process_event_projections",

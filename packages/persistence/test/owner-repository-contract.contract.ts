@@ -124,6 +124,11 @@ describe("owner repository contracts", () => {
         expect(Object.isFrozen(signature.arguments)).toBe(true);
         expect(Object.isFrozen(signature.reads_tables)).toBe(true);
         expect(Object.isFrozen(signature.writes_tables)).toBe(true);
+        expect(Object.isFrozen(signature.effects)).toBe(true);
+        expect(signature.effects).toHaveLength(signature.writes_tables.length);
+        expect(signature.effects.map(({ table_name }) => table_name).sort()).toEqual(
+          [...signature.writes_tables].sort(),
+        );
         expect(signature.writes_tables).toContain(signature.primary_table);
         expect(signature.reads_tables.every((table) => contract.tables.includes(table)))
           .toBe(true);
@@ -151,11 +156,13 @@ describe("owner repository contracts", () => {
         "p_dedupe_key",
         "p_trigger_id",
         "p_process_id",
-        "p_expected_slot_process_id",
-        "p_expected_slot_generation",
+        "p_admission_precondition",
         "p_admission_decision",
       ]),
     );
+    expect(
+      signature?.arguments.map(({ argument_name }) => argument_name),
+    ).not.toContain("p_expected_slot_process_id");
     expect(signature?.writes_tables).toEqual(
       expect.arrayContaining([
         "triggers",
@@ -202,6 +209,30 @@ describe("owner repository contracts", () => {
       "memory_promotion_reservations",
     );
     expect(seriesWriter?.writes_tables).not.toContain("memory_graph_builds");
+  });
+
+  it("separates Action Runtime aggregate lifecycles into narrow writers", () => {
+    const runWriter = ACTION_RUNTIME_REPOSITORY_CONTRACT_V1.function_signatures.find(
+      ({ function_name }) => function_name === "transition_runtime_run_v1",
+    );
+    expect(runWriter?.writes_tables).toEqual([
+      "runtime_runs",
+      "runtime_events",
+      "runtime_event_outbox",
+    ]);
+    expect(runWriter?.writes_tables).not.toContain("tool_invocations");
+    expect(runWriter?.writes_tables).not.toContain("runtime_control_signals");
+    expect(runWriter?.writes_tables).not.toContain("runtime_artifacts");
+    expect(
+      ACTION_RUNTIME_REPOSITORY_CONTRACT_V1.mutable_writers,
+    ).toEqual(
+      expect.arrayContaining([
+        "persist_runtime_policy_snapshot_v1",
+        "transition_tool_invocation_v1",
+        "transition_runtime_control_signal_v1",
+        "transition_runtime_artifact_v1",
+      ]),
+    );
   });
 
   it("fails closed on schema or role drift", () => {
@@ -279,6 +310,24 @@ describe("owner repository contracts", () => {
         ],
       } as never),
     ).toThrow(/arguments must contain unique SQL identifiers/);
+
+    expect(() =>
+      defineOwnerRepositoryContractV1({
+        ...TIMER_REPOSITORY_CONTRACT_V1,
+        function_signatures: [
+          {
+            ...TIMER_REPOSITORY_CONTRACT_V1.function_signatures[0],
+            effects: TIMER_REPOSITORY_CONTRACT_V1.function_signatures[0].effects.map(
+              (effect) => ({
+                ...effect,
+                concurrency_control: "slot_and_process_state_fence" as const,
+              }),
+            ),
+          },
+          ...TIMER_REPOSITORY_CONTRACT_V1.function_signatures.slice(1),
+        ],
+      } as never),
+    ).toThrow(/semantic effect/);
   });
 
 });

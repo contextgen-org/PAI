@@ -54,6 +54,48 @@ const runningAdmissionStateSchema = Type.Object(
   { additionalProperties: false },
 );
 
+const admissionCommitPreconditionSchema = Type.Union([
+  Type.Object(
+    {
+      kind: Type.Literal("idle"),
+      process_id: Type.Null(),
+      slot_generation: Type.Integer({
+        minimum: 0,
+        maximum: MAX_SAFE_SLOT_GENERATION_V1,
+      }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("occupied"),
+      process_id: Type.String({ minLength: 1 }),
+      slot_generation: Type.Integer({
+        minimum: 0,
+        maximum: MAX_SAFE_SLOT_GENERATION_V1,
+      }),
+      phase: Type.Literal("execution"),
+      status: Type.Literal("running"),
+      process_updated_at: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("occupied"),
+      process_id: Type.String({ minLength: 1 }),
+      slot_generation: Type.Integer({
+        minimum: 0,
+        maximum: MAX_SAFE_SLOT_GENERATION_V1,
+      }),
+      phase: Type.Literal("cooldown"),
+      status: Type.Literal("waiting"),
+      process_updated_at: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
 function waitingAdmissionStateSchema<
   const TReason extends "weak_queue" | "preempt_commit" | "deferred_strong_queue",
 >(reason: TReason) {
@@ -93,39 +135,7 @@ function acceptedDecisionSchema<
       action: Type.Literal(action),
       reason_code: Type.Literal(reason),
       initial_process_state: initialProcessState,
-      foreground_slot_precondition: Type.Object(
-        {
-          process_id: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-          generation: Type.Integer({
-            minimum: 0,
-            maximum: MAX_SAFE_SLOT_GENERATION_V1,
-          }),
-        },
-        { additionalProperties: false },
-      ),
-      process_state_precondition: Type.Union([
-        Type.Null(),
-        Type.Union([
-          Type.Object(
-            {
-              process_id: Type.String({ minLength: 1 }),
-              phase: Type.Literal("execution"),
-              status: Type.Literal("running"),
-              updated_at: Type.String({ minLength: 1 }),
-            },
-            { additionalProperties: false },
-          ),
-          Type.Object(
-            {
-              process_id: Type.String({ minLength: 1 }),
-              phase: Type.Literal("cooldown"),
-              status: Type.Literal("waiting"),
-              updated_at: Type.String({ minLength: 1 }),
-            },
-            { additionalProperties: false },
-          ),
-        ]),
-      ]),
+      admission_precondition: admissionCommitPreconditionSchema,
     },
     { additionalProperties: false },
   );

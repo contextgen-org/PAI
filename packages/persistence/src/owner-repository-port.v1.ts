@@ -1,6 +1,7 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import type { ServiceIdV1 } from "@pai/contracts";
+import { Pool, type PoolClient } from "pg";
 
 export const OWNER_DATABASE_TARGETS_V1 = {
   trigger_processor: {
@@ -92,7 +93,7 @@ export interface OwnerFunctionSignatureV1<
   readonly arguments: TArguments;
   readonly reads_tables: readonly TTable[];
   readonly writes_tables: readonly TTable[];
-  readonly effects?: readonly OwnerFunctionEffectV1<TTable>[];
+  readonly effects: readonly OwnerFunctionEffectV1<TTable>[];
   readonly returns: "jsonb" | "setof jsonb";
   readonly security_definer: true;
   readonly search_path: readonly [TSchema, "pg_temp"];
@@ -137,7 +138,7 @@ export interface OwnerRepositoryContractV1<
   readonly table_permissions: readonly OwnerTablePermissionV1<TTable>[];
   readonly mutable_writers: readonly TWriter[];
   readonly function_signatures: TSignatures;
-  readonly foreign_keys?: readonly OwnerForeignKeyV1<TTable>[];
+  readonly foreign_keys: readonly OwnerForeignKeyV1<TTable>[];
   readonly database_checks?: readonly OwnerDatabaseCheckV1<TTable>[];
   readonly append_only_tables: readonly TTable[];
   readonly outbox_tables: readonly TTable[];
@@ -184,6 +185,51 @@ const concurrencyControls = new Set<
   "lease_fence",
 ]);
 
+const operationsByWriterKind: Readonly<
+  Record<OwnerWriterKindV1, ReadonlySet<OwnerFunctionEffectV1["operation"]>>
+> = {
+  immutable_append: new Set(["append"]),
+  projection_upsert: new Set(["upsert"]),
+  state_transition: new Set(["append", "enqueue", "transition"]),
+  pointer_cas: new Set(["cas"]),
+  lease_fence: new Set(["cas", "claim", "ack", "transition"]),
+  queue_claim_ack: new Set(["enqueue", "claim", "ack", "transition"]),
+  outbox_claim_ack: new Set(["enqueue", "claim", "ack"]),
+};
+
+function hasConcurrencyArgument(
+  signature: OwnerFunctionSignatureV1,
+  control: OwnerFunctionEffectV1["concurrency_control"],
+): boolean {
+  const names = signature.arguments.map(({ argument_name }) => argument_name);
+  if (control === "slot_and_process_state_fence") {
+    return names.includes("p_admission_precondition");
+  }
+  if (control === "generation_fence") {
+    return names.some(
+      (name) =>
+        name.startsWith("p_expected_") &&
+        (name.includes("generation") || name.includes("fence")),
+    );
+  }
+  if (control === "lease_fence") {
+    return (
+      names.includes("p_claim_token") ||
+      (names.includes("p_worker_id") && names.includes("p_lease_seconds"))
+    );
+  }
+  if (control === "expected_state_version" || control === "expected_version") {
+    return names.some((name) => name.startsWith("p_expected_"));
+  }
+  return (
+    names.includes("p_idempotency_key") ||
+    names.includes("p_request_hash") ||
+    names.includes("p_claim_token") ||
+    names.includes("p_lock_token") ||
+    names.some((name) => /^p_[a-z0-9_]+_id$/.test(name))
+  );
+}
+
 type OwnerFunctionArgumentsFromTuplesV1<
   TArguments extends readonly (
     readonly [argument_name: string, postgres_type: OwnerPostgresTypeV1]
@@ -216,7 +262,7 @@ export function ownerFunctionSignatureV1<
   readonly arguments: TArguments;
   readonly reads_tables: readonly TTable[];
   readonly writes_tables: readonly TTable[];
-  readonly effects?: readonly OwnerFunctionEffectV1<TTable>[];
+  readonly effects: readonly OwnerFunctionEffectV1<TTable>[];
   readonly returns: "jsonb" | "setof jsonb";
 }): OwnerFunctionSignatureV1<
   TSchema,
@@ -238,7 +284,7 @@ export function ownerFunctionSignatureV1<
     ),
     reads_tables: [...input.reads_tables],
     writes_tables: [...input.writes_tables],
-    ...(input.effects === undefined ? {} : { effects: [...input.effects] }),
+    effects: [...input.effects],
     returns: input.returns,
     security_definer: true,
     search_path: [input.schema, "pg_temp"],
@@ -251,10 +297,8 @@ export function ownerFunctionSignatureV1<
   Object.freeze(signature.arguments);
   Object.freeze(signature.reads_tables);
   Object.freeze(signature.writes_tables);
-  if (signature.effects !== undefined) {
-    for (const effect of signature.effects) Object.freeze(effect);
-    Object.freeze(signature.effects);
-  }
+  for (const effect of signature.effects) Object.freeze(effect);
+  Object.freeze(signature.effects);
   Object.freeze(signature.search_path);
   return Object.freeze(signature);
 }
@@ -421,27 +465,27 @@ export function defineOwnerRepositoryContractV1<
       `${signature.function_name}.writes_tables`,
       signature.writes_tables,
     );
+    const effects = signature.effects;
+    const effectTables = effects.map(({ table_name }) => table_name);
     if (
-      contract.owner_service === "trigger_processor" ||
-      contract.owner_service === "memory"
-    ) {
-      const effects = signature.effects ?? [];
-      const effectTables = effects.map(({ table_name }) => table_name);
-      if (
-        effects.length !== signature.writes_tables.length ||
-        new Set(effectTables).size !== effectTables.length ||
-        effects.some(
-          ({ operation, concurrency_control }) =>
-            !effectOperations.has(operation) ||
-            !concurrencyControls.has(concurrency_control),
-        ) ||
-        sorted(effectTables).join("\u0000") !==
-          sorted(signature.writes_tables).join("\u0000")
-      ) {
-        throw new Error(
-          `${contract.owner_service}.${signature.function_name} must declare one semantic effect for every written table`,
+      effects.length !== signature.writes_tables.length ||
+      new Set(effectTables).size !== effectTables.length ||
+      effects.some(({ table_name, operation, concurrency_control }) => {
+        const tableWriterKind = permissionByTable.get(table_name)?.writer_kind;
+        return (
+          !effectOperations.has(operation) ||
+          !concurrencyControls.has(concurrency_control) ||
+          tableWriterKind === undefined ||
+          !operationsByWriterKind[tableWriterKind].has(operation) ||
+          !hasConcurrencyArgument(signature, concurrency_control)
         );
-      }
+      }) ||
+      sorted(effectTables).join("\u0000") !==
+        sorted(signature.writes_tables).join("\u0000")
+    ) {
+      throw new Error(
+        `${contract.owner_service}.${signature.function_name} must declare one compatible semantic effect for every written table`,
+      );
     }
     for (const table of signature.writes_tables) tablesWithWriter.add(table);
   }
@@ -558,6 +602,72 @@ function assertSameSet(label: string, actual: Iterable<string>, expected: Iterab
   }
 }
 
+function escapeRegularExpression(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function executableFunctionDefinition(definition: string): string {
+  return definition
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/--[^\r\n]*/g, " ")
+    .replace(/'(?:''|[^'])*'/g, "''")
+    .toLowerCase();
+}
+
+function mutationPattern(
+  schema: string,
+  table: string,
+  verbs: readonly string[],
+): RegExp {
+  const qualifiedTable = `(?:"?${escapeRegularExpression(schema)}"?\\s*\\.\\s*)?"?${escapeRegularExpression(table)}"?`;
+  return new RegExp(
+    `\\b(?:${verbs.join("|")})\\s+(?:into\\s+)?(?:only\\s+)?${qualifiedTable}\\b`,
+    "i",
+  );
+}
+
+function assertFunctionEffectsInDefinition(
+  contract: OwnerRepositoryContractV1,
+  signature: OwnerFunctionSignatureV1,
+  definition: string,
+): void {
+  const executable = executableFunctionDefinition(definition);
+  if (/\bexecute\b/i.test(executable)) {
+    throw new Error(
+      `dynamic SQL is forbidden in owner writer: ${signature.schema}.${signature.function_name}`,
+    );
+  }
+  for (const effect of signature.effects) {
+    const verbs =
+      effect.operation === "append" || effect.operation === "enqueue"
+        ? ["insert"]
+        : effect.operation === "upsert"
+          ? ["insert", "update", "merge"]
+          : ["update", "merge", "insert"];
+    if (!mutationPattern(contract.schema, effect.table_name, verbs).test(executable)) {
+      throw new Error(
+        `PostgreSQL function effect drift: ${signature.schema}.${signature.function_name} does not ${effect.operation} ${effect.table_name}`,
+      );
+    }
+  }
+  const declaredTables = new Set<string>(signature.writes_tables);
+  const mutationTargetPattern =
+    /\b(?:insert\s+into|update|delete\s+from|merge\s+into)\s+(?:only\s+)?(?:"?([a-z][a-z0-9_]*)"?\s*\.\s*)?"?([a-z][a-z0-9_]*)"?\b/gi;
+  for (const match of executable.matchAll(mutationTargetPattern)) {
+    const observedSchema = match[1] ?? contract.schema;
+    const observedTable = match[2];
+    if (
+      observedTable === undefined ||
+      observedSchema !== contract.schema ||
+      !declaredTables.has(observedTable)
+    ) {
+      throw new Error(
+        `undeclared PostgreSQL mutation in ${signature.schema}.${signature.function_name}: ${observedSchema}.${observedTable ?? "unknown"}`,
+      );
+    }
+  }
+}
+
 /**
  * Reads PostgreSQL catalogs directly. Callers cannot supply a deployment
  * artifact, verification timestamp, grants, function configuration, or table
@@ -568,7 +678,10 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
 >(
   contract: TContract,
   postgres: PostgresQueryPortV1,
-  options: Readonly<{ expected_schema_owner: string }>,
+  options: Readonly<{
+    expected_schema_owner: string;
+    runtime_postgres: PostgresQueryPortV1;
+  }>,
 ): Promise<VerifiedOwnerRepositoryDeploymentV1<TContract["owner_service"]>> {
   const schemaResult = await postgres.query<{
     schema_name: string;
@@ -584,6 +697,78 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     schemaResult.rows[0]?.schema_owner !== options.expected_schema_owner
   ) {
     throw new Error(`PostgreSQL schema owner drift for ${contract.schema}`);
+  }
+
+  const runtimeIdentityResult = await options.runtime_postgres.query<{
+    current_user: string;
+    session_user: string;
+    can_login: boolean;
+    inherits_privileges: boolean;
+    is_superuser: boolean;
+    bypasses_rls: boolean;
+    can_create_role: boolean;
+    can_create_database: boolean;
+    can_replicate: boolean;
+  }>(
+    `SELECT current_user::text AS current_user,
+            session_user::text AS session_user,
+            r.rolcanlogin AS can_login,
+            r.rolinherit AS inherits_privileges,
+            r.rolsuper AS is_superuser,
+            r.rolbypassrls AS bypasses_rls,
+            r.rolcreaterole AS can_create_role,
+            r.rolcreatedb AS can_create_database,
+            r.rolreplication AS can_replicate
+       FROM pg_catalog.pg_roles r
+      WHERE r.rolname = current_user`,
+  );
+  const runtimeIdentity = runtimeIdentityResult.rows[0];
+  if (
+    runtimeIdentityResult.rows.length !== 1 ||
+    runtimeIdentity === undefined ||
+    runtimeIdentity.current_user !== runtimeIdentity.session_user ||
+    !runtimeIdentity.can_login ||
+    !runtimeIdentity.inherits_privileges ||
+    runtimeIdentity.is_superuser ||
+    runtimeIdentity.bypasses_rls ||
+    runtimeIdentity.can_create_role ||
+    runtimeIdentity.can_create_database ||
+    runtimeIdentity.can_replicate
+  ) {
+    throw new Error(
+      `runtime PostgreSQL connection identity is not a least-privilege LOGIN for ${contract.owner_service}`,
+    );
+  }
+  const runtimeMembershipResult = await options.runtime_postgres.query<{
+    role_name: string;
+  }>(
+    `WITH RECURSIVE inherited_roles(role_oid) AS (
+       SELECT r.oid FROM pg_catalog.pg_roles r WHERE r.rolname = current_user
+       UNION
+       SELECT m.roleid
+         FROM pg_catalog.pg_auth_members m
+         JOIN inherited_roles inherited ON inherited.role_oid = m.member
+     )
+     SELECT r.rolname AS role_name
+       FROM inherited_roles inherited
+       JOIN pg_catalog.pg_roles r ON r.oid = inherited.role_oid
+      ORDER BY r.rolname`,
+  );
+  const inheritedRoles = new Set(
+    runtimeMembershipResult.rows.map(({ role_name }) => role_name),
+  );
+  const allowedRuntimeRoles = new Set([
+    runtimeIdentity.current_user,
+    contract.app_role,
+  ]);
+  if (
+    !inheritedRoles.has(contract.app_role) ||
+    inheritedRoles.has(options.expected_schema_owner) ||
+    [...inheritedRoles].some((role) => !allowedRuntimeRoles.has(role))
+  ) {
+    throw new Error(
+      `runtime PostgreSQL role membership drift for ${contract.owner_service}`,
+    );
   }
 
   const columnResult = await postgres.query<{
@@ -615,37 +800,106 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     }
   }
 
-  const directMutationResult = await postgres.query<{
+  const tableAclResult = await postgres.query<{
     table_name: string;
+    grantee: string;
     privilege_type: string;
   }>(
-    `SELECT table_name, privilege_type
-       FROM information_schema.table_privileges
-      WHERE table_schema = $1 AND grantee = $2
-        AND privilege_type IN ('INSERT','UPDATE','DELETE')
-      UNION ALL
-     SELECT table_name, privilege_type
-       FROM information_schema.column_privileges
-      WHERE table_schema = $1 AND grantee = $2
-        AND privilege_type IN ('INSERT','UPDATE')`,
-    [contract.schema, contract.app_role],
+    `SELECT c.relname AS table_name,
+            COALESCE(r.rolname, 'PUBLIC') AS grantee,
+            acl.privilege_type
+       FROM pg_catalog.pg_class c
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+       CROSS JOIN LATERAL pg_catalog.aclexplode(
+         COALESCE(c.relacl, pg_catalog.acldefault('r', c.relowner))
+       ) acl
+       LEFT JOIN pg_catalog.pg_roles r ON r.oid = acl.grantee
+      WHERE n.nspname = $1 AND c.relkind IN ('r','p')`,
+    [contract.schema],
   );
-  if (directMutationResult.rows.length !== 0) {
-    throw new Error(`direct table mutation privilege drift for ${contract.app_role}`);
+  if (
+    tableAclResult.rows.some(
+      ({ grantee }) => grantee !== options.expected_schema_owner,
+    )
+  ) {
+    throw new Error(`cross-owner table privilege drift for ${contract.schema}`);
   }
 
-  const selectGrantResult = await postgres.query<{
+  const columnAclResult = await postgres.query<{
     table_name: string;
     column_name: string;
+    grantee: string;
+    privilege_type: string;
   }>(
-    `SELECT table_name, column_name
-       FROM information_schema.column_privileges
-      WHERE table_schema = $1 AND grantee = $2 AND privilege_type = 'SELECT'`,
-    [contract.schema, contract.app_role],
+    `SELECT c.relname AS table_name, a.attname AS column_name,
+            COALESCE(r.rolname, 'PUBLIC') AS grantee,
+            acl.privilege_type
+       FROM pg_catalog.pg_class c
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+       JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+       CROSS JOIN LATERAL pg_catalog.aclexplode(
+         COALESCE(a.attacl, '{}'::aclitem[])
+       ) acl
+       LEFT JOIN pg_catalog.pg_roles r ON r.oid = acl.grantee
+      WHERE n.nspname = $1 AND c.relkind IN ('r','p')
+        AND a.attnum > 0 AND NOT a.attisdropped`,
+    [contract.schema],
   );
+  if (
+    columnAclResult.rows.some(
+      ({ grantee, privilege_type }) =>
+        grantee !== options.expected_schema_owner &&
+        (grantee !== contract.app_role || privilege_type !== "SELECT"),
+    )
+  ) {
+    throw new Error(`cross-owner column privilege drift for ${contract.schema}`);
+  }
   assertSameSet(
     `${contract.app_role} SELECT columns`,
-    selectGrantResult.rows.map(({ table_name, column_name }) => `${table_name}.${column_name}`),
+    columnAclResult.rows
+      .filter(
+        ({ grantee, privilege_type }) =>
+          grantee === contract.app_role && privilege_type === "SELECT",
+      )
+      .map(({ table_name, column_name }) => `${table_name}.${column_name}`),
+    contract.table_permissions.flatMap(({ table_name, select_columns }) =>
+      select_columns.map((column) => `${table_name}.${column}`),
+    ),
+  );
+
+  const runtimeColumnPrivilegeResult = await options.runtime_postgres.query<{
+    table_name: string;
+    column_name: string;
+    can_select: boolean;
+    can_insert: boolean;
+    can_update: boolean;
+    can_delete: boolean;
+  }>(
+    `SELECT c.relname AS table_name, a.attname AS column_name,
+            pg_catalog.has_column_privilege(current_user, c.oid, a.attnum, 'SELECT') AS can_select,
+            pg_catalog.has_column_privilege(current_user, c.oid, a.attnum, 'INSERT') AS can_insert,
+            pg_catalog.has_column_privilege(current_user, c.oid, a.attnum, 'UPDATE') AS can_update,
+            pg_catalog.has_table_privilege(current_user, c.oid, 'DELETE') AS can_delete
+       FROM pg_catalog.pg_class c
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+       JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+      WHERE n.nspname = $1 AND c.relkind IN ('r','p')
+        AND a.attnum > 0 AND NOT a.attisdropped`,
+    [contract.schema],
+  );
+  if (
+    runtimeColumnPrivilegeResult.rows.some(
+      ({ can_insert, can_update, can_delete }) =>
+        can_insert || can_update || can_delete,
+    )
+  ) {
+    throw new Error(`effective runtime DML privilege drift for ${contract.schema}`);
+  }
+  assertSameSet(
+    `effective runtime SELECT columns for ${contract.owner_service}`,
+    runtimeColumnPrivilegeResult.rows
+      .filter(({ can_select }) => can_select)
+      .map(({ table_name, column_name }) => `${table_name}.${column_name}`),
     contract.table_permissions.flatMap(({ table_name, select_columns }) =>
       select_columns.map((column) => `${table_name}.${column}`),
     ),
@@ -661,6 +915,8 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     argument_types: string[] | null;
     returns_set: boolean;
     result_type: string;
+    language_name: string;
+    function_definition: string;
   }>(
     `SELECT p.oid::text AS oid, p.proname AS function_name,
             pg_get_userbyid(p.proowner) AS function_owner,
@@ -670,9 +926,12 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
                  ELSE string_to_array(pg_catalog.oidvectortypes(p.proargtypes), ', ')
             END AS argument_types,
             p.proretset AS returns_set,
-            pg_catalog.format_type(p.prorettype, NULL) AS result_type
+            pg_catalog.format_type(p.prorettype, NULL) AS result_type,
+            language.lanname AS language_name,
+            pg_catalog.pg_get_functiondef(p.oid) AS function_definition
        FROM pg_catalog.pg_proc p
        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+       JOIN pg_catalog.pg_language language ON language.oid = p.prolang
       WHERE n.nspname = $1`,
     [contract.schema],
   );
@@ -693,10 +952,16 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
       JSON.stringify(deployed.argument_types ?? []) !==
         JSON.stringify(signature.arguments.map(({ postgres_type }) => postgresType(postgres_type))) ||
       deployed.returns_set !== (signature.returns === "setof jsonb") ||
-      deployed.result_type !== "jsonb"
+      deployed.result_type !== "jsonb" ||
+      (deployed.language_name !== "sql" && deployed.language_name !== "plpgsql")
     ) {
       throw new Error(`PostgreSQL function signature/security drift: ${contract.schema}.${signature.function_name}`);
     }
+    assertFunctionEffectsInDefinition(
+      contract,
+      signature,
+      deployed.function_definition,
+    );
   }
 
   const executeGrantResult = await postgres.query<{
@@ -717,27 +982,74 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     .filter(({ grantee }) => grantee === contract.app_role)
     .map(({ function_name }) => function_name);
   assertSameSet(`${contract.app_role} EXECUTE functions`, appExecutableFunctions, contract.mutable_writers);
-  const forbiddenGrantees = new Set(["PUBLIC", "anon", "authenticated"]);
-  if (executeGrantResult.rows.some(({ grantee }) => forbiddenGrantees.has(grantee))) {
-    throw new Error(`PUBLIC/anon/authenticated EXECUTE privilege drift for ${contract.schema}`);
+  if (
+    executeGrantResult.rows.some(
+      ({ grantee }) =>
+        grantee !== options.expected_schema_owner && grantee !== contract.app_role,
+    )
+  ) {
+    throw new Error(`cross-owner EXECUTE privilege drift for ${contract.schema}`);
   }
 
-  const schemaUsageResult = await postgres.query<{ grantee: string }>(
-    `SELECT COALESCE(r.rolname, 'PUBLIC') AS grantee
+  const runtimeExecuteResult = await options.runtime_postgres.query<{
+    function_name: string;
+  }>(
+    `SELECT p.proname AS function_name
+       FROM pg_catalog.pg_proc p
+       JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = $1
+        AND pg_catalog.has_function_privilege(current_user, p.oid, 'EXECUTE')`,
+    [contract.schema],
+  );
+  assertSameSet(
+    `effective runtime EXECUTE functions for ${contract.owner_service}`,
+    runtimeExecuteResult.rows.map(({ function_name }) => function_name),
+    contract.mutable_writers,
+  );
+
+  const schemaAclResult = await postgres.query<{
+    grantee: string;
+    privilege_type: string;
+  }>(
+    `SELECT COALESCE(r.rolname, 'PUBLIC') AS grantee, acl.privilege_type
        FROM pg_catalog.pg_namespace n
        CROSS JOIN LATERAL pg_catalog.aclexplode(
          COALESCE(n.nspacl, pg_catalog.acldefault('n', n.nspowner))
        ) acl
        LEFT JOIN pg_catalog.pg_roles r ON r.oid = acl.grantee
-      WHERE n.nspname = $1 AND acl.privilege_type = 'USAGE'`,
+      WHERE n.nspname = $1`,
     [contract.schema],
   );
   if (
-    schemaUsageResult.rows.some(({ grantee }) =>
-      forbiddenGrantees.has(grantee),
+    schemaAclResult.rows.some(
+      ({ grantee, privilege_type }) =>
+        grantee !== options.expected_schema_owner &&
+        (grantee !== contract.app_role || privilege_type !== "USAGE"),
+    ) ||
+    !schemaAclResult.rows.some(
+      ({ grantee, privilege_type }) =>
+        grantee === contract.app_role && privilege_type === "USAGE",
     )
   ) {
-    throw new Error(`PUBLIC/anon/authenticated schema USAGE privilege drift for ${contract.schema}`);
+    throw new Error(`cross-owner schema privilege drift for ${contract.schema}`);
+  }
+  const runtimeSchemaPrivilegeResult =
+    await options.runtime_postgres.query<{
+      can_use: boolean;
+      can_create: boolean;
+    }>(
+      `SELECT pg_catalog.has_schema_privilege(current_user, n.oid, 'USAGE') AS can_use,
+              pg_catalog.has_schema_privilege(current_user, n.oid, 'CREATE') AS can_create
+         FROM pg_catalog.pg_namespace n
+        WHERE n.nspname = $1`,
+      [contract.schema],
+    );
+  if (
+    runtimeSchemaPrivilegeResult.rows.length !== 1 ||
+    runtimeSchemaPrivilegeResult.rows[0]?.can_use !== true ||
+    runtimeSchemaPrivilegeResult.rows[0]?.can_create !== false
+  ) {
+    throw new Error(`effective runtime schema privilege drift for ${contract.schema}`);
   }
 
   const foreignKeyResult = await postgres.query<{
@@ -762,15 +1074,13 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
       WHERE n.nspname = $1 AND con.contype = 'f'`,
     [contract.schema],
   );
-  if (contract.foreign_keys !== undefined) {
-    const fkSnapshot = (row: OwnerForeignKeyV1 | (typeof foreignKeyResult.rows)[number]) =>
-      `${row.constraint_name}:${row.table_name}(${row.columns.join(",")})->${row.referenced_table}(${row.referenced_columns.join(",")})`;
-    assertSameSet(
-      `${contract.schema} foreign keys`,
-      foreignKeyResult.rows.map(fkSnapshot),
-      contract.foreign_keys.map(fkSnapshot),
-    );
-  }
+  const fkSnapshot = (row: OwnerForeignKeyV1 | (typeof foreignKeyResult.rows)[number]) =>
+    `${row.constraint_name}:${row.table_name}(${row.columns.join(",")})->${row.referenced_table}(${row.referenced_columns.join(",")})`;
+  assertSameSet(
+    `${contract.schema} foreign keys`,
+    foreignKeyResult.rows.map(fkSnapshot),
+    contract.foreign_keys.map(fkSnapshot),
+  );
 
   const checkConstraintResult = await postgres.query<{
     constraint_name: string;
@@ -807,11 +1117,16 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
   const databaseFingerprint = fingerprint({
     schema: schemaResult.rows,
     columns: columnResult.rows,
-    direct_mutation: directMutationResult.rows,
-    select_grants: selectGrantResult.rows,
+    runtime_identity: runtimeIdentityResult.rows,
+    runtime_membership: runtimeMembershipResult.rows,
+    table_acl: tableAclResult.rows,
+    column_acl: columnAclResult.rows,
+    runtime_column_privileges: runtimeColumnPrivilegeResult.rows,
     functions: functionResult.rows,
     execute_grants: executeGrantResult.rows,
-    schema_usage: schemaUsageResult.rows,
+    runtime_execute: runtimeExecuteResult.rows,
+    schema_acl: schemaAclResult.rows,
+    runtime_schema_privileges: runtimeSchemaPrivilegeResult.rows,
     foreign_keys: foreignKeyResult.rows,
     check_constraints: checkConstraintResult.rows,
   });
@@ -822,6 +1137,77 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     database_fingerprint: databaseFingerprint,
     [verifiedOwnerDeploymentBrand]: true,
   }) as VerifiedOwnerRepositoryDeploymentV1<TContract["owner_service"]>;
+}
+
+export interface VerifiedOwnerPostgresCompositionV1<
+  TContract extends OwnerRepositoryContractV1,
+> {
+  readonly deployment: VerifiedOwnerRepositoryDeploymentV1<
+    TContract["owner_service"]
+  >;
+  readonly postgres: PostgresQueryPortV1;
+  readonly repository: OwnerRepositoryPortV1<TContract>;
+  readonly unit_of_work: OwnerUnitOfWorkPortV1<
+    TContract["owner_service"],
+    Readonly<{ owner: OwnerRepositoryPortV1<TContract> }>
+  >;
+  readonly checkReadiness: () => Promise<void>;
+  readonly close: () => Promise<void>;
+}
+
+/**
+ * Opens the service runtime connection, verifies that exact effective identity
+ * against PostgreSQL, and retains both the verified capability and pool for the
+ * lifetime of the service composition.
+ */
+export async function openVerifiedOwnerPostgresCompositionV1<
+  const TContract extends OwnerRepositoryContractV1,
+>(
+  contract: TContract,
+  databaseUrl: string,
+  expectedSchemaOwner = "pai_migrator",
+): Promise<VerifiedOwnerPostgresCompositionV1<TContract>> {
+  const pool = new Pool({ connectionString: databaseUrl });
+  const postgres: PostgresQueryPortV1 = {
+    async query<TRow extends Record<string, unknown>>(
+      sql: string,
+      values: readonly unknown[] = [],
+    ): Promise<{ readonly rows: readonly TRow[] }> {
+      const result = await pool.query<TRow>(sql, [...values]);
+      return { rows: result.rows };
+    },
+  };
+  try {
+    const deployment =
+      await verifyOwnerRepositoryDeploymentFromPostgresV1(
+        contract,
+        postgres,
+        {
+          expected_schema_owner: expectedSchemaOwner,
+          runtime_postgres: postgres,
+        },
+      );
+    const ownerRepository = createVerifiedOwnerPostgresRepositoryV1(
+      contract,
+      deployment,
+      pool,
+    );
+    return Object.freeze({
+      deployment,
+      postgres,
+      repository: ownerRepository.repository,
+      unit_of_work: ownerRepository.unit_of_work,
+      async checkReadiness(): Promise<void> {
+        await postgres.query("SELECT 1 AS owner_postgres_ready");
+      },
+      async close(): Promise<void> {
+        await pool.end();
+      },
+    });
+  } catch (error) {
+    await pool.end();
+    throw error;
+  }
 }
 
 type OwnerPostgresValueV1<TType extends OwnerPostgresTypeV1> =
@@ -899,6 +1285,169 @@ export interface OwnerUnitOfWorkPortV1<
       repositories: TRepositories,
     ) => Promise<TResult>,
   ): Promise<TResult>;
+}
+
+function postgresArgumentCast(type: OwnerPostgresTypeV1): string {
+  return type === "timestamptz" ? "timestamp with time zone" : type;
+}
+
+function isSerializationFailure(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { readonly code?: unknown }).code === "40001"
+  );
+}
+
+/**
+ * The only generic execution adapter for owner writers. It cannot be created
+ * without the live PostgreSQL-derived deployment capability, and every call is
+ * bound to a transaction opened by the paired unit of work.
+ */
+export function createVerifiedOwnerPostgresRepositoryV1<
+  const TContract extends OwnerRepositoryContractV1,
+>(
+  contract: TContract,
+  deployment: VerifiedOwnerRepositoryDeploymentV1<
+    TContract["owner_service"]
+  >,
+  pool: Pool,
+): Readonly<{
+  repository: OwnerRepositoryPortV1<TContract>;
+  unit_of_work: OwnerUnitOfWorkPortV1<
+    TContract["owner_service"],
+    Readonly<{ owner: OwnerRepositoryPortV1<TContract> }>
+  >;
+}> {
+  if (
+    deployment[verifiedOwnerDeploymentBrand] !== true ||
+    deployment.owner_service !== contract.owner_service ||
+    deployment.contract_fingerprint !== fingerprint(contract)
+  ) {
+    throw new Error(
+      `verified deployment capability does not match ${contract.owner_service}`,
+    );
+  }
+  const clients = new WeakMap<object, PoolClient>();
+  const repository: OwnerRepositoryPortV1<TContract> = Object.freeze({
+    contract,
+    deployment,
+    async executeWriter<
+      TResult,
+      const TWriter extends OwnerWriterNameV1<TContract>,
+    >(
+      transaction: OwnerTransactionV1<TContract["owner_service"]>,
+      request: ExecuteOwnerWriterRequestV1<TContract, TWriter>,
+    ): Promise<TResult> {
+      const client = clients.get(transaction);
+      if (
+        client === undefined ||
+        transaction.owner_service !== contract.owner_service
+      ) {
+        throw new Error("owner writer requires its active unit-of-work transaction");
+      }
+      const signature = contract.function_signatures.find(
+        ({ function_name }) => function_name === request.writer,
+      );
+      if (signature === undefined) {
+        throw new Error(`unknown owner writer: ${String(request.writer)}`);
+      }
+      const argumentRecord = request.arguments as Readonly<
+        Record<string, unknown>
+      >;
+      const values = signature.arguments.map(
+        ({ argument_name }) => argumentRecord[argument_name],
+      );
+      if (
+        Object.keys(argumentRecord).length !== signature.arguments.length ||
+        signature.arguments.some(
+          ({ argument_name }) => !(argument_name in argumentRecord),
+        )
+      ) {
+        throw new Error(
+          `owner writer argument drift: ${contract.schema}.${signature.function_name}`,
+        );
+      }
+      const placeholders = signature.arguments
+        .map(
+          ({ postgres_type }, index) =>
+            `$${index + 1}::${postgresArgumentCast(postgres_type)}`,
+        )
+        .join(", ");
+      const invocation = `${contract.schema}.${signature.function_name}(${placeholders})`;
+      const result =
+        signature.returns === "setof jsonb"
+          ? await client.query<{ result: TResult }>(
+              `SELECT value AS result FROM ${invocation} AS value`,
+              values,
+            )
+          : await client.query<{ result: TResult }>(
+              `SELECT ${invocation} AS result`,
+              values,
+            );
+      if (
+        (request.expected_rows === 1 && result.rows.length !== 1) ||
+        (request.expected_rows === "one_or_more" && result.rows.length === 0)
+      ) {
+        throw new Error(
+          `owner writer row-count drift: ${contract.schema}.${signature.function_name}`,
+        );
+      }
+      return (signature.returns === "setof jsonb"
+        ? result.rows.map(({ result: value }) => value)
+        : result.rows[0]?.result) as TResult;
+    },
+  });
+  const isolationSql = {
+    read_committed: "READ COMMITTED",
+    repeatable_read: "REPEATABLE READ",
+    serializable: "SERIALIZABLE",
+  } as const;
+  const unitOfWork: OwnerUnitOfWorkPortV1<
+    TContract["owner_service"],
+    Readonly<{ owner: OwnerRepositoryPortV1<TContract> }>
+  > = Object.freeze({
+    owner_service: contract.owner_service,
+    async withTransaction<TResult>(
+      request: OwnerUnitOfWorkRequestV1,
+      work: (
+        transaction: OwnerTransactionV1<TContract["owner_service"]>,
+        repositories: Readonly<{ owner: OwnerRepositoryPortV1<TContract> }>,
+      ) => Promise<TResult>,
+    ): Promise<TResult> {
+      const maxAttempts = request.retry === "serialization_failures" ? 3 : 1;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const client = await pool.connect();
+        const transaction = Object.freeze({
+          owner_service: contract.owner_service,
+          transaction_id: randomUUID(),
+          trace_id: request.trace_id,
+          started_at: new Date().toISOString(),
+          attempt,
+        }) as unknown as OwnerTransactionV1<TContract["owner_service"]>;
+        clients.set(transaction, client);
+        try {
+          await client.query(
+            `BEGIN ISOLATION LEVEL ${isolationSql[request.isolation]}`,
+          );
+          const result = await work(transaction, { owner: repository });
+          await client.query("COMMIT");
+          return result;
+        } catch (error) {
+          await client.query("ROLLBACK").catch(() => undefined);
+          if (attempt === maxAttempts || !isSerializationFailure(error)) {
+            throw error;
+          }
+        } finally {
+          clients.delete(transaction);
+          client.release();
+        }
+      }
+      throw new Error("owner unit of work exhausted serialization retries");
+    },
+  });
+  return Object.freeze({ repository, unit_of_work: unitOfWork });
 }
 
 export type AssertOwnerServiceV1<T extends ServiceIdV1> =
