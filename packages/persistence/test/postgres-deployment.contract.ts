@@ -495,13 +495,25 @@ describePostgres("PostgreSQL owner deployment verification", () => {
         `SELECT timer.write_contract_child_v1($1, $2, $3, $4::jsonb)`,
         ["parent-race", "1", `winner-${randomUUID()}`, {}],
       );
-      const staleWrite = second.query(
-        `SELECT timer.write_contract_child_v1($1, $2, $3, $4::jsonb)`,
-        ["parent-race", "1", `loser-${randomUUID()}`, {}],
-      );
+      const staleWrite = second
+        .query(
+          `SELECT timer.write_contract_child_v1($1, $2, $3, $4::jsonb)`,
+          ["parent-race", "1", `loser-${randomUUID()}`, {}],
+        )
+        .then(
+          () => ({ status: "fulfilled" as const }),
+          (error: unknown) => ({ status: "rejected" as const, error }),
+        );
       await new Promise<void>((resolve) => setImmediate(resolve));
       await first.query("COMMIT");
-      await expect(staleWrite).rejects.toThrow(/stale parent version/);
+      const staleResult = await staleWrite;
+      expect(staleResult.status).toBe("rejected");
+      if (staleResult.status !== "rejected") {
+        throw new Error("expected competing writer to be rejected");
+      }
+      expect(String((staleResult.error as Error).message)).toMatch(
+        /stale parent version/,
+      );
       await second.query("ROLLBACK");
     } finally {
       await first.query("ROLLBACK").catch(() => undefined);
