@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import {
   SHARED_SCHEMA_CATALOG,
   TRIGGER_PROCESSOR_SCHEMA_CATALOG,
+  TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1,
 } from "../dist/catalog.js";
 import {
   TRIGGER_PROCESS_STATE_V1_DATABASE_CHECK,
@@ -39,6 +40,59 @@ const schemaCatalog = [
   ...TRIGGER_PROCESSOR_SCHEMA_CATALOG,
 ];
 
+const schemaByName = new Map(
+  schemaCatalog.map((entry) => [entry.schema_name, entry.schema]),
+);
+
+function openApiOperation(operation) {
+  const requestSchema = schemaByName.get(operation.request_schema_name);
+  const responseSchema = schemaByName.get(operation.response_schema_name);
+  if (requestSchema === undefined || responseSchema === undefined) {
+    throw new Error(`unknown schema for OpenAPI operation ${operation.operation_id}`);
+  }
+  return {
+    [operation.method]: {
+      operationId: operation.operation_id,
+      tags: ["trigger_processor"],
+      summary: `Admit a ${operation.source} trigger`,
+      description:
+        `Route injects source=${operation.source}; callers must be ${operation.allowed_caller} with ${operation.required_capability}.`,
+      security: [{ PaiWorkloadJwt: [operation.required_capability] }],
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: requestSchema,
+          },
+        },
+      },
+      responses: Object.fromEntries(
+        operation.responses.map((status) => [
+          String(status),
+          {
+            description:
+              status === 200
+                ? "Admission decision"
+                : "Canonical error envelope",
+            content: {
+              "application/json": {
+                schema: responseSchema,
+              },
+            },
+          },
+        ]),
+      ),
+    },
+  };
+}
+
+const openApiPaths = Object.fromEntries(
+  TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1.map((operation) => [
+    operation.path,
+    openApiOperation(operation),
+  ]),
+);
+
 for (const entry of schemaCatalog) {
   const schemaOutput = entry.generated_outputs.find((output) =>
     output.startsWith("generated/schema/"),
@@ -55,8 +109,15 @@ await emitGeneratedFile(
     {
       openapi: "3.1.0",
       info: { title: "PAI Shared Contracts", version: "1.0.0" },
-      paths: {},
+      paths: openApiPaths,
       components: {
+        securitySchemes: {
+          PaiWorkloadJwt: {
+            type: "http",
+            scheme: "bearer",
+            bearerFormat: "JWT",
+          },
+        },
         schemas: Object.fromEntries(
           schemaCatalog.map((entry) => [entry.schema_name, entry.schema]),
         ),

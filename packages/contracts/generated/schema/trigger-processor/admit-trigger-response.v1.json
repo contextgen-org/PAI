@@ -11,8 +11,60 @@
   ],
   "properties": {
     "code": {
-      "minLength": 1,
-      "type": "string"
+      "anyOf": [
+        {
+          "const": "trigger_accepted",
+          "type": "string"
+        },
+        {
+          "const": "trigger_rejected",
+          "type": "string"
+        },
+        {
+          "const": "invalid_request",
+          "type": "string"
+        },
+        {
+          "const": "unauthenticated",
+          "type": "string"
+        },
+        {
+          "const": "authorization_denied",
+          "type": "string"
+        },
+        {
+          "const": "capability_denied",
+          "type": "string"
+        },
+        {
+          "const": "authorization_scope_mismatch",
+          "type": "string"
+        },
+        {
+          "const": "idempotency_conflict",
+          "type": "string"
+        },
+        {
+          "const": "stale_admission_fence",
+          "type": "string"
+        },
+        {
+          "const": "serialization_retry_exhausted",
+          "type": "string"
+        },
+        {
+          "const": "transient_database_error",
+          "type": "string"
+        },
+        {
+          "const": "service_unavailable",
+          "type": "string"
+        },
+        {
+          "const": "internal_error",
+          "type": "string"
+        }
+      ]
     },
     "message": {
       "minLength": 1,

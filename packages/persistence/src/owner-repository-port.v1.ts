@@ -130,6 +130,26 @@ export interface OwnerDatabaseCheckV1<TTable extends string = string> {
   readonly required_definition_fragments: readonly string[];
 }
 
+export interface OwnerDatabaseColumnV1<TTable extends string = string> {
+  readonly table_name: TTable;
+  readonly column_name: string;
+  readonly postgres_type: string;
+  readonly not_null: boolean;
+  readonly default_expression: string | null;
+  readonly identity: "" | "always" | "by_default";
+  readonly generated: "" | "stored";
+}
+
+export interface OwnerDatabaseUniqueConstraintV1<TTable extends string = string> {
+  readonly constraint_name: string;
+  readonly table_name: TTable;
+  readonly columns: readonly string[];
+  readonly kind: "primary_key" | "unique";
+  readonly deferrable: boolean;
+  readonly initially_deferred: boolean;
+  readonly validated: boolean;
+}
+
 export function ownerForeignKeyV1<
   const TSchema extends OwnerSchemaV1,
   const TTable extends string,
@@ -257,6 +277,8 @@ export interface OwnerRepositoryContractV1<
   readonly foreign_key_snapshot: OwnerForeignKeySnapshotV1;
   readonly foreign_keys: readonly OwnerForeignKeyV1<TTable>[];
   readonly database_checks?: readonly OwnerDatabaseCheckV1<TTable>[];
+  readonly database_columns?: readonly OwnerDatabaseColumnV1<TTable>[];
+  readonly database_unique_constraints?: readonly OwnerDatabaseUniqueConstraintV1<TTable>[];
   readonly append_only_tables: readonly TTable[];
   readonly outbox_tables: readonly TTable[];
   readonly inbox_tables: readonly TTable[];
@@ -569,6 +591,67 @@ export function defineOwnerRepositoryContractV1<
     Object.freeze(check.required_definition_fragments);
     Object.freeze(check);
   }
+  const databaseColumnKeys = (contract.database_columns ?? []).map(
+    ({ table_name, column_name }) => `${table_name}.${column_name}`,
+  );
+  if (
+    new Set(databaseColumnKeys).size !== databaseColumnKeys.length ||
+    (contract.database_columns ?? []).some(
+      ({ table_name, column_name }) =>
+        !sqlIdentifierPattern.test(table_name) ||
+        !sqlIdentifierPattern.test(column_name),
+    )
+  ) {
+    throw new Error("database_columns must contain unique SQL identifiers");
+  }
+  const declaredSelectColumns = new Set(
+    contract.table_permissions.flatMap(({ table_name, select_columns }) =>
+      select_columns.map((column) => `${table_name}.${column}`),
+    ),
+  );
+  for (const column of contract.database_columns ?? []) {
+    if (
+      !tableSet.has(column.table_name) ||
+      !declaredSelectColumns.has(`${column.table_name}.${column.column_name}`) ||
+      column.postgres_type.trim().length === 0 ||
+      (column.default_expression !== null &&
+        column.default_expression.trim().length === 0) ||
+      !["", "always", "by_default"].includes(column.identity) ||
+      !["", "stored"].includes(column.generated)
+    ) {
+      throw new Error(
+        `invalid owner database column snapshot: ${column.table_name}.${column.column_name}`,
+      );
+    }
+    Object.freeze(column);
+  }
+  assertUniqueIdentifiers(
+    "database_unique_constraints.constraint_name",
+    (contract.database_unique_constraints ?? []).map(
+      ({ constraint_name }) => constraint_name,
+    ),
+  );
+  for (const constraint of contract.database_unique_constraints ?? []) {
+    const sourceColumns = selectColumnsByTable.get(constraint.table_name);
+    if (
+      !tableSet.has(constraint.table_name) ||
+      constraint.columns.length === 0 ||
+      constraint.columns.some((column) => !sourceColumns?.has(column)) ||
+      !["primary_key", "unique"].includes(constraint.kind) ||
+      (constraint.initially_deferred && !constraint.deferrable) ||
+      !constraint.validated
+    ) {
+      throw new Error(
+        `invalid owner unique constraint snapshot: ${constraint.constraint_name}`,
+      );
+    }
+    assertUniqueIdentifiers(
+      `${constraint.constraint_name}.columns`,
+      constraint.columns,
+    );
+    Object.freeze(constraint.columns);
+    Object.freeze(constraint);
+  }
   const signatureNames = contract.function_signatures.map(
     ({ function_name }) => function_name,
   );
@@ -782,6 +865,44 @@ function executableFunctionDefinition(definition: string): string {
   return semanticFunctionDefinition(definition)
     .replace(/'(?:''|[^'])*'/g, "''")
     .toLowerCase();
+}
+
+function beforeFirstUnconditionalReturn(value: string): string {
+  const match = /\breturn\s+(?!next\b|query\b)/i.exec(value);
+  return match === null ? value : value.slice(0, match.index);
+}
+
+function assertNoUnreachableProofScaffolding(
+  signature: OwnerFunctionSignatureV1,
+  executable: string,
+): void {
+  const constantFalseIf =
+    /\bif\s+(?:\(?\s*)?(?:false|1\s*=\s*0|0\s*=\s*1|true\s*=\s*false|false\s*=\s*true|not\s+true)(?:\s*\)?)\s+then\b/i;
+  if (constantFalseIf.test(executable)) {
+    throw new Error(
+      `unreachable proof block is forbidden in owner writer: ${signature.schema}.${signature.function_name}`,
+    );
+  }
+  for (const match of executable.matchAll(
+    /\b([a-z][a-z0-9_]*)\s*:=\s*(p_expected_[a-z0-9_]+)\b/gi,
+  )) {
+    const localName = match[1]?.toLowerCase();
+    if (localName !== undefined && !localName.startsWith("p_")) {
+      throw new Error(
+        `PostgreSQL function CAS fence drift: ${signature.schema}.${signature.function_name} copies caller expected value into a local variable`,
+      );
+    }
+  }
+  for (const match of executable.matchAll(
+    /\bselect\s+(p_expected_[a-z0-9_]+)\s+into\s+([a-z][a-z0-9_]*)\b/gi,
+  )) {
+    const localName = match[2]?.toLowerCase();
+    if (localName !== undefined && !localName.startsWith("p_")) {
+      throw new Error(
+        `PostgreSQL function CAS fence drift: ${signature.schema}.${signature.function_name} copies caller expected value into a local variable`,
+      );
+    }
+  }
 }
 
 function allowedMutationVerbs(
@@ -1068,11 +1189,9 @@ function assertFunctionEffectsInDefinition(
 ): void {
   const semantic = semanticFunctionDefinition(definition);
   const executable = semantic.replace(/'(?:''|[^'])*'/g, "''");
-  if (/\bif\s+false\s+then\b/i.test(executable)) {
-    throw new Error(
-      `unreachable proof block is forbidden in owner writer: ${signature.schema}.${signature.function_name}`,
-    );
-  }
+  const reachableSemantic = beforeFirstUnconditionalReturn(semantic);
+  const reachableExecutable = beforeFirstUnconditionalReturn(executable);
+  assertNoUnreachableProofScaffolding(signature, executable);
   if (/\bexecute\b/i.test(executable)) {
     throw new Error(
       `dynamic SQL is forbidden in owner writer: ${signature.schema}.${signature.function_name}`,
@@ -1093,12 +1212,17 @@ function assertFunctionEffectsInDefinition(
   }
   for (const effect of signature.effects) {
     const verbs = [...allowedMutationVerbs(effect.operation)];
-    if (!mutationPattern(contract.schema, effect.table_name, verbs).test(executable)) {
+    if (!mutationPattern(contract.schema, effect.table_name, verbs).test(reachableExecutable)) {
       throw new Error(
         `PostgreSQL function effect drift: ${signature.schema}.${signature.function_name} does not ${effect.operation} ${effect.table_name}`,
       );
     }
-    assertConcurrencyFenceIsConsumed(signature, effect, executable, semantic);
+    assertConcurrencyFenceIsConsumed(
+      signature,
+      effect,
+      reachableExecutable,
+      reachableSemantic,
+    );
   }
   const declaredTables = new Set<string>(signature.writes_tables);
   const mutationTargetPattern =
@@ -1424,6 +1548,45 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     );
   }
 
+  const unsupportedRelationResult = await postgres.query<{
+    relation_name: string;
+    relkind: string;
+  }>(
+    `SELECT c.relname AS relation_name, c.relkind::text AS relkind
+       FROM pg_catalog.pg_class c
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1 AND c.relkind IN ('v','m','f')
+      ORDER BY c.relname`,
+    [contract.schema],
+  );
+  if (unsupportedRelationResult.rows.length > 0) {
+    throw new Error(
+      `unsupported PostgreSQL relation kind drift for ${contract.schema}: ${unsupportedRelationResult.rows
+        .map(({ relation_name, relkind }) => `${relation_name}:${relkind}`)
+        .join(", ")}`,
+    );
+  }
+
+  const rewriteRuleResult = await postgres.query<{
+    relation_name: string;
+    rule_name: string;
+  }>(
+    `SELECT c.relname AS relation_name, r.rulename AS rule_name
+       FROM pg_catalog.pg_rewrite r
+       JOIN pg_catalog.pg_class c ON c.oid = r.ev_class
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1 AND r.rulename <> '_RETURN'
+      ORDER BY c.relname, r.rulename`,
+    [contract.schema],
+  );
+  if (rewriteRuleResult.rows.length > 0) {
+    throw new Error(
+      `unsupported PostgreSQL rewrite rule drift for ${contract.schema}: ${rewriteRuleResult.rows
+        .map(({ relation_name, rule_name }) => `${relation_name}.${rule_name}`)
+        .join(", ")}`,
+    );
+  }
+
   const tableOwnerResult = await postgres.query<{
     table_name: string;
     table_owner: string;
@@ -1454,11 +1617,26 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
   const columnResult = await postgres.query<{
     table_name: string;
     column_name: string;
+    postgres_type: string;
+    not_null: boolean;
+    default_expression: string | null;
+    identity: OwnerDatabaseColumnV1["identity"];
+    generated: OwnerDatabaseColumnV1["generated"];
   }>(
-    `SELECT c.relname AS table_name, a.attname AS column_name
+    `SELECT c.relname AS table_name, a.attname AS column_name,
+            pg_catalog.format_type(a.atttypid, a.atttypmod) AS postgres_type,
+            a.attnotnull AS not_null,
+            pg_catalog.pg_get_expr(d.adbin, d.adrelid) AS default_expression,
+            CASE a.attidentity WHEN 'a' THEN 'always'
+                               WHEN 'd' THEN 'by_default'
+                               ELSE '' END AS identity,
+            CASE a.attgenerated WHEN 's' THEN 'stored'
+                                ELSE '' END AS generated
        FROM pg_catalog.pg_class c
        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
        JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+       LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid
+        AND d.adnum = a.attnum
       WHERE n.nspname = $1 AND c.relkind IN ('r','p')
         AND a.attnum > 0 AND NOT a.attisdropped
       ORDER BY c.relname, a.attnum`,
@@ -1485,6 +1663,17 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
         throw new Error(`PostgreSQL column missing: ${permission.table_name}.${column}`);
       }
     }
+  }
+  const columnSnapshot = (
+    row: OwnerDatabaseColumnV1 | (typeof columnResult.rows)[number],
+  ): string =>
+    `${row.table_name}.${row.column_name}:${row.postgres_type}:not_null=${row.not_null}:default=${row.default_expression ?? ""}:identity=${row.identity}:generated=${row.generated}`;
+  if (contract.database_columns !== undefined) {
+    assertSameSet(
+      `${contract.schema} database columns`,
+      columnResult.rows.map(columnSnapshot),
+      contract.database_columns.map(columnSnapshot),
+    );
   }
 
   const tableAclResult = await postgres.query<{
@@ -1814,6 +2003,45 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     contract.foreign_keys.map(fkSnapshot),
   );
 
+  const uniqueConstraintResult = await postgres.query<{
+    constraint_name: string;
+    table_name: string;
+    columns: string[];
+    kind: OwnerDatabaseUniqueConstraintV1["kind"];
+    deferrable: boolean;
+    initially_deferred: boolean;
+    validated: boolean;
+  }>(
+    `SELECT con.conname AS constraint_name, c.relname AS table_name,
+            ARRAY(SELECT a.attname::text FROM unnest(con.conkey) WITH ORDINALITY k(attnum, ord)
+                    JOIN pg_catalog.pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum
+                   ORDER BY k.ord)::text[] AS columns,
+            CASE con.contype WHEN 'p' THEN 'primary_key'
+                             WHEN 'u' THEN 'unique' END AS kind,
+            con.condeferrable AS deferrable,
+            con.condeferred AS initially_deferred,
+            con.convalidated AS validated
+       FROM pg_catalog.pg_constraint con
+       JOIN pg_catalog.pg_class c ON c.oid = con.conrelid
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1 AND con.contype IN ('p','u')
+      ORDER BY c.relname, con.conname`,
+    [contract.schema],
+  );
+  const uniqueSnapshot = (
+    row:
+      | OwnerDatabaseUniqueConstraintV1
+      | (typeof uniqueConstraintResult.rows)[number],
+  ): string =>
+    `${row.constraint_name}:${row.table_name}(${row.columns.join(",")}):kind=${row.kind}:deferrable=${row.deferrable}:initially_deferred=${row.initially_deferred}:validated=${row.validated}`;
+  if (contract.database_unique_constraints !== undefined) {
+    assertSameSet(
+      `${contract.schema} unique constraints`,
+      uniqueConstraintResult.rows.map(uniqueSnapshot),
+      contract.database_unique_constraints.map(uniqueSnapshot),
+    );
+  }
+
   const checkConstraintResult = await postgres.query<{
     constraint_name: string;
     table_name: string;
@@ -1854,6 +2082,8 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     runtime_identity: runtimeIdentityResult.rows,
     runtime_membership: runtimeMembershipResult.rows,
     runtime_membership_options: runtimeMembershipOptionsResult.rows,
+    unsupported_relations: unsupportedRelationResult.rows,
+    rewrite_rules: rewriteRuleResult.rows,
     table_acl: tableAclResult.rows,
     column_acl: columnAclResult.rows,
     runtime_column_privileges: runtimeColumnPrivilegeResult.rows,
@@ -1864,6 +2094,7 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     schema_acl: schemaAclResult.rows,
     runtime_schema_privileges: runtimeSchemaPrivilegeResult.rows,
     foreign_keys: foreignKeyResult.rows,
+    unique_constraints: uniqueConstraintResult.rows,
     check_constraints: checkConstraintResult.rows,
   });
   return Object.freeze({
@@ -2065,6 +2296,19 @@ function isSerializationFailure(error: unknown): boolean {
   );
 }
 
+export class OwnerRepositoryTransientErrorV1 extends Error {
+  public constructor(
+    public readonly code:
+      | "serialization_retry_exhausted"
+      | "transient_database_error",
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "OwnerRepositoryTransientErrorV1";
+  }
+}
+
 /**
  * The only generic execution adapter for owner writers. It cannot be created
  * without the live PostgreSQL-derived deployment capability, and every call is
@@ -2201,7 +2445,14 @@ export function createVerifiedOwnerPostgresRepositoryV1<
           return result;
         } catch (error) {
           await client.query("ROLLBACK").catch(() => undefined);
-          if (attempt === maxAttempts || !isSerializationFailure(error)) {
+          if (isSerializationFailure(error) && attempt === maxAttempts) {
+            throw new OwnerRepositoryTransientErrorV1(
+              "serialization_retry_exhausted",
+              `owner unit of work exhausted serialization retries for ${request.operation}`,
+              { cause: error },
+            );
+          }
+          if (!isSerializationFailure(error)) {
             throw error;
           }
         } finally {

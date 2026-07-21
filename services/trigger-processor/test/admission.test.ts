@@ -1,5 +1,8 @@
+import { createHash } from "node:crypto";
+
 import type { VerifiedWorkloadCredential } from "@pai/auth";
 import { TriggerAdmissionDecisionV1Schema } from "@pai/contracts";
+import { OwnerRepositoryTransientErrorV1 } from "@pai/persistence";
 import { Value } from "@sinclair/typebox/value";
 import { describe, expect, it } from "vitest";
 
@@ -29,6 +32,37 @@ const base = {
   foreground_slot_process_id: null,
   foreground_slot_generation: 7,
 };
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  if (value !== null && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function commandHash(command: Readonly<Record<string, unknown>>): string {
+  return `sha256:${createHash("sha256")
+    .update(
+      canonicalJson({
+        dedupe_key: command.dedupe_key,
+        explicit_interrupt: command.explicit_interrupt,
+        idempotency_key: command.idempotency_key,
+        is_catch_up: command.is_catch_up,
+        payload: command.payload,
+        process_id: command.process_id,
+        scope: command.scope,
+        source: command.source,
+        trigger_id: command.trigger_id,
+      }),
+    )
+    .digest("hex")}`;
+}
 
 describe("Trigger admission", () => {
   it("calculates priority from source and actor instead of accepting caller priority", () => {
@@ -397,7 +431,7 @@ describe("Trigger admission", () => {
       },
       protectedHeader: { alg: "EdDSA", kid: "workload-key-1", typ: "JWT" },
     } as const satisfies VerifiedWorkloadCredential;
-    const command = {
+    const commandWithoutHash = {
       trigger_id: "trigger-1",
       process_id: "process-1",
       scope: {
@@ -411,11 +445,14 @@ describe("Trigger admission", () => {
       source: "chat",
       payload: { text: "hello" },
       dedupe_key: "dedupe-1",
-      request_hash: "request-hash-1",
       idempotency_key: "submit-1",
       trace_id: "trace-1",
       is_catch_up: false,
       explicit_interrupt: false,
+    } as const;
+    const command = {
+      ...commandWithoutHash,
+      request_hash: commandHash(commandWithoutHash),
     } as const;
     await expect(
       application.admit(credential, command),
@@ -434,7 +471,13 @@ describe("Trigger admission", () => {
       arguments: expect.objectContaining({
         p_trigger_id: "trigger-1",
         p_process_id: "process-1",
+        p_request_hash: command.request_hash,
         p_actor: { actor_type: "user", actor_id: "user-1" },
+        p_admission_request: {
+          is_catch_up: false,
+          explicit_interrupt: false,
+          requested_explicit_interrupt: false,
+        },
         p_authenticated_context: {
           workload_subject: "observation_gateway",
           credential_jti: "credential-1",
@@ -457,6 +500,97 @@ describe("Trigger admission", () => {
     await expect(
       application.admit(credential, { ...command, actor: { actor_id: "attacker" } }),
     ).rejects.toThrow("AdmitTriggerCommandV1");
+    await expect(
+      application.admit(credential, {
+        ...command,
+        payload: { text: "changed" },
+      }),
+    ).rejects.toThrow("request_hash");
+    await expect(
+      application.admit(credential, {
+        ...command,
+        request_hash: commandHash({
+          ...commandWithoutHash,
+          explicit_interrupt: true,
+        }),
+        explicit_interrupt: true,
+      }),
+    ).rejects.toThrow("explicit interrupt");
+    const developerCredential = {
+      ...credential,
+      claims: {
+        ...credential.claims,
+        delegated_principal: {
+          ...credential.claims.delegated_principal,
+          principal_type: "developer",
+          principal_id: "developer-1",
+          roles: ["developer"],
+          source_subject: "developer-1",
+        },
+      },
+    } as const satisfies VerifiedWorkloadCredential;
+    await expect(
+      application.admit(developerCredential, {
+        ...command,
+        request_hash: commandHash({
+          ...commandWithoutHash,
+          explicit_interrupt: true,
+        }),
+        explicit_interrupt: true,
+      }),
+    ).rejects.toThrow("explicit interrupt");
+    const notificationCommandWithoutHash = {
+      ...commandWithoutHash,
+      source: "notification",
+    } as const;
+    const notificationCredential = {
+      ...credential,
+      claims: {
+        ...credential.claims,
+        capability: ["trigger.submit.notification"],
+      },
+    } as const satisfies VerifiedWorkloadCredential;
+    await expect(
+      application.admit(notificationCredential, {
+        ...notificationCommandWithoutHash,
+        request_hash: commandHash({
+          ...notificationCommandWithoutHash,
+          explicit_interrupt: true,
+        }),
+        explicit_interrupt: true,
+      }),
+    ).rejects.toThrow("explicit interrupt");
+
+    const superUserCredential = {
+      ...credential,
+      claims: {
+        ...credential.claims,
+        capability: ["trigger.submit.chat", "trigger.interrupt"],
+        delegated_principal: {
+          ...credential.claims.delegated_principal,
+          roles: ["super_user"],
+        },
+      },
+    } as const satisfies VerifiedWorkloadCredential;
+    await expect(
+      application.admit(superUserCredential, {
+        ...command,
+        request_hash: commandHash({
+          ...commandWithoutHash,
+          explicit_interrupt: true,
+        }),
+        explicit_interrupt: true,
+      }),
+    ).resolves.toMatchObject({ code: "trigger_accepted" });
+    expect(calls.at(-1)?.writer).toMatchObject({
+      arguments: expect.objectContaining({
+        p_admission_request: {
+          is_catch_up: false,
+          explicit_interrupt: true,
+          requested_explicit_interrupt: true,
+        },
+      }),
+    });
 
     const app = buildTriggerProcessorApp({ logger: false }, application);
     expect(app.hasDecorator("ownerDatabase")).toBe(false);
@@ -527,5 +661,38 @@ describe("Trigger admission", () => {
       trace_id: invalidBody.headers["x-trace-id"],
     });
     await routedApp.close();
+
+    const transientApp = buildTriggerProcessorApp(
+      {
+        logger: false,
+        auth: {
+          verifier: {
+            async verify() {
+              return credential;
+            },
+          },
+        },
+      },
+      {
+        async admit() {
+          throw new OwnerRepositoryTransientErrorV1(
+            "serialization_retry_exhausted",
+            "owner unit of work exhausted serialization retries for admit_trigger",
+          );
+        },
+      },
+    );
+    const transient = await transientApp.inject({
+      method: "POST",
+      url: "/internal/v1/triggers/admit/chat",
+      headers: { authorization: "Bearer aaa.bbb.ccc" },
+      payload: routeBody,
+    });
+    expect(transient.statusCode).toBe(503);
+    expect(JSON.parse(transient.payload)).toMatchObject({
+      code: "serialization_retry_exhausted",
+      retryable: true,
+    });
+    await transientApp.close();
   });
 });

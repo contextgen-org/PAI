@@ -211,11 +211,20 @@ export interface SupabaseStorageAdapterOptionsV1 {
   readonly policies: readonly ObjectClassPolicyV1[];
   readonly now?: () => Date;
   readonly fetch?: typeof fetch;
+  readonly allowVolatileMetadataRepositoryForTests?: boolean;
 }
 
 /** The only production ObjectStore adapter allowed by the parent contract. */
 export class SupabaseStorageAdapter extends ObjectStoreAdapterCoreV1 {
   public constructor(options: SupabaseStorageAdapterOptionsV1) {
+    if (
+      options.metadataRepository.durability !== "transactional_postgres" &&
+      options.allowVolatileMetadataRepositoryForTests !== true
+    ) {
+      throw new Error(
+        "SupabaseStorageAdapter requires a transactional Postgres metadata repository",
+      );
+    }
     const client = createClient(options.url, options.secretKey, {
       auth: {
         persistSession: false,

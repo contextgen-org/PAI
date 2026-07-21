@@ -4,8 +4,2038 @@
     "title": "PAI Shared Contracts",
     "version": "1.0.0"
   },
-  "paths": {},
+  "paths": {
+    "/internal/v1/triggers/admit/chat": {
+      "post": {
+        "operationId": "admitTriggerFromChatV1",
+        "tags": [
+          "trigger_processor"
+        ],
+        "summary": "Admit a chat trigger",
+        "description": "Route injects source=chat; callers must be observation_gateway with trigger.submit.chat.",
+        "security": [
+          {
+            "PaiWorkloadJwt": [
+              "trigger.submit.chat"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$id": "urn:pai:trigger-processor:admit-trigger-request-body:v1",
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "trigger_id",
+                  "process_id",
+                  "scope",
+                  "payload",
+                  "dedupe_key",
+                  "request_hash",
+                  "idempotency_key",
+                  "is_catch_up",
+                  "explicit_interrupt"
+                ],
+                "properties": {
+                  "trigger_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "process_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "scope": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "scope_kind",
+                      "workspace_id",
+                      "bot_id",
+                      "owner_agent_id",
+                      "deployment_environment",
+                      "release_channel"
+                    ],
+                    "properties": {
+                      "scope_kind": {
+                        "const": "bot",
+                        "type": "string"
+                      },
+                      "workspace_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "bot_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "owner_agent_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "deployment_environment": {
+                        "$id": "urn:pai:shared:deployment-environment:v1",
+                        "anyOf": [
+                          {
+                            "const": "local",
+                            "type": "string"
+                          },
+                          {
+                            "const": "dev",
+                            "type": "string"
+                          },
+                          {
+                            "const": "staging",
+                            "type": "string"
+                          },
+                          {
+                            "const": "prod",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "release_channel": {
+                        "$id": "urn:pai:shared:release-channel:v1",
+                        "anyOf": [
+                          {
+                            "const": "stable",
+                            "type": "string"
+                          },
+                          {
+                            "const": "canary",
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "payload": {
+                    "type": "object",
+                    "patternProperties": {
+                      "^(.*)$": {}
+                    }
+                  },
+                  "dedupe_key": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "request_hash": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "is_catch_up": {
+                    "type": "boolean"
+                  },
+                  "explicit_interrupt": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Admission decision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/triggers/admit/notification": {
+      "post": {
+        "operationId": "admitTriggerFromNotificationV1",
+        "tags": [
+          "trigger_processor"
+        ],
+        "summary": "Admit a notification trigger",
+        "description": "Route injects source=notification; callers must be observation_gateway with trigger.submit.notification.",
+        "security": [
+          {
+            "PaiWorkloadJwt": [
+              "trigger.submit.notification"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$id": "urn:pai:trigger-processor:admit-trigger-request-body:v1",
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "trigger_id",
+                  "process_id",
+                  "scope",
+                  "payload",
+                  "dedupe_key",
+                  "request_hash",
+                  "idempotency_key",
+                  "is_catch_up",
+                  "explicit_interrupt"
+                ],
+                "properties": {
+                  "trigger_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "process_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "scope": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "scope_kind",
+                      "workspace_id",
+                      "bot_id",
+                      "owner_agent_id",
+                      "deployment_environment",
+                      "release_channel"
+                    ],
+                    "properties": {
+                      "scope_kind": {
+                        "const": "bot",
+                        "type": "string"
+                      },
+                      "workspace_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "bot_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "owner_agent_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "deployment_environment": {
+                        "$id": "urn:pai:shared:deployment-environment:v1",
+                        "anyOf": [
+                          {
+                            "const": "local",
+                            "type": "string"
+                          },
+                          {
+                            "const": "dev",
+                            "type": "string"
+                          },
+                          {
+                            "const": "staging",
+                            "type": "string"
+                          },
+                          {
+                            "const": "prod",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "release_channel": {
+                        "$id": "urn:pai:shared:release-channel:v1",
+                        "anyOf": [
+                          {
+                            "const": "stable",
+                            "type": "string"
+                          },
+                          {
+                            "const": "canary",
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "payload": {
+                    "type": "object",
+                    "patternProperties": {
+                      "^(.*)$": {}
+                    }
+                  },
+                  "dedupe_key": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "request_hash": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "is_catch_up": {
+                    "type": "boolean"
+                  },
+                  "explicit_interrupt": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Admission decision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/triggers/admit/timer": {
+      "post": {
+        "operationId": "admitTriggerFromTimerV1",
+        "tags": [
+          "trigger_processor"
+        ],
+        "summary": "Admit a timer trigger",
+        "description": "Route injects source=timer; callers must be timer_trigger_app with trigger.submit.timer.",
+        "security": [
+          {
+            "PaiWorkloadJwt": [
+              "trigger.submit.timer"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$id": "urn:pai:trigger-processor:admit-trigger-request-body:v1",
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "trigger_id",
+                  "process_id",
+                  "scope",
+                  "payload",
+                  "dedupe_key",
+                  "request_hash",
+                  "idempotency_key",
+                  "is_catch_up",
+                  "explicit_interrupt"
+                ],
+                "properties": {
+                  "trigger_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "process_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "scope": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "scope_kind",
+                      "workspace_id",
+                      "bot_id",
+                      "owner_agent_id",
+                      "deployment_environment",
+                      "release_channel"
+                    ],
+                    "properties": {
+                      "scope_kind": {
+                        "const": "bot",
+                        "type": "string"
+                      },
+                      "workspace_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "bot_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "owner_agent_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "deployment_environment": {
+                        "$id": "urn:pai:shared:deployment-environment:v1",
+                        "anyOf": [
+                          {
+                            "const": "local",
+                            "type": "string"
+                          },
+                          {
+                            "const": "dev",
+                            "type": "string"
+                          },
+                          {
+                            "const": "staging",
+                            "type": "string"
+                          },
+                          {
+                            "const": "prod",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "release_channel": {
+                        "$id": "urn:pai:shared:release-channel:v1",
+                        "anyOf": [
+                          {
+                            "const": "stable",
+                            "type": "string"
+                          },
+                          {
+                            "const": "canary",
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "payload": {
+                    "type": "object",
+                    "patternProperties": {
+                      "^(.*)$": {}
+                    }
+                  },
+                  "dedupe_key": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "request_hash": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "is_catch_up": {
+                    "type": "boolean"
+                  },
+                  "explicit_interrupt": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Admission decision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
   "components": {
+    "securitySchemes": {
+      "PaiWorkloadJwt": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
     "schemas": {
       "ResponseEnvelopeV1": {
         "$id": "urn:pai:shared:response-envelope:v1",
@@ -1283,8 +3313,60 @@
         ],
         "properties": {
           "code": {
-            "minLength": 1,
-            "type": "string"
+            "anyOf": [
+              {
+                "const": "trigger_accepted",
+                "type": "string"
+              },
+              {
+                "const": "trigger_rejected",
+                "type": "string"
+              },
+              {
+                "const": "invalid_request",
+                "type": "string"
+              },
+              {
+                "const": "unauthenticated",
+                "type": "string"
+              },
+              {
+                "const": "authorization_denied",
+                "type": "string"
+              },
+              {
+                "const": "capability_denied",
+                "type": "string"
+              },
+              {
+                "const": "authorization_scope_mismatch",
+                "type": "string"
+              },
+              {
+                "const": "idempotency_conflict",
+                "type": "string"
+              },
+              {
+                "const": "stale_admission_fence",
+                "type": "string"
+              },
+              {
+                "const": "serialization_retry_exhausted",
+                "type": "string"
+              },
+              {
+                "const": "transient_database_error",
+                "type": "string"
+              },
+              {
+                "const": "service_unavailable",
+                "type": "string"
+              },
+              {
+                "const": "internal_error",
+                "type": "string"
+              }
+            ]
           },
           "message": {
             "minLength": 1,

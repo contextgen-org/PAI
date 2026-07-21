@@ -81,7 +81,21 @@ export type AdmitTriggerCommandV1 = Static<typeof AdmitTriggerCommandV1Schema>;
 
 export const AdmitTriggerResponseV1Schema = Type.Object(
   {
-    code: Type.String({ minLength: 1 }),
+    code: Type.Union([
+      Type.Literal("trigger_accepted"),
+      Type.Literal("trigger_rejected"),
+      Type.Literal("invalid_request"),
+      Type.Literal("unauthenticated"),
+      Type.Literal("authorization_denied"),
+      Type.Literal("capability_denied"),
+      Type.Literal("authorization_scope_mismatch"),
+      Type.Literal("idempotency_conflict"),
+      Type.Literal("stale_admission_fence"),
+      Type.Literal("serialization_retry_exhausted"),
+      Type.Literal("transient_database_error"),
+      Type.Literal("service_unavailable"),
+      Type.Literal("internal_error"),
+    ]),
     message: Type.String({ minLength: 1 }),
     retryable: Type.Boolean(),
     details: Type.Unknown(),

@@ -96,6 +96,118 @@ const POSTGRES_CONTRACT = defineOwnerRepositoryContractV1({
       validated: true,
     },
   ],
+  database_columns: [
+    {
+      table_name: "contract_parents",
+      column_name: "parent_key",
+      postgres_type: "text",
+      not_null: true,
+      default_expression: null,
+      identity: "",
+      generated: "",
+    },
+    {
+      table_name: "contract_parents",
+      column_name: "parent_version",
+      postgres_type: "bigint",
+      not_null: true,
+      default_expression: null,
+      identity: "",
+      generated: "",
+    },
+    {
+      table_name: "contract_children",
+      column_name: "child_id",
+      postgres_type: "text",
+      not_null: true,
+      default_expression: null,
+      identity: "",
+      generated: "",
+    },
+    {
+      table_name: "contract_children",
+      column_name: "parent_key",
+      postgres_type: "text",
+      not_null: true,
+      default_expression: null,
+      identity: "",
+      generated: "",
+    },
+    {
+      table_name: "contract_children",
+      column_name: "parent_version",
+      postgres_type: "bigint",
+      not_null: true,
+      default_expression: null,
+      identity: "",
+      generated: "",
+    },
+    {
+      table_name: "contract_children",
+      column_name: "payload",
+      postgres_type: "jsonb",
+      not_null: true,
+      default_expression: null,
+      identity: "",
+      generated: "",
+    },
+    {
+      table_name: "contract_audits",
+      column_name: "audit_id",
+      postgres_type: "text",
+      not_null: true,
+      default_expression: null,
+      identity: "",
+      generated: "",
+    },
+    {
+      table_name: "contract_audits",
+      column_name: "child_id",
+      postgres_type: "text",
+      not_null: true,
+      default_expression: null,
+      identity: "",
+      generated: "",
+    },
+    {
+      table_name: "contract_audits",
+      column_name: "created_at",
+      postgres_type: "timestamp with time zone",
+      not_null: true,
+      default_expression: null,
+      identity: "",
+      generated: "",
+    },
+  ],
+  database_unique_constraints: [
+    {
+      constraint_name: "contract_audits_pkey",
+      table_name: "contract_audits",
+      columns: ["audit_id"],
+      kind: "primary_key",
+      deferrable: false,
+      initially_deferred: false,
+      validated: true,
+    },
+    {
+      constraint_name: "contract_children_pkey",
+      table_name: "contract_children",
+      columns: ["child_id"],
+      kind: "primary_key",
+      deferrable: false,
+      initially_deferred: false,
+      validated: true,
+    },
+    {
+      constraint_name: "contract_parents_pkey",
+      table_name: "contract_parents",
+      columns: ["parent_key", "parent_version"],
+      kind: "primary_key",
+      deferrable: false,
+      initially_deferred: false,
+      validated: true,
+    },
+  ],
   append_only_tables: ["contract_audits"],
   outbox_tables: [],
   inbox_tables: [],
@@ -203,6 +315,8 @@ GRANT EXECUTE ON FUNCTION timer.write_contract_child_v1(text, bigint, text, json
 
 function replacementWriterSql(options: Readonly<{
   expectedVersionCheck?: string;
+  extraDeclare?: string;
+  beforeExpectedVersionCheck?: string;
   extraStatement?: string;
 }> = {}): string {
   return `CREATE OR REPLACE FUNCTION timer.write_contract_child_v1(
@@ -218,12 +332,14 @@ function replacementWriterSql(options: Readonly<{
   DECLARE
     current_version bigint;
     next_version bigint;
+    ${options.extraDeclare ?? ""}
   BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended(p_parent_key, 0));
     SELECT parent_version INTO current_version
       FROM timer.contract_parents WHERE parent_key = p_parent_key
       ORDER BY parent_version DESC LIMIT 1 FOR UPDATE;
     current_version := COALESCE(current_version, 0);
+    ${options.beforeExpectedVersionCheck ?? ""}
     IF ${options.expectedVersionCheck ?? "current_version <> p_expected_parent_version"} THEN
       RAISE EXCEPTION 'stale parent version';
     END IF;
@@ -338,6 +454,25 @@ describePostgres("PostgreSQL owner deployment verification", () => {
     ["PUBLIC execute", "GRANT EXECUTE ON FUNCTION timer.write_contract_child_v1(text, bigint, text, jsonb) TO PUBLIC"],
     ["wrong search_path", "ALTER FUNCTION timer.write_contract_child_v1(text, bigint, text, jsonb) SET search_path = public"],
     ["missing composite FK", "ALTER TABLE timer.contract_children DROP CONSTRAINT contract_children_parent_fk"],
+    [
+      "updatable view with app-role DML",
+      `CREATE VIEW timer.direct_contract_child_write AS
+       SELECT * FROM timer.contract_children;
+       GRANT SELECT, INSERT, UPDATE, DELETE
+       ON timer.direct_contract_child_write TO pai_timer_app`,
+    ],
+    [
+      "missing primary-key uniqueness",
+      "ALTER TABLE timer.contract_audits DROP CONSTRAINT contract_audits_pkey",
+    ],
+    [
+      "column nullability drift",
+      "ALTER TABLE timer.contract_audits ALTER COLUMN created_at DROP NOT NULL",
+    ],
+    [
+      "column default drift",
+      "ALTER TABLE timer.contract_children ALTER COLUMN payload SET DEFAULT '{}'::jsonb",
+    ],
     ["undeclared column", "ALTER TABLE timer.contract_children ADD COLUMN attacker_note text"],
     [
       "foreign-key delete action",
@@ -403,6 +538,48 @@ describePostgres("PostgreSQL owner deployment verification", () => {
         expectedVersionCheck:
           "p_expected_parent_version = p_expected_parent_version",
       }),
+    ],
+    [
+      "expected-version copied into local variable",
+      replacementWriterSql({
+        extraDeclare: "v_copy bigint;",
+        beforeExpectedVersionCheck: "v_copy := p_expected_parent_version;",
+        expectedVersionCheck: "p_expected_parent_version = v_copy",
+      }),
+    ],
+    [
+      "proof hidden behind a constant-false branch",
+      replacementWriterSql({
+        beforeExpectedVersionCheck: `
+          IF 1 = 0 THEN
+            INSERT INTO timer.contract_audits(audit_id, child_id, created_at)
+            VALUES ('unreachable-' || p_child_id, p_child_id, clock_timestamp());
+          END IF;
+        `,
+      }),
+    ],
+    [
+      "declared effects after an unconditional RETURN",
+      `CREATE OR REPLACE FUNCTION timer.write_contract_child_v1(
+         p_parent_key text,
+         p_expected_parent_version bigint,
+         p_child_id text,
+         p_payload jsonb
+       ) RETURNS jsonb
+       LANGUAGE plpgsql
+       SECURITY DEFINER
+       SET search_path = timer, pg_temp
+       AS $body$
+       BEGIN
+         RETURN '{}'::jsonb;
+         INSERT INTO timer.contract_parents(parent_key, parent_version)
+           VALUES (p_parent_key, p_expected_parent_version + 1);
+         INSERT INTO timer.contract_children(child_id, parent_key, parent_version, payload)
+           VALUES (p_child_id, p_parent_key, p_expected_parent_version + 1, p_payload);
+         INSERT INTO timer.contract_audits(audit_id, child_id, created_at)
+           VALUES ('audit-' || p_child_id, p_child_id, clock_timestamp());
+       END;
+       $body$`,
     ],
     [
       "undeclared owner helper side effect",

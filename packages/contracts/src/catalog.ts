@@ -13,6 +13,7 @@ import {
   AdmitTriggerCommandV1Schema,
   AdmitTriggerRequestBodyV1Schema,
   AdmitTriggerResponseV1Schema,
+  type TriggerSourceV1,
   TriggerAdmissionDecisionV1Schema,
   TrustedAdmissionFactsV1Schema,
 } from "./trigger-processor/trigger-admission.v1.js";
@@ -237,3 +238,51 @@ export const TRIGGER_PROCESSOR_SCHEMA_CATALOG = [
     TriggerProcessTransitionEvidenceV1Schema,
   ),
 ] as const satisfies readonly TriggerProcessorSchemaCatalogEntry[];
+
+export interface TriggerProcessorHttpOperationV1 {
+  readonly operation_id: string;
+  readonly method: "post";
+  readonly path: `/internal/v1/triggers/admit/${TriggerSourceV1}`;
+  readonly source: TriggerSourceV1;
+  readonly required_capability: string;
+  readonly allowed_caller: "observation_gateway" | "timer_trigger_app";
+  readonly request_schema_name: "AdmitTriggerRequestBodyV1";
+  readonly response_schema_name: "AdmitTriggerResponseV1";
+  readonly responses: readonly [200, 400, 401, 403, 409, 503];
+}
+
+export const TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1 = [
+  {
+    operation_id: "admitTriggerFromChatV1",
+    method: "post",
+    path: "/internal/v1/triggers/admit/chat",
+    source: "chat",
+    required_capability: "trigger.submit.chat",
+    allowed_caller: "observation_gateway",
+    request_schema_name: "AdmitTriggerRequestBodyV1",
+    response_schema_name: "AdmitTriggerResponseV1",
+    responses: [200, 400, 401, 403, 409, 503],
+  },
+  {
+    operation_id: "admitTriggerFromNotificationV1",
+    method: "post",
+    path: "/internal/v1/triggers/admit/notification",
+    source: "notification",
+    required_capability: "trigger.submit.notification",
+    allowed_caller: "observation_gateway",
+    request_schema_name: "AdmitTriggerRequestBodyV1",
+    response_schema_name: "AdmitTriggerResponseV1",
+    responses: [200, 400, 401, 403, 409, 503],
+  },
+  {
+    operation_id: "admitTriggerFromTimerV1",
+    method: "post",
+    path: "/internal/v1/triggers/admit/timer",
+    source: "timer",
+    required_capability: "trigger.submit.timer",
+    allowed_caller: "timer_trigger_app",
+    request_schema_name: "AdmitTriggerRequestBodyV1",
+    response_schema_name: "AdmitTriggerResponseV1",
+    responses: [200, 400, 401, 403, 409, 503],
+  },
+] as const satisfies readonly TriggerProcessorHttpOperationV1[];

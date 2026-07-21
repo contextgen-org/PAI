@@ -649,13 +649,21 @@ export class ObjectStoreAdapterCoreV1
                 throw headError;
               }
             }
+            await this.#metadata.releaseReconciliation({
+              reservation_id: claim.reservation_id,
+              claim_token: claim.claim_token,
+              last_error:
+                "cleanup retained tombstone because backend has not proven the foreground upload attempt is cancelled",
+              next_retry_at: new Date(
+                now.getTime() + expiredUploadCleanupGraceMs,
+              ),
+            });
+            retryScheduled += 1;
+            continue;
           }
           await this.#metadata.completeReconciliation({
             reservation_id: claim.reservation_id,
             claim_token: claim.claim_token,
-            ...(claim.foreground_upload_may_still_arrive
-              ? { late_upload_terminal_proof: true }
-              : {}),
           });
         }
         completed += 1;
@@ -831,17 +839,19 @@ export class ObjectStoreAdapterCoreV1
           );
           throw integrityFailure;
         } else {
+          const foregroundUploadMayStillArrive =
+            !backendPutCompleted && upload.failure() === undefined;
           await this.#metadata
             .handoffPutReconciliation(
               reservation.reservation_id,
               "put_cleanup",
               reservation.foreground_lease_token,
-              backendPutCompleted
-                ? undefined
-                : new Date(
+              foregroundUploadMayStillArrive
+                ? new Date(
                     this.#now().getTime() + expiredUploadCleanupGraceMs,
-                  ),
-              !backendPutCompleted,
+                  )
+                : undefined,
+              foregroundUploadMayStillArrive,
             )
             .catch(() => undefined);
           fail("storage_unavailable", "integrity cleanup requires reconciliation", true, {

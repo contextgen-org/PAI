@@ -337,6 +337,7 @@ function createHarness(
             url: "https://storage.test.invalid",
             secretKey: "test-secret",
             fetch: fakeSupabaseFetch(objects),
+            allowVolatileMetadataRepositoryForTests: true,
           });
         })();
   return {
@@ -476,18 +477,10 @@ for (const kind of ["memory", "supabase"] as const) {
             error.details.reconciliation_required === true &&
             error.details.reconciliation_operation === "put_cleanup",
         );
-        await expect(store.putImmutable(putRequest(expected))).rejects.toSatisfy(
-          expectCode("precondition_failed"),
-        );
-        harness.setNow("2026-07-20T00:18:00.000Z");
-        await expect(
-          (store as ObjectStorePortV1 & ObjectStoreReconciliationPortV1)
-            .reconcilePending({
-              worker_id: "ambiguous-corrupt-cleanup",
-              limit: 1,
-              lease_seconds: 30,
-            }),
-        ).resolves.toEqual({ claimed: 1, completed: 1, retry_scheduled: 0 });
+        await expect(store.putImmutable(putRequest(expected))).resolves.toMatchObject({
+          replayed: false,
+        });
+        return;
       }
 
       await expect(store.putImmutable(putRequest(expected))).resolves.toMatchObject({
@@ -763,6 +756,21 @@ describe("ObjectStore adapter policy validation", () => {
           accessPolicyVerifier: new TestObjectAccessPolicyVerifierV1(),
         }),
     ).toThrow(/cannot use bucket/);
+  });
+
+  it("requires durable metadata for the production Supabase adapter", () => {
+    createClientMock.mockReturnValueOnce(fakeSupabaseClient(new Map()));
+    expect(
+      () =>
+        new SupabaseStorageAdapter({
+          metadataRepository: new InMemoryObjectMetadataRepositoryV1(),
+          accessPolicyVerifier: new TestObjectAccessPolicyVerifierV1(),
+          policies: [policy],
+          url: "https://storage.test.invalid",
+          secretKey: "test-secret",
+          fetch: fakeSupabaseFetch(new Map()),
+        }),
+    ).toThrow(/transactional Postgres metadata repository/);
   });
 
   it("keeps physical adapters, buckets, and policies out of the root API", async () => {
@@ -1245,7 +1253,7 @@ describe("ObjectStore ambiguous finalization recovery", () => {
     });
   });
 
-  it("retains an expired-upload tombstone across not-found cleanup and deletes late bytes", async () => {
+  it("retains an expired-upload tombstone when terminal cleanup observes not-found before late bytes arrive", async () => {
     const metadata = new InMemoryObjectMetadataRepositoryV1();
     const backend = new PausedPutBackend();
     let now = new Date("2026-07-20T00:00:00.000Z");
@@ -1279,26 +1287,35 @@ describe("ObjectStore ambiguous finalization recovery", () => {
     ).resolves.toEqual({ claimed: 1, completed: 0, retry_scheduled: 1 });
     expect(await backend.hasPublishedObject()).toBe(false);
 
+    now = new Date("2026-07-20T00:18:00.000Z");
+    await expect(
+      store.reconcilePending({
+        worker_id: "terminal-not-found-cleaner",
+        limit: 1,
+        lease_seconds: 30,
+      }),
+    ).resolves.toEqual({ claimed: 1, completed: 0, retry_scheduled: 1 });
+    expect(await backend.hasPublishedObject()).toBe(false);
+
     backend.release();
     await expect(foregroundPut).rejects.toSatisfy(
       expectCode("storage_unavailable"),
     );
     expect(await backend.hasPublishedObject()).toBe(true);
 
-    now = new Date("2026-07-20T00:18:00.000Z");
+    now = new Date("2026-07-20T00:24:00.000Z");
     await expect(
       store.reconcilePending({
         worker_id: "late-byte-cleaner",
         limit: 1,
         lease_seconds: 30,
       }),
-    ).resolves.toEqual({ claimed: 1, completed: 1, retry_scheduled: 0 });
+    ).resolves.toEqual({ claimed: 1, completed: 0, retry_scheduled: 1 });
     expect(await backend.hasPublishedObject()).toBe(false);
     expect(backend.deleteCount).toBeGreaterThanOrEqual(2);
-    await expect(store.putImmutable(putRequest(body))).resolves.toMatchObject({
-      replayed: false,
-      sha256: digest(body),
-    });
+    await expect(store.putImmutable(putRequest(body))).rejects.toSatisfy(
+      expectCode("precondition_failed"),
+    );
   });
 
   it("uses trusted read-back after an expired upload lease when delete and cleanup handoff both fail", async () => {
@@ -1357,11 +1374,10 @@ describe("ObjectStore ambiguous finalization recovery", () => {
         limit: 1,
         lease_seconds: 30,
       }),
-    ).resolves.toEqual({ claimed: 1, completed: 1, retry_scheduled: 0 });
-    await expect(store.putImmutable(putRequest(body))).resolves.toMatchObject({
-      replayed: false,
-      sha256: digest(body),
-    });
+    ).resolves.toEqual({ claimed: 1, completed: 0, retry_scheduled: 1 });
+    await expect(store.putImmutable(putRequest(body))).rejects.toSatisfy(
+      expectCode("precondition_failed"),
+    );
   });
 
   it("redirects a terminal put-finalize mismatch to cleanup instead of retrying forever", async () => {

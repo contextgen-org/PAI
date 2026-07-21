@@ -140,7 +140,6 @@ export interface CompleteObjectReconciliationInputV1 {
   readonly reservation_id: string;
   readonly claim_token: string;
   readonly version?: string;
-  readonly late_upload_terminal_proof?: boolean;
 }
 
 export interface ReleaseObjectReconciliationInputV1 {
@@ -163,6 +162,7 @@ export interface RedirectObjectReconciliationInputV1 {
  * transition atomic and never persist a bucket, physical key, or signed URL.
  */
 export interface ObjectMetadataRepositoryV1 {
+  readonly durability: "volatile_test" | "transactional_postgres";
   reservePut(input: ReservePutInputV1): Promise<ReservePutResultV1>;
   renewPutForegroundLease(input: RenewPutForegroundLeaseInputV1): Promise<void>;
   completePut(input: CompletePutInputV1): Promise<ObjectMetadataRecordV1>;
@@ -236,6 +236,8 @@ function putIdentity(input: ReservePutInputV1): string {
 export class InMemoryObjectMetadataRepositoryV1
   implements ObjectMetadataRepositoryV1
 {
+  public readonly durability = "volatile_test" as const;
+
   readonly #records = new Map<ObjectRefV1, ObjectMetadataRecordV1>();
   readonly #identityToRef = new Map<string, ObjectRefV1>();
   readonly #pendingPuts = new Map<string, PendingPut>();
@@ -616,10 +618,7 @@ export class InMemoryObjectMetadataRepositoryV1
         throw new Error("stale reconciliation claim");
       }
       if (put.operation === "put_cleanup") {
-        if (
-          put.foregroundUploadMayStillArrive &&
-          input.late_upload_terminal_proof !== true
-        ) {
+        if (put.foregroundUploadMayStillArrive) {
           throw new Error(
             "late-upload cleanup tombstone cannot be completed without backend cancellation proof",
           );

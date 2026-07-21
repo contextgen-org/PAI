@@ -4,6 +4,7 @@ import {
   AdmitTriggerResponseV1Schema,
   type TriggerSourceV1,
 } from "@pai/contracts";
+import { OwnerRepositoryTransientErrorV1 } from "@pai/persistence";
 import {
   createServiceApp,
   getWorkloadAuthContext,
@@ -97,6 +98,22 @@ function admissionError(error: InvalidAdmitTriggerCommandError): ServiceError {
   });
 }
 
+function ownerRepositoryTransientError(
+  error: OwnerRepositoryTransientErrorV1,
+): ServiceError {
+  return new ServiceError({
+    code: error.code,
+    message: "owner repository operation should be retried",
+    statusCode: 503,
+    retryable: true,
+    details: {
+      owner_service: "trigger_processor",
+      reason: error.message,
+    },
+    cause: error,
+  });
+}
+
 export function buildTriggerProcessorApp(
   options: ServiceAppOptions = {},
   triggerAdmission?: TriggerAdmissionApplicationV1,
@@ -123,7 +140,11 @@ export function buildTriggerProcessorApp(
             body: AdmitTriggerRequestBodyV1Schema,
             response: {
               200: AdmitTriggerResponseV1Schema,
-              202: AdmitTriggerResponseV1Schema,
+              400: AdmitTriggerResponseV1Schema,
+              401: AdmitTriggerResponseV1Schema,
+              403: AdmitTriggerResponseV1Schema,
+              409: AdmitTriggerResponseV1Schema,
+              503: AdmitTriggerResponseV1Schema,
             },
           },
         },
@@ -136,6 +157,9 @@ export function buildTriggerProcessorApp(
           } catch (error) {
             if (error instanceof InvalidAdmitTriggerCommandError) {
               throw admissionError(error);
+            }
+            if (error instanceof OwnerRepositoryTransientErrorV1) {
+              throw ownerRepositoryTransientError(error);
             }
             throw error;
           }

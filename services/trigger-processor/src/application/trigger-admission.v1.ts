@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   matchesAuthorizationScope,
   type BotAuthorizationScopeV1,
@@ -5,7 +7,9 @@ import {
 } from "@pai/auth";
 import {
   AdmitTriggerCommandV1Schema,
+  AdmitTriggerResponseV1Schema,
   type AdmitTriggerCommandV1,
+  type AdmitTriggerResponseV1,
   type TriggerActorTypeV1,
   type TriggerSourceV1,
 } from "@pai/contracts";
@@ -77,10 +81,59 @@ function authenticatedActor(
 }
 
 export interface TriggerAdmissionApplicationV1 {
-  admit<TResult>(
+  admit(
     credential: VerifiedWorkloadCredential,
     command: unknown,
-  ): Promise<TResult>;
+  ): Promise<AdmitTriggerResponseV1>;
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  if (value !== null && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function canonicalAdmissionRequestHash(command: AdmitTriggerCommandV1): string {
+  return `sha256:${createHash("sha256")
+    .update(
+      canonicalJson({
+        dedupe_key: command.dedupe_key,
+        explicit_interrupt: command.explicit_interrupt,
+        idempotency_key: command.idempotency_key,
+        is_catch_up: command.is_catch_up,
+        payload: command.payload,
+        process_id: command.process_id,
+        scope: command.scope,
+        source: command.source,
+        trigger_id: command.trigger_id,
+      }),
+    )
+    .digest("hex")}`;
+}
+
+function trustedExplicitInterrupt(
+  credential: VerifiedWorkloadCredential,
+  actor: Readonly<{ actor_type: TriggerActorTypeV1 }>,
+  requested: boolean,
+): boolean {
+  if (!requested) return false;
+  if (
+    credential.claims.capability.includes("trigger.interrupt") &&
+    actor.actor_type === "super_user"
+  ) {
+    return true;
+  }
+  throw new InvalidAdmitTriggerCommandError(
+    "explicit interrupt requires trigger.interrupt and super_user delegation",
+    "authorization_denied",
+  );
 }
 
 /**
@@ -93,10 +146,10 @@ export function createTriggerAdmissionApplicationV1(
   database: TriggerProcessorOwnerDatabaseV1,
 ): TriggerAdmissionApplicationV1 {
   return Object.freeze({
-    async admit<TResult>(
+    async admit(
       credential: VerifiedWorkloadCredential,
       commandValue: unknown,
-    ): Promise<TResult> {
+    ): Promise<AdmitTriggerResponseV1> {
       if (!Value.Check(AdmitTriggerCommandV1Schema, commandValue)) {
         throw new InvalidAdmitTriggerCommandError(
           "admission command violates AdmitTriggerCommandV1",
@@ -118,6 +171,17 @@ export function createTriggerAdmissionApplicationV1(
       }
       const actor = authenticatedActor(credential, command.source);
       const requiredCapability = capabilityBySource[command.source];
+      const trustedInterrupt = trustedExplicitInterrupt(
+        credential,
+        actor,
+        command.explicit_interrupt,
+      );
+      const requestHash = canonicalAdmissionRequestHash(command);
+      if (command.request_hash !== requestHash) {
+        throw new InvalidAdmitTriggerCommandError(
+          "request_hash does not match the canonical route-injected admission request",
+        );
+      }
       return database.unit_of_work.withTransaction(
         {
           operation: "admit_trigger",
@@ -126,8 +190,11 @@ export function createTriggerAdmissionApplicationV1(
           isolation: "serializable",
           retry: "serialization_failures",
         },
-        async (transaction, { owner }) =>
-          owner.executeWriter<TResult, "admit_trigger_v1">(transaction, {
+        async (transaction, { owner }) => {
+          const result = await owner.executeWriter<
+            AdmitTriggerResponseV1,
+            "admit_trigger_v1"
+          >(transaction, {
             writer: "admit_trigger_v1",
             arguments: {
               p_trigger_id: command.trigger_id,
@@ -137,7 +204,7 @@ export function createTriggerAdmissionApplicationV1(
               p_actor: actor,
               p_payload: command.payload,
               p_dedupe_key: command.dedupe_key,
-              p_request_hash: command.request_hash,
+              p_request_hash: requestHash,
               p_authenticated_context: {
                 workload_subject: credential.claims.sub,
                 credential_jti: credential.claims.jti,
@@ -148,13 +215,21 @@ export function createTriggerAdmissionApplicationV1(
               },
               p_admission_request: {
                 is_catch_up: command.is_catch_up,
-                explicit_interrupt: command.explicit_interrupt,
+                explicit_interrupt: trustedInterrupt,
+                requested_explicit_interrupt: command.explicit_interrupt,
               },
               p_idempotency_key: command.idempotency_key,
               p_trace_id: command.trace_id,
             },
             expected_rows: 1,
-          }),
+          });
+          if (!Value.Check(AdmitTriggerResponseV1Schema, result)) {
+            throw new InvalidAdmitTriggerCommandError(
+              "admit_trigger_v1 returned a non-canonical response",
+            );
+          }
+          return result;
+        },
       );
     },
   });

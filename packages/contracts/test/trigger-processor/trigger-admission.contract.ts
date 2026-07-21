@@ -5,6 +5,7 @@ import {
   AdmitTriggerCommandV1Schema,
   AdmitTriggerRequestBodyV1Schema,
   AdmitTriggerResponseV1Schema,
+  TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1,
   TriggerAdmissionDecisionV1Schema,
   TrustedAdmissionFactsV1Schema,
 } from "../../src/index.js";
@@ -76,6 +77,44 @@ describe("TriggerAdmissionDecisionV1", () => {
         trace_id: "route-trace",
       }),
     ).toBe(true);
+    expect(
+      Value.Check(AdmitTriggerResponseV1Schema, {
+        code: "invented_future_code",
+        message: "accepted",
+        retryable: false,
+        details: {},
+        trace_id: "route-trace",
+      }),
+    ).toBe(false);
+  });
+
+  it("declares the canonical HTTP operations for all route-injected sources", () => {
+    expect(TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1).toEqual([
+      expect.objectContaining({
+        operation_id: "admitTriggerFromChatV1",
+        path: "/internal/v1/triggers/admit/chat",
+        source: "chat",
+        required_capability: "trigger.submit.chat",
+        allowed_caller: "observation_gateway",
+        responses: [200, 400, 401, 403, 409, 503],
+      }),
+      expect.objectContaining({
+        operation_id: "admitTriggerFromNotificationV1",
+        path: "/internal/v1/triggers/admit/notification",
+        source: "notification",
+        required_capability: "trigger.submit.notification",
+        allowed_caller: "observation_gateway",
+        responses: [200, 400, 401, 403, 409, 503],
+      }),
+      expect.objectContaining({
+        operation_id: "admitTriggerFromTimerV1",
+        path: "/internal/v1/triggers/admit/timer",
+        source: "timer",
+        required_capability: "trigger.submit.timer",
+        allowed_caller: "timer_trigger_app",
+        responses: [200, 400, 401, 403, 409, 503],
+      }),
+    ]);
   });
 
   it("rejects malformed trusted-fact discriminants and undeclared fields", () => {
