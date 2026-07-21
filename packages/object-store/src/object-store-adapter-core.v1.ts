@@ -824,10 +824,7 @@ export class ObjectStoreAdapterCoreV1
             }
           }
         }
-        if (
-          physicalCleanupComplete &&
-          (backendPutCompleted || upload.completed())
-        ) {
+        if (physicalCleanupComplete && backendPutCompleted) {
           await this.#metadata.abortPut(
             reservation.reservation_id,
             reservation.foreground_lease_token,

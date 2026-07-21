@@ -453,18 +453,42 @@ for (const kind of ["memory", "supabase"] as const) {
       ).rejects.toSatisfy(expectCode("idempotency_conflict"));
     });
 
-    it("rejects corrupt or partial input without consuming the idempotency key", async () => {
-      const { store } = createHarness(kind);
+    it("handles corrupt or partial input without orphaning ambiguous uploads", async () => {
+      const harness = createHarness(kind);
+      const { store } = harness;
       const expected = new TextEncoder().encode("complete");
       const partial = new TextEncoder().encode("partial");
-      await expect(
+      const rejectedPut = expect(
         store.putImmutable(
           putRequest(partial, {
             expected_sha256: digest(expected),
             size_bytes: expected.byteLength,
           }),
         ),
-      ).rejects.toSatisfy(expectCode("integrity_mismatch"));
+      ).rejects;
+      if (kind === "supabase") {
+        await rejectedPut.toSatisfy(expectCode("integrity_mismatch"));
+      } else {
+        await rejectedPut.toSatisfy(
+          (error: unknown) =>
+            error instanceof ObjectStoreErrorV1 &&
+            error.code === "storage_unavailable" &&
+            error.details.reconciliation_required === true &&
+            error.details.reconciliation_operation === "put_cleanup",
+        );
+        await expect(store.putImmutable(putRequest(expected))).rejects.toSatisfy(
+          expectCode("precondition_failed"),
+        );
+        harness.setNow("2026-07-20T00:18:00.000Z");
+        await expect(
+          (store as ObjectStorePortV1 & ObjectStoreReconciliationPortV1)
+            .reconcilePending({
+              worker_id: "ambiguous-corrupt-cleanup",
+              limit: 1,
+              lease_seconds: 30,
+            }),
+        ).resolves.toEqual({ claimed: 1, completed: 1, retry_scheduled: 0 });
+      }
 
       await expect(store.putImmutable(putRequest(expected))).resolves.toMatchObject({
         replayed: false,

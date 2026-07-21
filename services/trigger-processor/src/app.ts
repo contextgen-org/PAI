@@ -18,25 +18,25 @@ import {
 } from "./application/trigger-admission.v1.js";
 
 const admissionRoutes = [
-    {
-      source: "chat",
-      route: "/internal/v1/triggers/admit/chat",
-      capability: "trigger.submit.chat",
-      caller: "observation_gateway",
-    },
-    {
-      source: "notification",
-      route: "/internal/v1/triggers/admit/notification",
-      capability: "trigger.submit.notification",
-      caller: "observation_gateway",
-    },
-    {
-      source: "timer",
-      route: "/internal/v1/triggers/admit/timer",
-      capability: "trigger.submit.timer",
-      caller: "timer_trigger_app",
-    },
-  ] as const;
+  {
+    source: "chat",
+    route: "/internal/v1/triggers/admit/chat",
+    capability: "trigger.submit.chat",
+    caller: "observation_gateway",
+  },
+  {
+    source: "notification",
+    route: "/internal/v1/triggers/admit/notification",
+    capability: "trigger.submit.notification",
+    caller: "observation_gateway",
+  },
+  {
+    source: "timer",
+    route: "/internal/v1/triggers/admit/timer",
+    capability: "trigger.submit.timer",
+    caller: "timer_trigger_app",
+  },
+] as const;
 
 function requiredAdmissionScope(request: {
   readonly body?: unknown;
