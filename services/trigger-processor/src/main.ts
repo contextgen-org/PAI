@@ -2,7 +2,10 @@ import {
   openVerifiedOwnerPostgresCompositionV1,
   ownerDatabaseApplicationDependenciesV1,
 } from "@pai/persistence";
-import { startService } from "@pai/service-kit";
+import {
+  requiresProductionDependenciesV1,
+  startService,
+} from "@pai/service-kit";
 
 import {
   buildTriggerProcessorApp,
@@ -25,16 +28,14 @@ const triggerAdmission =
     : createTriggerAdmissionApplicationV1(
         ownerDatabaseApplicationDependenciesV1(postgresComposition),
       );
-if (
-  postgresComposition === undefined &&
-  process.env.NODE_ENV === "production"
-) {
+const productionDependenciesRequired = requiresProductionDependenciesV1();
+if (postgresComposition === undefined && productionDependenciesRequired) {
   throw new Error(
     "PAI_DATABASE_URL is required for owner PostgreSQL verification in production",
   );
 }
 const requireWorkloadVerifier =
-  process.env.NODE_ENV === "production" || postgresComposition !== undefined;
+  productionDependenciesRequired || postgresComposition !== undefined;
 await startService({
   serviceId: "trigger_processor",
   defaultPort: 3001,

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertServiceRuntimeConfig,
   loadServiceRuntimeConfig,
+  requiresProductionDependenciesV1,
   ServiceConfigError,
 } from "../src/index.js";
 
@@ -51,5 +52,22 @@ describe("service runtime config", () => {
         invented_key: true,
       }),
     ).toThrow(ServiceConfigError);
+  });
+
+  it("requires strong dependencies for either production authority signal", () => {
+    expect(
+      requiresProductionDependenciesV1({
+        PAI_DEPLOYMENT_ENVIRONMENT: "prod",
+      }),
+    ).toBe(true);
+    expect(requiresProductionDependenciesV1({ NODE_ENV: "production" })).toBe(
+      true,
+    );
+    expect(
+      requiresProductionDependenciesV1({
+        PAI_DEPLOYMENT_ENVIRONMENT: "local",
+        NODE_ENV: "development",
+      }),
+    ).toBe(false);
   });
 });

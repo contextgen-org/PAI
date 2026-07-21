@@ -1,3 +1,4 @@
+import { OWNER_DURABLE_EVENT_TYPES_V1 } from "@pai/contracts";
 import {
   defineOwnerRepositoryContractV1,
   ownerForeignKeysV1,
@@ -257,6 +258,28 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
       effects: [{ table_name: "knowthat_memory_command_outbox", operation: "ack", concurrency_control: "lease_fence" }],
       returns: "jsonb",
     }),
+    ],
+    database_checks: [
+      {
+        constraint_name: "knowthat_event_outbox_event_type_check",
+        table_name: "knowthat_event_outbox",
+        required_definition_fragments: ["event_type", "knowthat.linkage_check.requested"],
+        semantic_constraint: {
+          kind: "text_enum",
+          column_name: "event_type",
+          allowed_values: OWNER_DURABLE_EVENT_TYPES_V1.knowthat,
+        },
+      },
+      {
+        constraint_name: "knowthat_event_outbox_producer_check",
+        table_name: "knowthat_event_outbox",
+        required_definition_fragments: ["producer", "knowthat"],
+        semantic_constraint: {
+          kind: "text_equals",
+          column_name: "producer",
+          value: "knowthat",
+        },
+      },
     ],
     foreign_key_snapshot: {
       status: "complete",

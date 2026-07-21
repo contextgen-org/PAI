@@ -14,6 +14,7 @@ import {
   type TriggerActorTypeV1,
   type TriggerSourceV1,
 } from "@pai/contracts";
+import { canonicalJsonV1 } from "@pai/eventing";
 import type { OwnerDatabaseApplicationDependenciesV1 } from "@pai/persistence";
 import { Value } from "@sinclair/typebox/value";
 
@@ -95,34 +96,20 @@ export interface TriggerAdmissionApplicationV1 {
   ): Promise<AdmitTriggerResponseV1>;
 }
 
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(",")}]`;
-  }
-  if (value !== null && typeof value === "object") {
-    const encoder = new TextEncoder();
-    const compareUtf8Bytes = (left: string, right: string): number => {
-      const leftBytes = encoder.encode(left);
-      const rightBytes = encoder.encode(right);
-      const length = Math.min(leftBytes.byteLength, rightBytes.byteLength);
-      for (let index = 0; index < length; index += 1) {
-        const diff = (leftBytes[index] ?? 0) - (rightBytes[index] ?? 0);
-        if (diff !== 0) return diff;
-      }
-      return leftBytes.byteLength - rightBytes.byteLength;
-    };
-    return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => compareUtf8Bytes(left, right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
-function canonicalAdmissionRequestHash(command: AdmitTriggerCommandV1): string {
+function canonicalAdmissionRequestHash(
+  command: AdmitTriggerCommandV1,
+  authority: Readonly<{
+    actor_type: TriggerActorTypeV1;
+    actor_id: string;
+    workload_subject: string;
+    capability: string;
+    trusted_explicit_interrupt: boolean;
+  }>,
+): string {
   return `sha256:${createHash("sha256")
     .update(
-      canonicalJson({
+      canonicalJsonV1({
+        authority,
         dedupe_key: command.dedupe_key,
         explicit_interrupt: command.explicit_interrupt,
         idempotency_key: command.idempotency_key,
@@ -201,7 +188,12 @@ export function createTriggerAdmissionApplicationV1(
         actor,
         command.explicit_interrupt,
       );
-      const requestHash = canonicalAdmissionRequestHash(command);
+      const requestHash = canonicalAdmissionRequestHash(command, {
+        ...actor,
+        workload_subject: credential.claims.sub,
+        capability: requiredCapability,
+        trusted_explicit_interrupt: trustedInterrupt,
+      });
       return database.unit_of_work.withTransaction(
         {
           operation: "admit_trigger",

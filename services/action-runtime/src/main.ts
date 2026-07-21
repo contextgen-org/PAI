@@ -1,5 +1,8 @@
 import { openVerifiedOwnerPostgresCompositionV1 } from "@pai/persistence";
-import { startService } from "@pai/service-kit";
+import {
+  requiresProductionDependenciesV1,
+  startService,
+} from "@pai/service-kit";
 
 import { buildActionRuntimeApp } from "./app.js";
 import { ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 } from "./db/permission-manifest.v1.js";
@@ -12,7 +15,10 @@ const postgresComposition =
         ACTION_RUNTIME_REPOSITORY_CONTRACT_V1,
         databaseUrl,
       );
-if (postgresComposition === undefined && process.env.NODE_ENV === "production") {
+if (
+  postgresComposition === undefined &&
+  requiresProductionDependenciesV1()
+) {
   throw new Error("PAI_DATABASE_URL is required for owner PostgreSQL verification in production");
 }
 await startService({

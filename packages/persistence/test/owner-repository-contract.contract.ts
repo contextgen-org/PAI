@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import { OWNER_DURABLE_EVENT_TYPES_V1 } from "@pai/contracts";
 
 import { ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 } from "../../../services/action-runtime/src/db/permission-manifest.v1.js";
 import { KNOWTHAT_REPOSITORY_CONTRACT_V1 } from "../../../services/knowthat/src/db/permission-manifest.v1.js";
@@ -16,6 +17,7 @@ import {
   OWNER_DATABASE_TARGETS_V1,
   ownerDatabaseApplicationDependenciesV1,
   ownerFunctionSignatureV1,
+  verifyOwnerDatabaseCheckDefinitionV1,
   verifyOwnerRepositoryDeploymentFromPostgresV1,
   verifyOwnerWriterDefinitionV1,
 } from "../src/index.js";
@@ -189,6 +191,202 @@ describe("owner repository contracts", () => {
         }
       }
     }
+  });
+
+  it("binds every canonical event outbox to the owner event union and producer", () => {
+    for (const contract of contracts) {
+      const checks = contract.database_checks ?? [];
+      const ownerEventTypeChecks = checks.filter(
+        ({ semantic_constraint }) =>
+          semantic_constraint?.kind === "text_enum" &&
+          semantic_constraint.column_name === "event_type",
+      );
+      expect(ownerEventTypeChecks).toHaveLength(1);
+      expect(ownerEventTypeChecks[0]?.semantic_constraint).toMatchObject({
+        kind: "text_enum",
+        allowed_values:
+          OWNER_DURABLE_EVENT_TYPES_V1[contract.owner_service],
+      });
+      if (ownerEventTypeChecks[0]?.semantic_constraint?.kind === "text_enum") {
+        expect(ownerEventTypeChecks[0].semantic_constraint.allowed_values).toBe(
+          OWNER_DURABLE_EVENT_TYPES_V1[contract.owner_service],
+        );
+      }
+      for (const table of contract.outbox_tables) {
+        const columns = contract.table_permissions.find(
+          ({ table_name }) => table_name === table,
+        )?.select_columns ?? [];
+        if (!columns.includes("event_type")) continue;
+        expect(
+          checks.filter(
+            ({ table_name, semantic_constraint }) =>
+              table_name === table &&
+              semantic_constraint?.kind === "text_enum" &&
+              semantic_constraint.column_name === "event_type",
+          ),
+        ).toHaveLength(1);
+        if (columns.includes("producer")) {
+          expect(
+            checks.filter(
+              ({ table_name, semantic_constraint }) =>
+                table_name === table &&
+                semantic_constraint?.kind === "text_equals" &&
+                semantic_constraint.column_name === "producer" &&
+                semantic_constraint.value === contract.owner_service,
+            ),
+          ).toHaveLength(1);
+        } else if (columns.includes("payload")) {
+          expect(
+            checks.filter(
+              ({ table_name, semantic_constraint }) =>
+                table_name === table &&
+                semantic_constraint?.kind === "json_text_equals" &&
+                semantic_constraint.column_name === "payload" &&
+                semantic_constraint.field_name === "producer" &&
+                semantic_constraint.value === contract.owner_service,
+            ),
+          ).toHaveLength(1);
+        }
+      }
+    }
+  });
+
+  it("binds the Action Runtime controlled outbox to a complete canonical source envelope", () => {
+    expect(
+      ACTION_RUNTIME_REPOSITORY_CONTRACT_V1.foreign_keys.filter(
+        ({ table_name, columns, referenced_table, referenced_columns }) =>
+          table_name === "runtime_event_outbox" &&
+          columns.length === 1 &&
+          columns[0] === "source_event_id" &&
+          referenced_table === "runtime_events" &&
+          referenced_columns.length === 1 &&
+          referenced_columns[0] === "id",
+      ),
+    ).toHaveLength(1);
+    expect(ACTION_RUNTIME_REPOSITORY_CONTRACT_V1.database_checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          table_name: "runtime_events",
+          semantic_constraint: expect.objectContaining({
+            kind: "text_enum",
+            column_name: "event_type",
+          }),
+        }),
+        expect.objectContaining({
+          table_name: "runtime_events",
+          semantic_constraint: expect.objectContaining({
+            kind: "json_event_envelope",
+            column_name: "envelope",
+            producer_value: "action_runtime",
+            required_keys: [
+              "event_id",
+              "event_type",
+              "schema_version",
+              "producer",
+              "occurred_at",
+              "idempotency_key",
+              "trace_id",
+              "payload",
+            ],
+            field_bindings: expect.arrayContaining([
+              { field_name: "event_id", column_name: "id" },
+              { field_name: "event_type", column_name: "event_type" },
+              {
+                field_name: "idempotency_key",
+                column_name: "idempotency_key",
+              },
+            ]),
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("rejects drift in PostgreSQL JSON envelope producer, keys, and source bindings", () => {
+    const expectation = ACTION_RUNTIME_REPOSITORY_CONTRACT_V1.database_checks
+      .find(({ constraint_name }) => constraint_name === "runtime_events_check");
+    expect(expectation).toBeDefined();
+    if (expectation === undefined) return;
+    const definition = `CHECK (((jsonb_typeof(envelope) = 'object'::text) AND (jsonb_object_length(envelope) = 8) AND (envelope ?& ARRAY['event_id'::text, 'event_type'::text, 'schema_version'::text, 'producer'::text, 'occurred_at'::text, 'idempotency_key'::text, 'trace_id'::text, 'payload'::text]) AND ((envelope ->> 'event_id'::text) = id) AND ((envelope ->> 'event_type'::text) = event_type) AND ((envelope ->> 'idempotency_key'::text) = idempotency_key) AND ((envelope ->> 'producer'::text) = 'action_runtime'::text)))`;
+
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(expectation, definition),
+    ).not.toThrow();
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        expectation,
+        definition.replace("'action_runtime'", "'trigger_processor'"),
+      ),
+    ).toThrow(/CHECK constraint drift/u);
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        expectation,
+        definition.replace("'payload'::text", "'trace_id'::text"),
+      ),
+    ).toThrow(/CHECK constraint drift/u);
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        expectation,
+        definition.replace("(jsonb_object_length(envelope) = 8) AND ", ""),
+      ),
+    ).toThrow(/CHECK constraint drift/u);
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        expectation,
+        definition.replace(
+          "jsonb_object_length(envelope) = 8",
+          "jsonb_object_length(envelope) = 9",
+        ),
+      ),
+    ).toThrow(/CHECK constraint drift/u);
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        expectation,
+        definition.replace(
+          "(envelope ->> 'event_id'::text) = id",
+          "(envelope ->> 'event_id'::text) = runtime_run_id",
+        ),
+      ),
+    ).toThrow(/CHECK constraint drift/u);
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        expectation,
+        `CHECK ((${definition.slice("CHECK (".length, -1)}) OR true)`,
+      ),
+    ).toThrow(/CHECK constraint drift/u);
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        expectation,
+        `CHECK ((${definition.slice("CHECK (".length, -1)}) AND true)`,
+      ),
+    ).toThrow(/CHECK constraint drift/u);
+  });
+
+  it("requires Meta's nested envelope projection to contain exactly the five controlled fields", () => {
+    const expectation = META_COGNITION_REPOSITORY_CONTRACT_V1.database_checks
+      .find(
+        ({ constraint_name }) =>
+          constraint_name === "meta_event_outbox_payload_check",
+      );
+    expect(expectation).toBeDefined();
+    if (expectation === undefined) return;
+    const definition = `CHECK (((jsonb_object_length(payload) = 5) AND (payload ?& ARRAY['schema_version'::text, 'producer'::text, 'occurred_at'::text, 'trace_id'::text, 'payload'::text]) AND ((payload ->> 'producer'::text) = 'meta_cognition'::text)))`;
+
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(expectation, definition),
+    ).not.toThrow();
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        expectation,
+        definition.replace("jsonb_object_length(payload) = 5", "true"),
+      ),
+    ).toThrow(/CHECK constraint drift/u);
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        expectation,
+        definition.replace("'trace_id'::text", "'extra'::text"),
+      ),
+    ).toThrow(/CHECK constraint drift/u);
   });
 
   it("uses the parent-owned timer service path and never creates an apps alias", () => {

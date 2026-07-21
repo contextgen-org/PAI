@@ -1,3 +1,4 @@
+import { OWNER_DURABLE_EVENT_TYPES_V1 } from "@pai/contracts";
 import {
   defineOwnerRepositoryContractV1,
   ownerForeignKeysV1,
@@ -562,6 +563,27 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
     }),
     ],
     database_checks: [
+      {
+        constraint_name: "trigger_event_outbox_event_type_check",
+        table_name: "trigger_event_outbox",
+        required_definition_fragments: ["event_type", "trigger_process.outcome_finalized"],
+        semantic_constraint: {
+          kind: "text_enum",
+          column_name: "event_type",
+          allowed_values:
+            OWNER_DURABLE_EVENT_TYPES_V1.trigger_processor,
+        },
+      },
+      {
+        constraint_name: "trigger_event_outbox_producer_check",
+        table_name: "trigger_event_outbox",
+        required_definition_fragments: ["producer", "trigger_processor"],
+        semantic_constraint: {
+          kind: "text_equals",
+          column_name: "producer",
+          value: "trigger_processor",
+        },
+      },
       {
         constraint_name: "bot_foreground_slots_generation_safe_check",
         table_name: "bot_foreground_slots",

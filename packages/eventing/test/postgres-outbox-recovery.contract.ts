@@ -380,9 +380,24 @@ const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
   ],
   database_checks: [
     {
+      constraint_name: "eventing_outbox_event_type_check",
+      table_name: "eventing_outbox",
+      required_definition_fragments: ["event_type", "skill.version.published"],
+      semantic_constraint: {
+        kind: "text_enum",
+        column_name: "event_type",
+        allowed_values: ["skill.version.published"],
+      },
+    },
+    {
       constraint_name: "eventing_outbox_producer_check",
       table_name: "eventing_outbox",
       required_definition_fragments: ["producer", "skill_registry"],
+      semantic_constraint: {
+        kind: "text_equals",
+        column_name: "producer",
+        value: "skill_registry",
+      },
     },
     {
       constraint_name: "eventing_outbox_status_check",
@@ -432,7 +447,7 @@ GRANT USAGE ON SCHEMA skill_registry TO pai_skill_registry_app;
 SET ROLE pai_migrator;
 CREATE TABLE skill_registry.eventing_outbox (
   id text PRIMARY KEY,
-  event_type text NOT NULL,
+  event_type text NOT NULL CHECK (event_type IN ('skill.version.published')),
   schema_version text NOT NULL,
   producer text NOT NULL CHECK (producer = 'skill_registry'),
   occurred_at timestamptz NOT NULL,
@@ -776,5 +791,37 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     );
     expect(persisted.rows).toEqual([{ status: "sent", attempt_count: 1 }]);
     await secondProcess.close();
+  });
+
+  it("rejects a widened owner event union before exposing runtime capabilities", async () => {
+    await reset();
+    if (admin === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
+    await admin.query(`
+      ALTER TABLE skill_registry.eventing_outbox
+        DROP CONSTRAINT eventing_outbox_event_type_check;
+      ALTER TABLE skill_registry.eventing_outbox
+        ADD CONSTRAINT eventing_outbox_event_type_check CHECK (
+          event_type IN ('skill.version.published', 'skill.version.attacker')
+        );
+    `);
+    await expect(
+      openVerifiedOwnerPostgresCompositionV1(EVENTING_CONTRACT, runtimeUrl()),
+    ).rejects.toThrow(/CHECK constraint drift/);
+  });
+
+  it("rejects a producer CHECK that admits another service", async () => {
+    await reset();
+    if (admin === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
+    await admin.query(`
+      ALTER TABLE skill_registry.eventing_outbox
+        DROP CONSTRAINT eventing_outbox_producer_check;
+      ALTER TABLE skill_registry.eventing_outbox
+        ADD CONSTRAINT eventing_outbox_producer_check CHECK (
+          producer IN ('skill_registry', 'trigger_processor')
+        );
+    `);
+    await expect(
+      openVerifiedOwnerPostgresCompositionV1(EVENTING_CONTRACT, runtimeUrl()),
+    ).rejects.toThrow(/CHECK constraint drift/);
   });
 });

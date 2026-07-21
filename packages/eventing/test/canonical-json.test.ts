@@ -16,6 +16,11 @@ describe("canonical JSON V1", () => {
     expect(canonicalJsonV1({ z: 1, a: { y: 2, x: 3 } })).toBe(
       '{"a":{"x":3,"y":2},"z":1}',
     );
+    // RFC 8785 sorts property names by UTF-16 code units. UTF-8 byte sorting
+    // would incorrectly place U+E000 before U+10000.
+    expect(canonicalJsonV1({ "\u{10000}": 1, "\uE000": 2 })).toBe(
+      '{"\u{10000}":1,"\uE000":2}',
+    );
   });
 
   it("rejects values that cannot be losslessly represented as JSON", () => {

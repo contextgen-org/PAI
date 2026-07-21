@@ -7,6 +7,7 @@ import {
   createRedisDependencyMonitorV1,
   loadRedisRuntimeConfigV1,
   namespacedRedisKeyV1,
+  openVerifiedRedisStreamCompositionV1,
   redisReconnectDelayV1,
 } from "../src/index.js";
 
@@ -104,6 +105,21 @@ describe("Redis Stream transport V1", () => {
         PAI_REDIS_COMMANDS_QUEUE_MAX_LENGTH: "10001",
       }),
     ).toThrow(/runtime settings are outside the V1 bounds/);
+  });
+
+  it("rejects Observation as an outbox transport target", async () => {
+    const namespace = createRedisNamespaceV1({
+      deployment_environment: "dev",
+      release_channel: "stable",
+      owner_service: "memory",
+    });
+    await expect(
+      openVerifiedRedisStreamCompositionV1({
+        url: "redis://127.0.0.1:1",
+        namespace,
+        routes: { observation_gateway: "stream:memory_events" },
+      }),
+    ).rejects.toThrow(/outbox route target/u);
   });
 
   it("enters degraded mode after three failures and recovers only on success", () => {

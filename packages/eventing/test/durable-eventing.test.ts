@@ -289,6 +289,28 @@ describe("durable outbox dispatcher V1", () => {
     expect(store.records[0]?.status).toBe("failed");
   });
 
+  it("fails an unknown owner event type before transport", async () => {
+    const store = new DurableStoreFake([
+      event({ event_type: "runtime.run.unregistered" }),
+    ]);
+    let publishes = 0;
+    const transport: DurableEventTransportPortV1 = {
+      async publish() {
+        publishes += 1;
+        return { transport_ref: "unreachable" };
+      },
+    };
+    const clock = { now: new Date("2026-07-21T05:00:01.000Z") };
+
+    await expect(dispatcher(store, transport, clock).dispatchBatch()).resolves
+      .toMatchObject({ failed: 1, retry_wait: 0 });
+    expect(publishes).toBe(0);
+    expect(store.acknowledgements[0]?.error).toEqual({
+      code: "outbox_contract_violation",
+      retryable: false,
+    });
+  });
+
   it("classifies a non-JSON payload as a non-retryable contract violation", async () => {
     const invalid = event({ payload: { invalid: 1n } as never });
     const store = new DurableStoreFake([event()]);
@@ -337,5 +359,19 @@ describe("durable inbox consumer V1", () => {
     await expect(
       consumer.consume(event({ payload: { runtime_run_id: "run_drift" } })),
     ).rejects.toThrow(/payload hash conflict/);
+  });
+
+  it("rejects an unknown producer event branch before owner side effects", async () => {
+    let applies = 0;
+    const consumer = createDurableInboxConsumerV1({
+      async apply() {
+        applies += 1;
+        return { status: "processed" };
+      },
+    });
+    await expect(
+      consumer.consume(event({ event_type: "runtime.run.unregistered" })),
+    ).rejects.toThrow(/producer owner union/u);
+    expect(applies).toBe(0);
   });
 });

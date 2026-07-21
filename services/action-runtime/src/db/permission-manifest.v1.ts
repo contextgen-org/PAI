@@ -1,3 +1,4 @@
+import { OWNER_DURABLE_EVENT_TYPES_V1 } from "@pai/contracts";
 import {
   defineOwnerRepositoryContractV1,
   ownerForeignKeysV1,
@@ -397,6 +398,50 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
       returns: "jsonb",
     }),
     ],
+  database_checks: [
+    {
+      constraint_name: "runtime_events_event_type_check",
+      table_name: "runtime_events",
+      required_definition_fragments: ["event_type"],
+      semantic_constraint: {
+        kind: "text_enum",
+        column_name: "event_type",
+        allowed_values: OWNER_DURABLE_EVENT_TYPES_V1.action_runtime,
+      },
+    },
+    {
+      constraint_name: "runtime_events_check",
+      table_name: "runtime_events",
+      required_definition_fragments: [
+        "jsonb_typeof",
+        "jsonb_object_length",
+        "producer",
+      ],
+      semantic_constraint: {
+        kind: "json_event_envelope",
+        column_name: "envelope",
+        producer_value: "action_runtime",
+        required_keys: [
+          "event_id",
+          "event_type",
+          "schema_version",
+          "producer",
+          "occurred_at",
+          "idempotency_key",
+          "trace_id",
+          "payload",
+        ],
+        field_bindings: [
+          { field_name: "event_id", column_name: "id" },
+          { field_name: "event_type", column_name: "event_type" },
+          {
+            field_name: "idempotency_key",
+            column_name: "idempotency_key",
+          },
+        ],
+      },
+    },
+  ],
   foreign_key_snapshot: {
     status: "complete",
     source: "Database Design revision 466 / fresh 0200_action_runtime canonical DDL applied to PostgreSQL 17",

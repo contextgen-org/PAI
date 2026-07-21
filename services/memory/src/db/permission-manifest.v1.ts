@@ -1,3 +1,4 @@
+import { OWNER_DURABLE_EVENT_TYPES_V1 } from "@pai/contracts";
 import {
   defineOwnerRepositoryContractV1,
   ownerForeignKeysV1,
@@ -524,6 +525,28 @@ export const MEMORY_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
       ],
     }),
     ],
+  database_checks: [
+    {
+      constraint_name: "memory_event_outbox_event_type_check",
+      table_name: "memory_event_outbox",
+      required_definition_fragments: ["event_type", "memory.integration.finished"],
+      semantic_constraint: {
+        kind: "text_enum",
+        column_name: "event_type",
+        allowed_values: OWNER_DURABLE_EVENT_TYPES_V1.memory,
+      },
+    },
+    {
+      constraint_name: "memory_event_outbox_producer_check",
+      table_name: "memory_event_outbox",
+      required_definition_fragments: ["producer", "memory"],
+      semantic_constraint: {
+        kind: "text_equals",
+        column_name: "producer",
+        value: "memory",
+      },
+    },
+  ],
   foreign_key_snapshot: {
     status: "complete",
     source: "Database Design revision 466 / fresh 0600_memory and 0610_memory_vector canonical DDL applied to PostgreSQL 17",

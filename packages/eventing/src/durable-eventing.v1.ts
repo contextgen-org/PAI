@@ -1,6 +1,7 @@
 import {
   assertDurableEventEnvelopeV1,
   DurableEventEnvelopeValidationErrorV1,
+  isOwnerDurableEventTypeV1,
   type DurableEventEnvelopeV1,
   type ServiceIdV1,
 } from "@pai/contracts";
@@ -259,6 +260,16 @@ export function createDurableOutboxDispatcherV1(
             );
           }
           if (
+            !isOwnerDurableEventTypeV1(
+              record.envelope.producer,
+              record.envelope.event_type,
+            )
+          ) {
+            throw new OutboxClaimContractErrorV1(
+              "outbox event type is outside the producer owner union",
+            );
+          }
+          if (
             !sha256Pattern.test(record.payload_hash) ||
             canonicalPayloadHashV1(record.envelope.payload) !== record.payload_hash
           ) {
@@ -340,6 +351,11 @@ export function createDurableInboxConsumerV1(
   return Object.freeze({
     async consume(envelope) {
       assertDurableEventEnvelopeV1(envelope);
+      if (!isOwnerDurableEventTypeV1(envelope.producer, envelope.event_type)) {
+        throw new DurableEventEnvelopeValidationErrorV1([
+          "/event_type: must belong to the producer owner union",
+        ]);
+      }
       return inbox.apply({
         source: envelope.producer,
         event_id: envelope.event_id,

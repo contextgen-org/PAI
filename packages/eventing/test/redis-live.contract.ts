@@ -87,6 +87,43 @@ describeRedis("locked Redis 8.8 Stream integration", () => {
     );
   });
 
+  it("rejects a cross-owner or unknown event before XADD", async () => {
+    const before = await reader!.xLen(physicalStream);
+    const actionEnvelope = {
+      event_id: "evt_cross_owner_001",
+      event_type: "runtime.run.completed",
+      schema_version: "runtime_event.v1",
+      producer: "action_runtime",
+      occurred_at: "2026-07-21T05:00:00.000Z",
+      idempotency_key: "runtime_run_001:completed",
+      trace_id: "trace_cross_owner_001",
+      payload: { runtime_run_id: "runtime_run_001" },
+    } as const;
+    await expect(
+      composition!.transport.publish({
+        target,
+        envelope: actionEnvelope,
+        payload_hash: canonicalPayloadHashV1(actionEnvelope.payload),
+      }),
+    ).rejects.toMatchObject({ code: "transport_rejected", retryable: false });
+
+    const unknownTimerEnvelope = {
+      ...actionEnvelope,
+      event_id: "evt_unknown_timer_001",
+      event_type: "timer.occurrence.unregistered",
+      producer: "timer_trigger_app",
+      idempotency_key: "timer_occurrence_001:unregistered",
+    } as const;
+    await expect(
+      composition!.transport.publish({
+        target,
+        envelope: unknownTimerEnvelope,
+        payload_hash: canonicalPayloadHashV1(unknownTimerEnvelope.payload),
+      }),
+    ).rejects.toMatchObject({ code: "transport_rejected", retryable: false });
+    expect(await reader!.xLen(physicalStream)).toBe(before);
+  });
+
   it("fails a paused readiness command promptly and recovers on the same composition", async () => {
     await reader!.clientPause(300, "ALL");
     const controller = new AbortController();

@@ -188,6 +188,9 @@ importers:
 
   services/action-runtime:
     dependencies:
+      '@pai/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@pai/persistence':
         specifier: workspace:*
         version: link:../../packages/persistence
@@ -201,6 +204,9 @@ importers:
 
   services/knowthat:
     dependencies:
+      '@pai/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@pai/persistence':
         specifier: workspace:*
         version: link:../../packages/persistence
@@ -214,6 +220,9 @@ importers:
 
   services/memory:
     dependencies:
+      '@pai/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@pai/persistence':
         specifier: workspace:*
         version: link:../../packages/persistence
@@ -227,6 +236,9 @@ importers:
 
   services/meta-cognition:
     dependencies:
+      '@pai/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@pai/persistence':
         specifier: workspace:*
         version: link:../../packages/persistence
@@ -250,6 +262,9 @@ importers:
 
   services/skill-registry:
     dependencies:
+      '@pai/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@pai/persistence':
         specifier: workspace:*
         version: link:../../packages/persistence
@@ -263,6 +278,9 @@ importers:
 
   services/timer-trigger-app:
     dependencies:
+      '@pai/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@pai/persistence':
         specifier: workspace:*
         version: link:../../packages/persistence
@@ -282,6 +300,9 @@ importers:
       '@pai/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@pai/eventing':
+        specifier: workspace:*
+        version: link:../../packages/eventing
       '@pai/persistence':
         specifier: workspace:*
         version: link:../../packages/persistence

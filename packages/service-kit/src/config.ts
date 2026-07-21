@@ -123,3 +123,16 @@ export function loadServiceRuntimeConfig(
 
   return assertServiceRuntimeConfig(candidate);
 }
+
+/**
+ * Production dependency gates use the typed PAI environment as authority and
+ * retain NODE_ENV=production as a fail-closed compatibility signal.
+ */
+export function requiresProductionDependenciesV1(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return (
+    env.PAI_DEPLOYMENT_ENVIRONMENT === "prod" ||
+    env.NODE_ENV === "production"
+  );
+}

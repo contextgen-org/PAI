@@ -5,6 +5,7 @@ import {
   RELEASE_CHANNELS,
   SERVICE_IDS,
   assertDurableEventEnvelopeV1,
+  isOwnerDurableEventTypeV1,
   type DeploymentEnvironmentV1,
   type DurableEventEnvelopeV1,
   type ReleaseChannelV1,
@@ -417,6 +418,9 @@ export async function openVerifiedRedisStreamCompositionV1(options: Readonly<{
       if (target.trim().length === 0) {
         throw new Error("Redis route target must be non-empty");
       }
+      if (target === "observation" || target === "observation_gateway") {
+        throw new Error("Observation cannot be an outbox route target");
+      }
       return [
         target,
         namespacedRedisKeyV1(options.namespace, logicalStream),
@@ -481,6 +485,19 @@ export async function openVerifiedRedisStreamCompositionV1(options: Readonly<{
         payload_hash: string;
       }>) {
         assertDurableEventEnvelopeV1(request.envelope);
+        if (
+          request.envelope.producer !== options.namespace.owner_service ||
+          !isOwnerDurableEventTypeV1(
+            request.envelope.producer,
+            request.envelope.event_type,
+          )
+        ) {
+          throw new EventTransportErrorV1(
+            "transport_rejected",
+            false,
+            "event producer or type is outside the Redis owner namespace",
+          );
+        }
         if (canonicalPayloadHashV1(request.envelope.payload) !== request.payload_hash) {
           throw new EventTransportErrorV1(
             "transport_rejected",

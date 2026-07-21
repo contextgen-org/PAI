@@ -1,3 +1,4 @@
+import { OWNER_DURABLE_EVENT_TYPES_V1 } from "@pai/contracts";
 import {
   defineOwnerRepositoryContractV1,
   ownerFunctionSignatureV1,
@@ -257,6 +258,28 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
       returns: "jsonb",
     }),
     ],
+  database_checks: [
+    {
+      constraint_name: "timer_event_outbox_event_type_check",
+      table_name: "timer_event_outbox",
+      required_definition_fragments: ["event_type", "timer.catch_up.occurrence_summarized"],
+      semantic_constraint: {
+        kind: "text_enum",
+        column_name: "event_type",
+        allowed_values: OWNER_DURABLE_EVENT_TYPES_V1.timer_trigger_app,
+      },
+    },
+    {
+      constraint_name: "timer_event_outbox_producer_check",
+      table_name: "timer_event_outbox",
+      required_definition_fragments: ["producer", "timer_trigger_app"],
+      semantic_constraint: {
+        kind: "text_equals",
+        column_name: "producer",
+        value: "timer_trigger_app",
+      },
+    },
+  ],
   foreign_key_snapshot: {
     status: "complete",
     source: "Database Design revision 466 / fresh 0300_timer canonical DDL",

@@ -1,5 +1,8 @@
+import { createHash } from "node:crypto";
+
 import type { VerifiedWorkloadCredential } from "@pai/auth";
 import { TriggerAdmissionDecisionV1Schema } from "@pai/contracts";
+import { canonicalJsonV1 } from "@pai/eventing";
 import { OwnerRepositoryTransientErrorV1 } from "@pai/persistence";
 import { Value } from "@sinclair/typebox/value";
 import { describe, expect, it } from "vitest";
@@ -539,11 +542,11 @@ describe("Trigger admission", () => {
       trigger_id: "trigger-unicode",
       process_id: "process-unicode",
       idempotency_key: "submit-unicode",
-      payload: { "é": 1, a: 2, "😀": 3 },
+      payload: { "\u{10000}": 1, "\uE000": 2 },
     } as const;
     const secondUnicodeCommand = {
       ...firstUnicodeCommand,
-      payload: { "😀": 3, a: 2, "é": 1 },
+      payload: { "\uE000": 2, "\u{10000}": 1 },
     } as const;
     await application.admit(credential, firstUnicodeCommand);
     const firstUnicodeHash = (
@@ -554,6 +557,46 @@ describe("Trigger admission", () => {
       calls.at(-1)?.writer as { readonly arguments?: Record<string, unknown> }
     )?.arguments?.p_request_hash;
     expect(firstUnicodeHash).toBe(secondUnicodeHash);
+    expect(firstUnicodeHash).toBe(
+      `sha256:${createHash("sha256")
+        .update(
+          canonicalJsonV1({
+            authority: {
+              actor_type: "user",
+              actor_id: "user-1",
+              workload_subject: "observation_gateway",
+              capability: "trigger.submit.chat",
+              trusted_explicit_interrupt: false,
+            },
+            dedupe_key: firstUnicodeCommand.dedupe_key,
+            explicit_interrupt: firstUnicodeCommand.explicit_interrupt,
+            idempotency_key: firstUnicodeCommand.idempotency_key,
+            is_catch_up: firstUnicodeCommand.is_catch_up,
+            payload: firstUnicodeCommand.payload,
+            process_id: firstUnicodeCommand.process_id,
+            scope: firstUnicodeCommand.scope,
+            source: firstUnicodeCommand.source,
+            trigger_id: firstUnicodeCommand.trigger_id,
+          }),
+        )
+        .digest("hex")}`,
+    );
+    const otherPrincipalCredential = {
+      ...credential,
+      claims: {
+        ...credential.claims,
+        delegated_principal: {
+          ...credential.claims.delegated_principal,
+          principal_id: "user-2",
+          source_subject: "user-2",
+        },
+      },
+    } as const satisfies VerifiedWorkloadCredential;
+    await application.admit(otherPrincipalCredential, firstUnicodeCommand);
+    const otherPrincipalHash = (
+      calls.at(-1)?.writer as { readonly arguments?: Record<string, unknown> }
+    )?.arguments?.p_request_hash;
+    expect(otherPrincipalHash).not.toBe(firstUnicodeHash);
 
     const app = buildTriggerProcessorApp({ logger: false }, application);
     expect(app.hasDecorator("ownerDatabase")).toBe(false);

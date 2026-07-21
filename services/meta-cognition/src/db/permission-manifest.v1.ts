@@ -1,3 +1,4 @@
+import { OWNER_DURABLE_EVENT_TYPES_V1 } from "@pai/contracts";
 import {
   defineOwnerRepositoryContractV1,
   ownerForeignKeysV1,
@@ -306,7 +307,42 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       ], returns: "jsonb",
     }),
     ],
-  foreign_key_snapshot: {
+    database_checks: [
+      {
+        constraint_name: "meta_event_outbox_event_type_check",
+        table_name: "meta_event_outbox",
+        required_definition_fragments: ["event_type", "meta.job.failed"],
+        semantic_constraint: {
+          kind: "text_enum",
+          column_name: "event_type",
+          allowed_values: OWNER_DURABLE_EVENT_TYPES_V1.meta_cognition,
+        },
+      },
+      {
+        constraint_name: "meta_event_outbox_payload_check",
+        table_name: "meta_event_outbox",
+        required_definition_fragments: [
+          "payload",
+          "jsonb_object_length",
+          "producer",
+          "meta_cognition",
+        ],
+        semantic_constraint: {
+          kind: "json_text_equals",
+          column_name: "payload",
+          field_name: "producer",
+          value: "meta_cognition",
+          required_keys: [
+            "schema_version",
+            "producer",
+            "occurred_at",
+            "trace_id",
+            "payload",
+          ],
+        },
+      },
+    ],
+    foreign_key_snapshot: {
     status: "complete",
     source: "Database Design revision 466 / fresh 0400_meta_cognition canonical DDL applied to PostgreSQL 17",
   },

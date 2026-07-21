@@ -1,3 +1,4 @@
+import { OWNER_DURABLE_EVENT_TYPES_V1 } from "@pai/contracts";
 import {
   defineOwnerRepositoryContractV1,
   ownerForeignKeysV1,
@@ -388,7 +389,29 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
       ], returns: "jsonb",
     }),
     ],
-  foreign_key_snapshot: {
+    database_checks: [
+      {
+        constraint_name: "skill_event_outbox_event_type_check",
+        table_name: "skill_event_outbox",
+        required_definition_fragments: ["event_type", "skill.candidate.application.updated"],
+        semantic_constraint: {
+          kind: "text_enum",
+          column_name: "event_type",
+          allowed_values: OWNER_DURABLE_EVENT_TYPES_V1.skill_registry,
+        },
+      },
+      {
+        constraint_name: "skill_event_outbox_producer_check",
+        table_name: "skill_event_outbox",
+        required_definition_fragments: ["producer", "skill_registry"],
+        semantic_constraint: {
+          kind: "text_equals",
+          column_name: "producer",
+          value: "skill_registry",
+        },
+      },
+    ],
+    foreign_key_snapshot: {
     status: "complete",
     source: "Database Design revision 466 / fresh 0450_skill_registry canonical DDL applied to PostgreSQL 17",
   },

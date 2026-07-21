@@ -128,6 +128,34 @@ export interface OwnerDatabaseCheckV1<TTable extends string = string> {
   readonly constraint_name: string;
   readonly table_name: TTable;
   readonly required_definition_fragments: readonly string[];
+  readonly semantic_constraint?:
+    | Readonly<{
+        kind: "text_enum";
+        column_name: string;
+        allowed_values: readonly string[];
+      }>
+    | Readonly<{
+        kind: "text_equals";
+        column_name: string;
+        value: string;
+      }>
+    | Readonly<{
+        kind: "json_text_equals";
+        column_name: string;
+        field_name: string;
+        value: string;
+        required_keys: readonly string[];
+      }>
+    | Readonly<{
+        kind: "json_event_envelope";
+        column_name: string;
+        producer_value: string;
+        required_keys: readonly string[];
+        field_bindings: readonly Readonly<{
+          field_name: string;
+          column_name: string;
+        }>[];
+      }>;
 }
 
 export interface OwnerDatabaseColumnV1<TTable extends string = string> {
@@ -591,13 +619,65 @@ export function defineOwnerRepositoryContractV1<
     (contract.database_checks ?? []).map(({ constraint_name }) => constraint_name),
   );
   for (const check of contract.database_checks ?? []) {
+    const semantic = check.semantic_constraint;
+    const tableColumns = selectColumnsByTable.get(check.table_name);
+    const invalidSemantic =
+      semantic !== undefined &&
+      (!sqlIdentifierPattern.test(semantic.column_name) ||
+        !tableColumns?.has(semantic.column_name) ||
+        (semantic.kind === "text_enum"
+          ? semantic.allowed_values.length === 0 ||
+            new Set(semantic.allowed_values).size !==
+              semantic.allowed_values.length ||
+            semantic.allowed_values.some((value) => value.length === 0)
+          : semantic.kind === "text_equals"
+            ? semantic.value.length === 0
+            : semantic.kind === "json_text_equals"
+              ? !sqlIdentifierPattern.test(semantic.field_name) ||
+                semantic.value.length === 0 ||
+                semantic.required_keys.length === 0 ||
+                new Set(semantic.required_keys).size !==
+                  semantic.required_keys.length ||
+                !semantic.required_keys.includes(semantic.field_name) ||
+                semantic.required_keys.some((value) => value.length === 0)
+              : semantic.producer_value.length === 0 ||
+                semantic.required_keys.length === 0 ||
+                new Set(semantic.required_keys).size !==
+                  semantic.required_keys.length ||
+                semantic.required_keys.some((value) => value.length === 0) ||
+                semantic.field_bindings.length === 0 ||
+                new Set(
+                  semantic.field_bindings.map(({ field_name }) => field_name),
+                ).size !== semantic.field_bindings.length ||
+                semantic.field_bindings.some(
+                  ({ field_name, column_name }) =>
+                    !sqlIdentifierPattern.test(field_name) ||
+                    !sqlIdentifierPattern.test(column_name) ||
+                    !semantic.required_keys.includes(field_name) ||
+                    !tableColumns?.has(column_name),
+                )));
     if (
       !tableSet.has(check.table_name) ||
       check.required_definition_fragments.length === 0 ||
-      check.required_definition_fragments.some((fragment) => fragment.length === 0)
+      check.required_definition_fragments.some((fragment) => fragment.length === 0) ||
+      invalidSemantic
     ) {
       throw new Error(`invalid owner database check: ${check.constraint_name}`);
     }
+    if (semantic?.kind === "text_enum") {
+      Object.freeze(semantic.allowed_values);
+    }
+    if (
+      semantic?.kind === "json_text_equals" ||
+      semantic?.kind === "json_event_envelope"
+    ) {
+      Object.freeze(semantic.required_keys);
+    }
+    if (semantic?.kind === "json_event_envelope") {
+      for (const binding of semantic.field_bindings) Object.freeze(binding);
+      Object.freeze(semantic.field_bindings);
+    }
+    if (semantic !== undefined) Object.freeze(semantic);
     Object.freeze(check.required_definition_fragments);
     Object.freeze(check);
   }
@@ -773,6 +853,102 @@ export function defineOwnerRepositoryContractV1<
   ] as const) {
     if (tables.some((table) => !tableSet.has(table))) {
       throw new Error(`${label} contains a table outside owner schema contract`);
+    }
+  }
+  const checks = contract.database_checks ?? [];
+  for (const outboxTable of contract.outbox_tables) {
+    const columns = selectColumnsByTable.get(outboxTable) ?? new Set<string>();
+    if (columns.has("event_type")) {
+      const eventTypeChecks = checks.filter(
+        ({ table_name, semantic_constraint }) =>
+          table_name === outboxTable &&
+          semantic_constraint?.kind === "text_enum" &&
+          semantic_constraint.column_name === "event_type",
+      );
+      if (eventTypeChecks.length !== 1) {
+        throw new Error(
+          `${contract.owner_service}.${outboxTable} must bind event_type to exactly one owner-union CHECK`,
+        );
+      }
+    }
+    if (columns.has("event_type") && columns.has("producer")) {
+      const producerChecks = checks.filter(
+        ({ table_name, semantic_constraint }) =>
+          table_name === outboxTable &&
+          semantic_constraint?.kind === "text_equals" &&
+          semantic_constraint.column_name === "producer" &&
+          semantic_constraint.value === contract.owner_service,
+      );
+      if (producerChecks.length !== 1) {
+        throw new Error(
+          `${contract.owner_service}.${outboxTable} must bind producer to its owner service CHECK`,
+        );
+      }
+    } else if (columns.has("event_type") && columns.has("payload")) {
+      const producerChecks = checks.filter(
+        ({ table_name, semantic_constraint }) =>
+          table_name === outboxTable &&
+          semantic_constraint?.kind === "json_text_equals" &&
+          semantic_constraint.column_name === "payload" &&
+          semantic_constraint.field_name === "producer" &&
+          semantic_constraint.value === contract.owner_service,
+      );
+      if (producerChecks.length !== 1) {
+        throw new Error(
+          `${contract.owner_service}.${outboxTable} must bind its envelope producer to the owner service CHECK`,
+        );
+      }
+    } else if (columns.has("source_event_id")) {
+      if (!columns.has("payload_hash")) {
+        throw new Error(
+          `${contract.owner_service}.${outboxTable} controlled outbox must pin payload_hash`,
+        );
+      }
+      const sourceForeignKeys = contract.foreign_keys.filter(
+        ({ table_name, columns: sourceColumns, referenced_columns }) =>
+          table_name === outboxTable &&
+          sourceColumns.length === 1 &&
+          sourceColumns[0] === "source_event_id" &&
+          referenced_columns.length === 1 &&
+          referenced_columns[0] === "id",
+      );
+      if (sourceForeignKeys.length !== 1) {
+        throw new Error(
+          `${contract.owner_service}.${outboxTable} must bind source_event_id to exactly one canonical event table`,
+        );
+      }
+      const sourceTable = sourceForeignKeys[0]?.referenced_table;
+      const sourceEventTypeChecks = checks.filter(
+        ({ table_name, semantic_constraint }) =>
+          table_name === sourceTable &&
+          semantic_constraint?.kind === "text_enum" &&
+          semantic_constraint.column_name === "event_type",
+      );
+      const sourceEnvelopeChecks = checks.filter(
+        ({ table_name, semantic_constraint }) =>
+          table_name === sourceTable &&
+          semantic_constraint?.kind === "json_event_envelope" &&
+          semantic_constraint.column_name === "envelope" &&
+          semantic_constraint.producer_value === contract.owner_service &&
+          [
+            ["event_id", "id"],
+            ["event_type", "event_type"],
+            ["idempotency_key", "idempotency_key"],
+          ].every(([fieldName, columnName]) =>
+            semantic_constraint.field_bindings.some(
+              ({ field_name, column_name }) =>
+                field_name === fieldName && column_name === columnName,
+            ),
+          ),
+      );
+      if (
+        sourceEventTypeChecks.length !== 1 ||
+        sourceEnvelopeChecks.length !== 1
+      ) {
+        throw new Error(
+          `${contract.owner_service}.${outboxTable} must reference one owner-union, owner-produced canonical event envelope`,
+        );
+      }
     }
   }
   const appendOnlySet = new Set<string>(contract.append_only_tables);
@@ -1582,6 +1758,309 @@ export function verifyOwnerWriterDefinitionV1(
   );
 }
 
+function checkTextLiterals(definition: string): readonly string[] {
+  return [...definition.matchAll(/'((?:''|[^'])*)'/gu)].map((match) =>
+    (match[1] ?? "").replace(/''/gu, "'"),
+  );
+}
+
+function stripBalancedOuterParentheses(value: string): string {
+  let current = value.trim();
+  while (current.startsWith("(") && current.endsWith(")")) {
+    let depth = 0;
+    let inString = false;
+    let matchingIndex = -1;
+    for (let index = 0; index < current.length; index += 1) {
+      const character = current[index];
+      if (character === "'") {
+        if (inString && current[index + 1] === "'") {
+          index += 1;
+          continue;
+        }
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (character === "(") depth += 1;
+      if (character === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          matchingIndex = index;
+          break;
+        }
+      }
+    }
+    if (matchingIndex !== current.length - 1) break;
+    current = current.slice(1, -1).trim();
+  }
+  return current;
+}
+
+function postgresCheckExpression(definition: string): string | undefined {
+  const match = /^\s*check\s*\(([\s\S]*)\)\s*$/iu.exec(definition);
+  return match === null
+    ? undefined
+    : stripBalancedOuterParentheses(match[1] ?? "");
+}
+
+function splitCheckConjunction(expression: string): readonly string[] {
+  const terms: string[] = [];
+  let depth = 0;
+  let inString = false;
+  let start = 0;
+  for (let index = 0; index < expression.length; index += 1) {
+    const character = expression[index];
+    if (character === "'") {
+      if (inString && expression[index + 1] === "'") {
+        index += 1;
+        continue;
+      }
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (character === "(") {
+      depth += 1;
+      continue;
+    }
+    if (character === ")") {
+      depth -= 1;
+      continue;
+    }
+    if (
+      depth === 0 &&
+      expression.slice(index, index + 3).toLowerCase() === "and" &&
+      !/[a-z0-9_]/iu.test(expression[index - 1] ?? " ") &&
+      !/[a-z0-9_]/iu.test(expression[index + 3] ?? " ")
+    ) {
+      terms.push(stripBalancedOuterParentheses(expression.slice(start, index)));
+      start = index + 3;
+      index += 2;
+    }
+  }
+  terms.push(stripBalancedOuterParentheses(expression.slice(start)));
+  return terms;
+}
+
+const postgresTextCastPattern =
+  "(?:\\s*::\\s*(?:pg_catalog\\.)?text)?";
+
+function parsePostgresTextArray(content: string): readonly string[] | undefined {
+  const literalWithCast = new RegExp(
+    `'(?:''|[^'])*'${postgresTextCastPattern}`,
+    "giu",
+  );
+  const shape = content
+    .replace(literalWithCast, "L")
+    .replace(/\s/gu, "");
+  if (!/^L(?:,L)*$/u.test(shape)) return undefined;
+  return checkTextLiterals(content);
+}
+
+function matchesPostgresTextEnum(
+  expression: string,
+  column: string,
+  allowedValues: readonly string[],
+): boolean {
+  if (allowedValues.length === 1) {
+    const value = escapeRegularExpression(
+      (allowedValues[0] ?? "").replace(/'/gu, "''"),
+    );
+    return new RegExp(
+      `^\\b${column}\\b\\s*=\\s*'${value}'${postgresTextCastPattern}$`,
+      "iu",
+    ).test(expression);
+  }
+  const anyMatch = new RegExp(
+    `^\\b${column}\\b\\s*=\\s*(?:pg_catalog\\.)?any\\s*\\(\\s*array\\s*\\[([\\s\\S]*)\\]\\s*(?:::\\s*(?:pg_catalog\\.)?text\\s*\\[\\s*\\])?\\s*\\)$`,
+    "iu",
+  ).exec(expression);
+  const inMatch = new RegExp(
+    `^\\b${column}\\b\\s+in\\s*\\(([\\s\\S]*)\\)$`,
+    "iu",
+  ).exec(expression);
+  const content = anyMatch?.[1] ?? inMatch?.[1];
+  if (content === undefined) return false;
+  const observedValues = parsePostgresTextArray(content);
+  return (
+    observedValues !== undefined &&
+    sorted(observedValues).join("\u0000") ===
+      sorted(allowedValues).join("\u0000")
+  );
+}
+
+function matchesRequiredJsonKeys(
+  term: string,
+  column: string,
+  requiredKeys: readonly string[],
+): boolean {
+  const match = new RegExp(
+    `^\\b${column}\\b\\s*\\?&\\s*array\\s*\\[([\\s\\S]*)\\]\\s*(?:::\\s*(?:pg_catalog\\.)?text\\s*\\[\\s*\\])?$`,
+    "iu",
+  ).exec(term);
+  const observedKeys =
+    match?.[1] === undefined
+      ? undefined
+      : parsePostgresTextArray(match[1]);
+  return (
+    observedKeys !== undefined &&
+    sorted(observedKeys).join("\u0000") ===
+      sorted(requiredKeys).join("\u0000")
+  );
+}
+
+function matchesJsonObjectType(term: string, column: string): boolean {
+  return new RegExp(
+    `^(?:pg_catalog\\.)?jsonb_typeof\\s*\\(\\s*\\b${column}\\b\\s*\\)\\s*=\\s*'object'${postgresTextCastPattern}$`,
+    "iu",
+  ).test(term);
+}
+
+function matchesJsonObjectLength(
+  term: string,
+  column: string,
+  expectedLength: number,
+): boolean {
+  return new RegExp(
+    `^(?:pg_catalog\\.)?jsonb_object_length\\s*\\(\\s*\\b${column}\\b\\s*\\)\\s*=\\s*${expectedLength}$`,
+    "iu",
+  ).test(term);
+}
+
+function matchesJsonTextEquality(
+  term: string,
+  jsonColumn: string,
+  fieldName: string,
+  valuePattern: string,
+): boolean {
+  const field = escapeRegularExpression(fieldName);
+  return new RegExp(
+    `^\\(?\\s*\\b${jsonColumn}\\b\\s*->>\\s*'${field}'${postgresTextCastPattern}\\s*\\)?\\s*=\\s*${valuePattern}$`,
+    "iu",
+  ).test(term);
+}
+
+function checkSemanticMatches(
+  definition: string,
+  semantic: NonNullable<OwnerDatabaseCheckV1["semantic_constraint"]>,
+): boolean {
+  const column = escapeRegularExpression(semantic.column_name);
+  const expression = postgresCheckExpression(definition);
+  if (expression === undefined) return false;
+  if (semantic.kind === "text_equals") {
+    const value = escapeRegularExpression(
+      semantic.value.replace(/'/gu, "''"),
+    );
+    return new RegExp(
+      `^\\b${column}\\b\\s*=\\s*'${value}'${postgresTextCastPattern}$`,
+      "iu",
+    ).test(expression);
+  }
+  if (semantic.kind === "json_text_equals") {
+    const value = escapeRegularExpression(
+      semantic.value.replace(/'/gu, "''"),
+    );
+    const terms = splitCheckConjunction(expression);
+    const keyTerms = terms.filter((term) =>
+      matchesRequiredJsonKeys(term, column, semantic.required_keys),
+    );
+    const equalityTerms = terms.filter((term) =>
+      matchesJsonTextEquality(
+        term,
+        column,
+        semantic.field_name,
+        `'${value}'${postgresTextCastPattern}`,
+      ),
+    );
+    const objectTerms = terms.filter((term) =>
+      matchesJsonObjectType(term, column),
+    );
+    const lengthTerms = terms.filter((term) =>
+      matchesJsonObjectLength(term, column, semantic.required_keys.length),
+    );
+    return (
+      keyTerms.length === 1 &&
+      equalityTerms.length === 1 &&
+      objectTerms.length <= 1 &&
+      lengthTerms.length === 1 &&
+      terms.length ===
+        keyTerms.length +
+          equalityTerms.length +
+          objectTerms.length +
+          lengthTerms.length
+    );
+  }
+  if (semantic.kind === "json_event_envelope") {
+    const producer = escapeRegularExpression(
+      semantic.producer_value.replace(/'/gu, "''"),
+    );
+    const terms = splitCheckConjunction(expression);
+    const objectTerms = terms.filter((term) =>
+      matchesJsonObjectType(term, column),
+    );
+    const keyTerms = terms.filter((term) =>
+      matchesRequiredJsonKeys(term, column, semantic.required_keys),
+    );
+    const lengthTerms = terms.filter((term) =>
+      matchesJsonObjectLength(term, column, semantic.required_keys.length),
+    );
+    const producerTerms = terms.filter((term) =>
+      matchesJsonTextEquality(
+        term,
+        column,
+        "producer",
+        `'${producer}'${postgresTextCastPattern}`,
+      ),
+    );
+    const bindingTerms = semantic.field_bindings.map(
+      ({ field_name, column_name }) =>
+        terms.filter((term) =>
+          matchesJsonTextEquality(
+            term,
+            column,
+            field_name,
+            `\\b${escapeRegularExpression(column_name)}\\b`,
+          ),
+        ),
+    );
+    return (
+      objectTerms.length === 1 &&
+      keyTerms.length === 1 &&
+      lengthTerms.length === 1 &&
+      producerTerms.length === 1 &&
+      bindingTerms.every((matches) => matches.length === 1) &&
+      terms.length ===
+        objectTerms.length +
+          keyTerms.length +
+          lengthTerms.length +
+          producerTerms.length +
+          bindingTerms.reduce((count, matches) => count + matches.length, 0)
+    );
+  }
+  return matchesPostgresTextEnum(
+    expression,
+    column,
+    semantic.allowed_values,
+  );
+}
+
+export function verifyOwnerDatabaseCheckDefinitionV1(
+  expectation: OwnerDatabaseCheckV1,
+  definition: string,
+): void {
+  if (
+    expectation.required_definition_fragments.some(
+      (fragment) => !definition.includes(fragment),
+    ) ||
+    (expectation.semantic_constraint !== undefined &&
+      !checkSemanticMatches(definition, expectation.semantic_constraint))
+  ) {
+    throw new Error(
+      `PostgreSQL CHECK constraint drift: ${expectation.table_name}.${expectation.constraint_name}`,
+    );
+  }
+}
+
 /**
  * Reads PostgreSQL catalogs directly. Callers cannot supply a deployment
  * artifact, verification timestamp, grants, function configuration, or table
@@ -2296,9 +2775,11 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     constraint_name: string;
     table_name: string;
     definition: string;
+    validated: boolean;
   }>(
     `SELECT con.conname AS constraint_name, c.relname AS table_name,
-            pg_catalog.pg_get_constraintdef(con.oid, true) AS definition
+            pg_catalog.pg_get_constraintdef(con.oid, true) AS definition,
+            con.convalidated AS validated
        FROM pg_catalog.pg_constraint con
        JOIN pg_catalog.pg_class c ON c.oid = con.conrelid
        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -2311,16 +2792,12 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
         constraint_name === expectation.constraint_name &&
         table_name === expectation.table_name,
     );
-    if (
-      observed === undefined ||
-      expectation.required_definition_fragments.some(
-        (fragment) => !observed.definition.includes(fragment),
-      )
-    ) {
+    if (observed === undefined || !observed.validated) {
       throw new Error(
         `PostgreSQL CHECK constraint drift: ${expectation.table_name}.${expectation.constraint_name}`,
       );
     }
+    verifyOwnerDatabaseCheckDefinitionV1(expectation, observed.definition);
   }
 
   const contractFingerprint = fingerprint(contract);
@@ -2345,6 +2822,7 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     runtime_schema_privileges: runtimeSchemaPrivilegeResult.rows,
     foreign_keys: foreignKeyResult.rows,
     unique_constraints: uniqueConstraintResult.rows,
+    indexes: indexResult.rows,
     check_constraints: checkConstraintResult.rows,
   });
   return Object.freeze({
