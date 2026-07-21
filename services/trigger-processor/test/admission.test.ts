@@ -1,3 +1,4 @@
+import type { VerifiedWorkloadCredential } from "@pai/auth";
 import { TriggerAdmissionDecisionV1Schema } from "@pai/contracts";
 import { Value } from "@sinclair/typebox/value";
 import { describe, expect, it } from "vitest";
@@ -126,7 +127,7 @@ describe("Trigger admission", () => {
         actor_type: "system",
         foreground_slot_process_id: "process-raced-in",
       }),
-    ).toThrow("identity and foreground slot generation");
+    ).toThrow(/TrustedAdmissionFactsV1|identity and foreground slot generation/);
 
     expect(() =>
       decideTriggerAdmissionV1({
@@ -140,7 +141,7 @@ describe("Trigger admission", () => {
         active_process_updated_at: "2026-07-20T08:00:00.000Z",
         foreground_slot_process_id: "process-a",
       }),
-    ).toThrow("identity and foreground slot generation");
+    ).toThrow(/TrustedAdmissionFactsV1|identity and foreground slot generation/);
 
     expect(() =>
       decideTriggerAdmissionV1({
@@ -151,7 +152,7 @@ describe("Trigger admission", () => {
         active_process_updated_at: "2026-07-20T08:00:00.000Z",
         foreground_slot_process_id: "process-b",
       }),
-    ).toThrow("identity and foreground slot generation");
+    ).toThrow(/TrustedAdmissionFactsV1|identity and foreground slot generation/);
   });
 
   it("rejects empty process identities and invalid process timestamps", () => {
@@ -164,7 +165,7 @@ describe("Trigger admission", () => {
         active_process_updated_at: "2026-07-20T08:00:00.000Z",
         foreground_slot_process_id: "",
       }),
-    ).toThrow("identity and foreground slot generation");
+    ).toThrow(/TrustedAdmissionFactsV1|identity and foreground slot generation/);
     expect(() =>
       decideTriggerAdmissionV1({
         ...base,
@@ -174,7 +175,22 @@ describe("Trigger admission", () => {
         active_process_updated_at: "not-a-timestamp",
         foreground_slot_process_id: "process-a",
       }),
-    ).toThrow("identity and foreground slot generation");
+    ).toThrow(/TrustedAdmissionFactsV1|identity and foreground slot generation/);
+  });
+
+  it("rejects unknown and malformed fact discriminants before domain access", () => {
+    expect(() =>
+      decideTriggerAdmissionV1({
+        ...base,
+        active_process: "cooldown_typo",
+      } as never),
+    ).toThrow("TrustedAdmissionFactsV1");
+    expect(() => decideTriggerAdmissionV1(null as never)).toThrow(
+      "TrustedAdmissionFactsV1",
+    );
+    expect(() =>
+      decideTriggerAdmissionV1({ ...base, caller_priority: "strong" } as never),
+    ).toThrow("TrustedAdmissionFactsV1");
   });
 
   it("produces TypeBox-valid decisions for every foreground discriminant", () => {
@@ -340,19 +356,61 @@ describe("Trigger admission", () => {
       },
     } as unknown as TriggerProcessorOwnerDatabaseV1;
     const application = createTriggerAdmissionApplicationV1(database);
+    const credential = {
+      claims: {
+        iss: "pai-workload",
+        sub: "observation_gateway",
+        aud: "trigger_processor",
+        jti: "credential-1",
+        iat: 100,
+        nbf: 100,
+        exp: 200,
+        capability: ["trigger.submit.chat"],
+        scope_kind: "bot",
+        workspace_id: "workspace-1",
+        bot_id: "bot-1",
+        owner_agent_id: "agent-1",
+        deployment_environment: "dev",
+        release_channel: "stable",
+        delegated_principal: {
+          principal_type: "user",
+          principal_id: "user-1",
+          roles: ["user"],
+          source_issuer: "supabase",
+          source_subject: "user-1",
+          auth_time: 100,
+          scope_kind: "bot",
+          workspace_id: "workspace-1",
+          bot_id: "bot-1",
+          owner_agent_id: "agent-1",
+          deployment_environment: "dev",
+          release_channel: "stable",
+        },
+      },
+      protectedHeader: { alg: "EdDSA", kid: "workload-key-1", typ: "JWT" },
+    } as const satisfies VerifiedWorkloadCredential;
+    const command = {
+      trigger_id: "trigger-1",
+      process_id: "process-1",
+      scope: {
+        scope_kind: "bot",
+        workspace_id: "workspace-1",
+        bot_id: "bot-1",
+        owner_agent_id: "agent-1",
+        deployment_environment: "dev",
+        release_channel: "stable",
+      },
+      source: "chat",
+      payload: { text: "hello" },
+      dedupe_key: "dedupe-1",
+      request_hash: "request-hash-1",
+      idempotency_key: "submit-1",
+      trace_id: "trace-1",
+      is_catch_up: false,
+      explicit_interrupt: false,
+    } as const;
     await expect(
-      application.admit({
-        trigger_id: "trigger-1",
-        process_id: "process-1",
-        scope: { bot_id: "bot-1" },
-        actor: { actor_type: "user", actor_id: "user-1" },
-        payload: { text: "hello" },
-        dedupe_key: "dedupe-1",
-        request_hash: "request-hash-1",
-        idempotency_key: "submit-1",
-        trace_id: "trace-1",
-        facts: base,
-      }),
+      application.admit(credential, command),
     ).resolves.toEqual({ persisted: true });
     expect(calls[0]?.transaction).toMatchObject({
       operation: "admit_trigger",
@@ -365,18 +423,75 @@ describe("Trigger admission", () => {
       arguments: expect.objectContaining({
         p_trigger_id: "trigger-1",
         p_process_id: "process-1",
-        p_priority: "weak",
-        p_admission_precondition: {
-          kind: "idle",
-          process_id: null,
-          slot_generation: 7,
+        p_actor: { actor_type: "user", actor_id: "user-1" },
+        p_authenticated_context: {
+          workload_subject: "observation_gateway",
+          credential_jti: "credential-1",
+          credential_kid: "workload-key-1",
+          capability: "trigger.submit.chat",
+          delegated_principal: credential.claims.delegated_principal,
         },
       }),
     });
 
-    const app = buildTriggerProcessorApp({ logger: false }, database);
-    expect(app.hasDecorator("ownerDatabase")).toBe(true);
+    await expect(
+      application.admit(credential, {
+        ...command,
+        scope: { ...command.scope, workspace_id: "workspace-attacker" },
+      }),
+    ).rejects.toThrow("complete bot scope");
+    await expect(
+      application.admit(credential, { ...command, source: "timer" }),
+    ).rejects.toThrow(/trigger.submit.timer|timer_trigger_app/);
+    await expect(
+      application.admit(credential, { ...command, actor: { actor_id: "attacker" } }),
+    ).rejects.toThrow("AdmitTriggerCommandV1");
+
+    const app = buildTriggerProcessorApp({ logger: false }, application);
+    expect(app.hasDecorator("ownerDatabase")).toBe(false);
     expect(app.hasDecorator("triggerAdmission")).toBe(true);
     await app.close();
+
+    const verificationRequirements: unknown[] = [];
+    const routedApp = buildTriggerProcessorApp(
+      {
+        logger: false,
+        auth: {
+          verifier: {
+            async verify(_token, requirements) {
+              verificationRequirements.push(requirements);
+              return credential;
+            },
+          },
+        },
+      },
+      application,
+    );
+    const { source: _source, ...routeBody } = command;
+    const routed = await routedApp.inject({
+      method: "POST",
+      url: "/internal/v1/triggers/admit/chat",
+      headers: { authorization: "Bearer aaa.bbb.ccc" },
+      payload: routeBody,
+    });
+    expect(routed.statusCode).toBe(200);
+    expect(verificationRequirements).toEqual([
+      expect.objectContaining({
+        audience: "trigger_processor",
+        requiredCapabilities: ["trigger.submit.chat"],
+        allowedCallers: ["observation_gateway"],
+      }),
+    ]);
+    const deniedScope = await routedApp.inject({
+      method: "POST",
+      url: "/internal/v1/triggers/admit/chat",
+      headers: { authorization: "Bearer aaa.bbb.ccc" },
+      payload: {
+        ...routeBody,
+        scope: { ...routeBody.scope, workspace_id: "workspace-attacker" },
+      },
+    });
+    expect(deniedScope.statusCode).toBe(403);
+    await routedApp.close();
   });
 });

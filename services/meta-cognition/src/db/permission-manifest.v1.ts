@@ -1,5 +1,6 @@
 import {
   defineOwnerRepositoryContractV1,
+  ownerForeignKeysV1,
   ownerFunctionSignatureV1,
   type OwnerRepositoryPortV1,
   type OwnerUnitOfWorkPortV1,
@@ -305,7 +306,25 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       ], returns: "jsonb",
     }),
     ],
-  foreign_keys: [],
+  foreign_key_snapshot: {
+    status: "complete",
+    source: "Database Design revision 466 / fresh 0400_meta_cognition canonical DDL applied to PostgreSQL 17",
+  },
+  foreign_keys: ownerForeignKeysV1("meta_cognition", [
+    ["feedback_requests_meta_job_id_fkey","feedback_requests",["meta_job_id"],"meta_jobs",["id"]],
+    ["meta_command_outbox_meta_job_id_fkey","meta_command_outbox",["meta_job_id"],"meta_jobs",["id"]],
+    ["meta_job_audit_logs_meta_job_id_fkey","meta_job_audit_logs",["meta_job_id"],"meta_jobs",["id"]],
+    ["meta_job_leases_job_id_fkey","meta_job_leases",["job_id"],"meta_jobs",["id"]],
+    ["meta_memory_split_chunks_compensation_outbox_id_fkey","meta_memory_split_chunks",["compensation_outbox_id"],"meta_command_outbox",["id"]],
+    ["meta_memory_split_chunks_split_plan_id_fkey","meta_memory_split_chunks",["split_plan_id"],"meta_memory_split_plans",["id"]],
+    ["meta_memory_split_plans_meta_job_id_fkey","meta_memory_split_plans",["meta_job_id"],"meta_jobs",["id"]],
+    ["meta_memory_split_plans_supersedes_plan_id_fkey","meta_memory_split_plans",["supersedes_plan_id"],"meta_memory_split_plans",["id"]],
+    ["meta_results_meta_job_id_fkey","meta_results",["meta_job_id"],"meta_jobs",["id"]],
+    ["personality_suggestions_meta_job_id_fkey","personality_suggestions",["meta_job_id"],"meta_jobs",["id"]],
+    ["personality_suggestions_superseded_by_suggestion_id_fkey","personality_suggestions",["superseded_by_suggestion_id"],"personality_suggestions",["id"]],
+    ["skill_candidates_meta_job_id_fkey","skill_candidates",["meta_job_id"],"meta_jobs",["id"]],
+    ["skill_candidates_superseded_by_candidate_id_fkey","skill_candidates",["superseded_by_candidate_id"],"skill_candidates",["id"]],
+  ]),
   append_only_tables: [
       "trigger_process_events",
       "experience_records",

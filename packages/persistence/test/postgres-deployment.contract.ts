@@ -76,13 +76,24 @@ const POSTGRES_CONTRACT = defineOwnerRepositoryContractV1({
       returns: "jsonb",
     }),
   ],
+  foreign_key_snapshot: {
+    status: "complete",
+    source: "postgres deployment contract fixture",
+  },
   foreign_keys: [
     {
       constraint_name: "contract_children_parent_fk",
       table_name: "contract_children",
       columns: ["parent_key", "parent_version"],
+      referenced_schema: "timer",
       referenced_table: "contract_parents",
       referenced_columns: ["parent_key", "parent_version"],
+      match_type: "simple",
+      on_update: "no_action",
+      on_delete: "no_action",
+      deferrable: false,
+      initially_deferred: false,
+      validated: true,
     },
   ],
   append_only_tables: ["contract_audits"],
@@ -325,6 +336,23 @@ describePostgres("PostgreSQL owner deployment verification", () => {
     ["PUBLIC execute", "GRANT EXECUTE ON FUNCTION timer.write_contract_child_v1(text, bigint, text, jsonb) TO PUBLIC"],
     ["wrong search_path", "ALTER FUNCTION timer.write_contract_child_v1(text, bigint, text, jsonb) SET search_path = public"],
     ["missing composite FK", "ALTER TABLE timer.contract_children DROP CONSTRAINT contract_children_parent_fk"],
+    ["undeclared column", "ALTER TABLE timer.contract_children ADD COLUMN attacker_note text"],
+    [
+      "foreign-key delete action",
+      `ALTER TABLE timer.contract_children DROP CONSTRAINT contract_children_parent_fk;
+       ALTER TABLE timer.contract_children ADD CONSTRAINT contract_children_parent_fk
+       FOREIGN KEY (parent_key, parent_version)
+       REFERENCES timer.contract_parents(parent_key, parent_version)
+       ON DELETE CASCADE`,
+    ],
+    [
+      "unvalidated foreign key",
+      `ALTER TABLE timer.contract_children DROP CONSTRAINT contract_children_parent_fk;
+       ALTER TABLE timer.contract_children ADD CONSTRAINT contract_children_parent_fk
+       FOREIGN KEY (parent_key, parent_version)
+       REFERENCES timer.contract_parents(parent_key, parent_version)
+       NOT VALID`,
+    ],
     [
       "DELETE after a declared immutable append",
       replacementWriterSql({
@@ -344,6 +372,13 @@ describePostgres("PostgreSQL owner deployment verification", () => {
       }),
     ],
     [
+      "comma-separated cross-owner SECURITY DEFINER read",
+      replacementWriterSql({
+        extraStatement:
+          "PERFORM 1 FROM timer.contract_parents p, memory.owner_secrets s WHERE false;",
+      }),
+    ],
+    [
       "unused expected-version argument",
       replacementWriterSql({ expectedVersionCheck: "current_version <> 0" }),
     ],
@@ -351,6 +386,13 @@ describePostgres("PostgreSQL owner deployment verification", () => {
       "expected-version argument used only as a no-op null check",
       replacementWriterSql({
         expectedVersionCheck: "p_expected_parent_version IS NOT NULL",
+      }),
+    ],
+    [
+      "expected-version self comparison",
+      replacementWriterSql({
+        expectedVersionCheck:
+          "p_expected_parent_version = p_expected_parent_version",
       }),
     ],
     [

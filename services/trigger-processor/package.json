@@ -5,6 +5,6 @@
   "type": "module",
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
   "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc -p tsconfig.json --noEmit", "test": "vitest run test" },
-  "dependencies": { "@pai/contracts": "workspace:*", "@pai/persistence": "workspace:*", "@pai/service-kit": "workspace:*", "@sinclair/typebox": "catalog:" },
+  "dependencies": { "@pai/auth": "workspace:*", "@pai/contracts": "workspace:*", "@pai/persistence": "workspace:*", "@pai/service-kit": "workspace:*", "@sinclair/typebox": "catalog:" },
   "devDependencies": { "typescript": "catalog:", "vitest": "catalog:" }
 }

@@ -1,5 +1,6 @@
 import {
   defineOwnerRepositoryContractV1,
+  ownerForeignKeysV1,
   ownerFunctionSignatureV1,
   type OwnerRepositoryPortV1,
   type OwnerUnitOfWorkPortV1,
@@ -257,7 +258,20 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
       returns: "jsonb",
     }),
     ],
-    foreign_keys: [],
+    foreign_key_snapshot: {
+      status: "complete",
+      source: "Database Design revision 466 / fresh 0500_knowthat canonical DDL applied to PostgreSQL 17",
+    },
+    foreign_keys: ownerForeignKeysV1("knowthat", [
+      ["knowthat_candidate_reviews_fact_id_fkey","knowthat_candidate_reviews",["fact_id"],"knowthat_facts",["id"]],
+      ["knowthat_conflicts_left_fact_id_fkey","knowthat_conflicts",["left_fact_id"],"knowthat_facts",["id"]],
+      ["knowthat_conflicts_right_fact_id_fkey","knowthat_conflicts",["right_fact_id"],"knowthat_facts",["id"]],
+      ["knowthat_fact_query_versions_fact_id_fkey","knowthat_fact_query_versions",["fact_id"],"knowthat_facts",["id"]],
+      ["knowthat_fact_revisions_fact_id_fkey","knowthat_fact_revisions",["fact_id"],"knowthat_facts",["id"]],
+      ["knowthat_feedback_events_fact_id_fkey","knowthat_feedback_events",["fact_id"],"knowthat_facts",["id"]],
+      ["knowthat_linkage_checks_fact_id_fkey","knowthat_linkage_checks",["fact_id"],"knowthat_facts",["id"]],
+      ["semantic_key_aliases_target_fact_id_fkey","semantic_key_aliases",["target_fact_id"],"knowthat_facts",["id"]],
+    ]),
     append_only_tables: [
       "knowthat_fact_revisions",
       "knowthat_conflicts",

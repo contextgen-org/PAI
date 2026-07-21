@@ -103,8 +103,25 @@ export interface OwnerForeignKeyV1<TTable extends string = string> {
   readonly constraint_name: string;
   readonly table_name: TTable;
   readonly columns: readonly string[];
+  readonly referenced_schema: string;
   readonly referenced_table: TTable;
   readonly referenced_columns: readonly string[];
+  readonly match_type: "simple" | "full" | "partial";
+  readonly on_update:
+    | "no_action"
+    | "restrict"
+    | "cascade"
+    | "set_null"
+    | "set_default";
+  readonly on_delete:
+    | "no_action"
+    | "restrict"
+    | "cascade"
+    | "set_null"
+    | "set_default";
+  readonly deferrable: boolean;
+  readonly initially_deferred: boolean;
+  readonly validated: boolean;
 }
 
 export interface OwnerDatabaseCheckV1<TTable extends string = string> {
@@ -112,6 +129,105 @@ export interface OwnerDatabaseCheckV1<TTable extends string = string> {
   readonly table_name: TTable;
   readonly required_definition_fragments: readonly string[];
 }
+
+export function ownerForeignKeyV1<
+  const TSchema extends OwnerSchemaV1,
+  const TTable extends string,
+>(input: Readonly<{
+  schema: TSchema;
+  constraint_name: string;
+  table_name: TTable;
+  columns: readonly string[];
+  referenced_table: TTable;
+  referenced_columns: readonly string[];
+  match_type?: OwnerForeignKeyV1["match_type"];
+  on_update?: OwnerForeignKeyV1["on_update"];
+  on_delete?: OwnerForeignKeyV1["on_delete"];
+  deferrable?: boolean;
+  initially_deferred?: boolean;
+  validated?: boolean;
+}>): OwnerForeignKeyV1<TTable> {
+  return Object.freeze({
+    constraint_name: input.constraint_name,
+    table_name: input.table_name,
+    columns: Object.freeze([...input.columns]),
+    referenced_schema: input.schema,
+    referenced_table: input.referenced_table,
+    referenced_columns: Object.freeze([...input.referenced_columns]),
+    match_type: input.match_type ?? "simple",
+    on_update: input.on_update ?? "no_action",
+    on_delete: input.on_delete ?? "no_action",
+    deferrable: input.deferrable ?? false,
+    initially_deferred: input.initially_deferred ?? false,
+    validated: input.validated ?? true,
+  });
+}
+
+export type OwnerForeignKeyTupleV1<TTable extends string = string> = readonly [
+  constraint_name: string,
+  table_name: TTable,
+  columns: readonly string[],
+  referenced_table: TTable,
+  referenced_columns: readonly string[],
+  overrides?: Readonly<
+    Partial<
+      Pick<
+        OwnerForeignKeyV1,
+        | "match_type"
+        | "on_update"
+        | "on_delete"
+        | "deferrable"
+        | "initially_deferred"
+        | "validated"
+      >
+    >
+  >,
+];
+
+export function ownerForeignKeysV1<
+  const TSchema extends OwnerSchemaV1,
+  const TTable extends string,
+>(
+  schema: TSchema,
+  entries: readonly OwnerForeignKeyTupleV1<TTable>[],
+): readonly OwnerForeignKeyV1<TTable>[] {
+  return Object.freeze(
+    entries.map(
+      ([
+        constraint_name,
+        table_name,
+        columns,
+        referenced_table,
+        referenced_columns,
+        overrides = {},
+      ]) =>
+        ownerForeignKeyV1({
+          schema,
+          constraint_name,
+          table_name,
+          columns,
+          referenced_table,
+          referenced_columns,
+          ...overrides,
+        }),
+    ),
+  );
+}
+
+export type OwnerForeignKeySnapshotV1 =
+  | Readonly<{
+      status: "complete";
+      source: string;
+    }>
+  | Readonly<{
+      status: "known_empty";
+      source: string;
+      justification: string;
+    }>
+  | Readonly<{
+      status: "pending";
+      reason: string;
+    }>;
 
 export interface OwnerRepositoryContractV1<
   TService extends OwnerDatabaseServiceIdV1 = OwnerDatabaseServiceIdV1,
@@ -138,6 +254,7 @@ export interface OwnerRepositoryContractV1<
   readonly table_permissions: readonly OwnerTablePermissionV1<TTable>[];
   readonly mutable_writers: readonly TWriter[];
   readonly function_signatures: TSignatures;
+  readonly foreign_key_snapshot: OwnerForeignKeySnapshotV1;
   readonly foreign_keys: readonly OwnerForeignKeyV1<TTable>[];
   readonly database_checks?: readonly OwnerDatabaseCheckV1<TTable>[];
   readonly append_only_tables: readonly TTable[];
@@ -203,7 +320,10 @@ function hasConcurrencyArgument(
 ): boolean {
   const names = signature.arguments.map(({ argument_name }) => argument_name);
   if (control === "slot_and_process_state_fence") {
-    return names.includes("p_admission_precondition");
+    return (
+      names.includes("p_admission_precondition") ||
+      names.includes("p_admission_request")
+    );
   }
   if (control === "generation_fence") {
     return names.some(
@@ -376,6 +496,23 @@ export function defineOwnerRepositoryContractV1<
     "foreign_keys.constraint_name",
     (contract.foreign_keys ?? []).map(({ constraint_name }) => constraint_name),
   );
+  if (
+    (contract.foreign_key_snapshot.status === "complete" &&
+      contract.foreign_keys.length === 0) ||
+    (contract.foreign_key_snapshot.status === "known_empty" &&
+      (contract.foreign_keys.length !== 0 ||
+        contract.foreign_key_snapshot.justification.trim().length === 0)) ||
+    (contract.foreign_key_snapshot.status === "pending" &&
+      (contract.foreign_keys.length !== 0 ||
+        contract.foreign_key_snapshot.reason.trim().length === 0)) ||
+    (contract.foreign_key_snapshot.status !== "pending" &&
+      contract.foreign_key_snapshot.source.trim().length === 0)
+  ) {
+    throw new Error(
+      `invalid foreign-key snapshot state for ${contract.owner_service}`,
+    );
+  }
+  Object.freeze(contract.foreign_key_snapshot);
   for (const foreignKey of contract.foreign_keys ?? []) {
     assertUniqueIdentifiers(
       `${foreignKey.constraint_name}.columns`,
@@ -387,9 +524,13 @@ export function defineOwnerRepositoryContractV1<
     );
     if (
       !tableSet.has(foreignKey.table_name) ||
+      foreignKey.referenced_schema !== contract.schema ||
       !tableSet.has(foreignKey.referenced_table) ||
       foreignKey.columns.length === 0 ||
-      foreignKey.columns.length !== foreignKey.referenced_columns.length
+      foreignKey.columns.length !== foreignKey.referenced_columns.length ||
+      foreignKey.match_type === "partial" ||
+      foreignKey.initially_deferred && !foreignKey.deferrable ||
+      !foreignKey.validated
     ) {
       throw new Error(`invalid owner foreign key: ${foreignKey.constraint_name}`);
     }
@@ -645,7 +786,10 @@ function concurrencyArgumentNames(
 ): readonly string[] {
   const names = signature.arguments.map(({ argument_name }) => argument_name);
   if (control === "slot_and_process_state_fence") {
-    return names.filter((name) => name === "p_admission_precondition");
+    return names.filter(
+      (name) =>
+        name === "p_admission_precondition" || name === "p_admission_request",
+    );
   }
   if (control === "generation_fence") {
     return names.filter(
@@ -679,7 +823,6 @@ function assertConcurrencyFenceIsConsumed(
   signature: OwnerFunctionSignatureV1,
   effect: OwnerFunctionEffectV1,
   executable: string,
-  semantic: string,
 ): void {
   const candidates = concurrencyArgumentNames(
     signature,
@@ -694,7 +837,19 @@ function assertConcurrencyFenceIsConsumed(
     );
   }
   if (effect.concurrency_control === "slot_and_process_state_fence") {
-    const rowLockCount = executable.match(/\bfor\s+(?:no\s+key\s+)?update\b/gi)?.length ?? 0;
+    const statements = executable.split(";");
+    const locksTable = (table: string): boolean => {
+      const qualified = `(?:"?${escapeRegularExpression(signature.schema)}"?\\s*\\.\\s*)?"?${escapeRegularExpression(table)}"?`;
+      return statements.some(
+        (statement) =>
+          new RegExp(
+            `\\b(?:from|join)\\s+(?:only\\s+)?${qualified}\\b`,
+            "i",
+          ).test(
+            statement,
+          ) && /\bfor\s+(?:no\s+key\s+)?update\b/i.test(statement),
+      );
+    };
     const requiredPreconditionFields = [
       "process_id",
       "slot_generation",
@@ -702,12 +857,39 @@ function assertConcurrencyFenceIsConsumed(
       "status",
       "process_updated_at",
     ];
+    const usesCallerPrecondition = signature.arguments.some(
+      ({ argument_name }) => argument_name === "p_admission_precondition",
+    );
+    const comparesEveryPreconditionField = requiredPreconditionFields.every(
+      (field) => {
+        const jsonValue = `p_admission_precondition\\s*(?:->>|#>>?)\\s*(?:array\\s*\\[\\s*)?['"]${field}['"]`;
+        const comparison = "(?:=|<>|is\\s+(?:not\\s+)?distinct\\s+from)";
+        const rowValue = "(?:[a-z][a-z0-9_]*\\.)[a-z][a-z0-9_]*";
+        return (
+          new RegExp(`${jsonValue}[^;]{0,160}?${comparison}\\s*${rowValue}`, "i")
+            .test(executable) ||
+          new RegExp(`${rowValue}\\s*${comparison}[^;]{0,160}?${jsonValue}`, "i")
+            .test(executable)
+        );
+      },
+    );
+    const recomputesServerSide =
+      !usesCallerPrecondition &&
+      signature.arguments.some(
+        ({ argument_name }) => argument_name === "p_admission_request",
+      ) &&
+      ["bots", "bot_permission_bindings"].every((table) =>
+        new RegExp(
+          `\\b(?:from|join)\\s+(?:"?${escapeRegularExpression(signature.schema)}"?\\s*\\.\\s*)?"?${table}"?\\b`,
+          "i",
+        ).test(executable),
+      );
     if (
-      rowLockCount < 2 ||
-      !/\bp_admission_precondition\s*(?:->|#>)/i.test(executable) ||
-      requiredPreconditionFields.some(
-        (field) => !new RegExp(`['"]${field}['"]`, "i").test(semantic),
-      )
+      !locksTable("bot_foreground_slots") ||
+      !locksTable("trigger_processes") ||
+      (usesCallerPrecondition
+        ? !comparesEveryPreconditionField
+        : !recomputesServerSide)
     ) {
       throw new Error(
         `PostgreSQL function slot/process fence drift: ${signature.schema}.${signature.function_name}`,
@@ -719,16 +901,33 @@ function assertConcurrencyFenceIsConsumed(
     effect.concurrency_control === "expected_version" ||
     effect.concurrency_control === "generation_fence"
   ) {
+    const argumentNames = new Set(
+      signature.arguments.map(({ argument_name }) => argument_name),
+    );
     const compared = consumed.some((name) => {
       const escaped = escapeRegularExpression(name);
       const comparison = "(?:=|<>|is\\s+(?:not\\s+)?distinct\\s+from)";
-      const rowValue = "(?:[a-z][a-z0-9_]*\\.)?[a-z][a-z0-9_]*";
-      return (
-        new RegExp(`\\b${escaped}\\b\\s*${comparison}\\s*${rowValue}\\b`, "i")
-          .test(executable) ||
-        new RegExp(`\\b${rowValue}\\b\\s*${comparison}\\s*\\b${escaped}\\b`, "i")
-          .test(executable)
-      );
+      const rowValue = "((?:[a-z][a-z0-9_]*\\.)?[a-z][a-z0-9_]*)";
+      const matches = [
+        ...executable.matchAll(
+          new RegExp(`\\b${escaped}\\b\\s*${comparison}\\s*${rowValue}\\b`, "gi"),
+        ),
+        ...executable.matchAll(
+          new RegExp(`\\b${rowValue}\\b\\s*${comparison}\\s*\\b${escaped}\\b`, "gi"),
+        ),
+      ];
+      return matches.some((match) => {
+        const identifier = match[1]?.toLowerCase();
+        const column = identifier?.split(".").at(-1);
+        return (
+          identifier !== undefined &&
+          column !== undefined &&
+          identifier !== name &&
+          !argumentNames.has(identifier) &&
+          !argumentNames.has(column) &&
+          !column.startsWith("p_")
+        );
+      });
     });
     if (!compared) {
       throw new Error(
@@ -756,7 +955,6 @@ function assertFunctionEffectsInDefinition(
   definition: string,
   ownerFunctionNames: ReadonlySet<string>,
 ): void {
-  const semantic = semanticFunctionDefinition(definition);
   const executable = executableFunctionDefinition(definition);
   if (/\bexecute\b/i.test(executable)) {
     throw new Error(
@@ -783,7 +981,7 @@ function assertFunctionEffectsInDefinition(
         `PostgreSQL function effect drift: ${signature.schema}.${signature.function_name} does not ${effect.operation} ${effect.table_name}`,
       );
     }
-    assertConcurrencyFenceIsConsumed(signature, effect, executable, semantic);
+    assertConcurrencyFenceIsConsumed(signature, effect, executable);
   }
   const declaredTables = new Set<string>(signature.writes_tables);
   const mutationTargetPattern =
@@ -838,6 +1036,31 @@ function assertFunctionEffectsInDefinition(
       );
     }
   }
+  const fromClausePattern =
+    /\bfrom\b([\s\S]*?)(?=\b(?:where|group\s+by|order\s+by|having|limit|offset|returning|for\s+(?:no\s+key\s+)?update|union|intersect|except)\b|;|$)/gi;
+  const commaReadTargetPattern =
+    /,\s*(?:only\s+)?(?:"?([a-z][a-z0-9_]*)"?\s*\.\s*)?"?([a-z][a-z0-9_]*)"?(?:\s+(?:as\s+)?(?!where\b|join\b|left\b|right\b|full\b|cross\b|inner\b|group\b|order\b|having\b|limit\b|offset\b|returning\b|for\b)(?:"?[a-z][a-z0-9_]*"?))?(?=\s*(?:,|\b(?:join|left|right|full|cross|inner|where|group|order|having|limit|offset|returning|for|union|intersect|except)\b|$))/gi;
+  for (const fromClause of executable.matchAll(fromClausePattern)) {
+    const relations = fromClause[1] ?? "";
+    for (const match of relations.matchAll(commaReadTargetPattern)) {
+      const observedSchema = match[1];
+      const observedTable = match[2];
+      if (
+        observedTable === undefined ||
+        commonTableExpressions.has(observedTable)
+      ) {
+        continue;
+      }
+      if (
+        (observedSchema !== undefined && observedSchema !== contract.schema) ||
+        !declaredReads.has(observedTable)
+      ) {
+        throw new Error(
+          `undeclared PostgreSQL read in ${signature.schema}.${signature.function_name}: ${observedSchema ?? contract.schema}.${observedTable}`,
+        );
+      }
+    }
+  }
   const qualifiedFunctionCallPattern =
     /\b"?([a-z][a-z0-9_]*)"?\s*\.\s*"?([a-z][a-z0-9_]*)"?\s*\(/gi;
   for (const match of executable.matchAll(qualifiedFunctionCallPattern)) {
@@ -872,6 +1095,24 @@ function assertFunctionEffectsInDefinition(
 }
 
 /**
+ * Performs the same static writer-body verification used by the live catalog
+ * verifier. pai-infra can call this while generating a migration, before the
+ * function is applied to PostgreSQL.
+ */
+export function verifyOwnerWriterDefinitionV1(
+  contract: OwnerRepositoryContractV1,
+  signature: OwnerFunctionSignatureV1,
+  definition: string,
+): void {
+  assertFunctionEffectsInDefinition(
+    contract,
+    signature,
+    definition,
+    new Set([signature.function_name]),
+  );
+}
+
+/**
  * Reads PostgreSQL catalogs directly. Callers cannot supply a deployment
  * artifact, verification timestamp, grants, function configuration, or table
  * shape. The returned capability is bound to both contract and observed facts.
@@ -886,9 +1127,9 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     runtime_postgres: PostgresQueryPortV1;
   }>,
 ): Promise<VerifiedOwnerRepositoryDeploymentV1<TContract["owner_service"]>> {
-  if (contract.foreign_keys.length === 0) {
+  if (contract.foreign_key_snapshot.status === "pending") {
     throw new Error(
-      `canonical PostgreSQL foreign-key snapshot is missing for ${contract.owner_service}; deployment verification cannot continue`,
+      `canonical PostgreSQL foreign-key snapshot is pending for ${contract.owner_service}: ${contract.foreign_key_snapshot.reason}`,
     );
   }
   const schemaResult = await postgres.query<{
@@ -999,6 +1240,13 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
   );
   const observedColumns = new Set(
     columnResult.rows.map(({ table_name, column_name }) => `${table_name}.${column_name}`),
+  );
+  assertSameSet(
+    `${contract.schema} columns`,
+    observedColumns,
+    contract.table_permissions.flatMap(({ table_name, select_columns }) =>
+      select_columns.map((column) => `${table_name}.${column}`),
+    ),
   );
   for (const permission of contract.table_permissions) {
     for (const column of permission.select_columns) {
@@ -1289,26 +1537,46 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     constraint_name: string;
     table_name: string;
     columns: string[];
+    referenced_schema: string;
     referenced_table: string;
     referenced_columns: string[];
+    match_type: OwnerForeignKeyV1["match_type"];
+    on_update: OwnerForeignKeyV1["on_update"];
+    on_delete: OwnerForeignKeyV1["on_delete"];
+    deferrable: boolean;
+    initially_deferred: boolean;
+    validated: boolean;
   }>(
     `SELECT con.conname AS constraint_name, src.relname AS table_name,
             ARRAY(SELECT a.attname::text FROM unnest(con.conkey) WITH ORDINALITY k(attnum, ord)
                     JOIN pg_catalog.pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum
                    ORDER BY k.ord)::text[] AS columns,
+            dst_namespace.nspname AS referenced_schema,
             dst.relname AS referenced_table,
             ARRAY(SELECT a.attname::text FROM unnest(con.confkey) WITH ORDINALITY k(attnum, ord)
                     JOIN pg_catalog.pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = k.attnum
-                   ORDER BY k.ord)::text[] AS referenced_columns
+                   ORDER BY k.ord)::text[] AS referenced_columns,
+            CASE con.confmatchtype WHEN 's' THEN 'simple' WHEN 'f' THEN 'full'
+                 WHEN 'p' THEN 'partial' END AS match_type,
+            CASE con.confupdtype WHEN 'a' THEN 'no_action' WHEN 'r' THEN 'restrict'
+                 WHEN 'c' THEN 'cascade' WHEN 'n' THEN 'set_null'
+                 WHEN 'd' THEN 'set_default' END AS on_update,
+            CASE con.confdeltype WHEN 'a' THEN 'no_action' WHEN 'r' THEN 'restrict'
+                 WHEN 'c' THEN 'cascade' WHEN 'n' THEN 'set_null'
+                 WHEN 'd' THEN 'set_default' END AS on_delete,
+            con.condeferrable AS deferrable,
+            con.condeferred AS initially_deferred,
+            con.convalidated AS validated
        FROM pg_catalog.pg_constraint con
        JOIN pg_catalog.pg_class src ON src.oid = con.conrelid
        JOIN pg_catalog.pg_class dst ON dst.oid = con.confrelid
        JOIN pg_catalog.pg_namespace n ON n.oid = src.relnamespace
+       JOIN pg_catalog.pg_namespace dst_namespace ON dst_namespace.oid = dst.relnamespace
       WHERE n.nspname = $1 AND con.contype = 'f'`,
     [contract.schema],
   );
   const fkSnapshot = (row: OwnerForeignKeyV1 | (typeof foreignKeyResult.rows)[number]) =>
-    `${row.constraint_name}:${row.table_name}(${row.columns.join(",")})->${row.referenced_table}(${row.referenced_columns.join(",")})`;
+    `${row.constraint_name}:${row.table_name}(${row.columns.join(",")})->${row.referenced_schema}.${row.referenced_table}(${row.referenced_columns.join(",")}):match=${row.match_type}:update=${row.on_update}:delete=${row.on_delete}:deferrable=${row.deferrable}:initially_deferred=${row.initially_deferred}:validated=${row.validated}`;
   assertSameSet(
     `${contract.schema} foreign keys`,
     foreignKeyResult.rows.map(fkSnapshot),
@@ -1389,12 +1657,34 @@ export interface VerifiedOwnerPostgresCompositionV1<
   readonly close: () => Promise<void>;
 }
 
-export type OwnerDatabaseApplicationDependenciesV1<
+export interface OwnerDatabaseApplicationDependenciesV1<
   TContract extends OwnerRepositoryContractV1,
-> = Pick<
-  VerifiedOwnerPostgresCompositionV1<TContract>,
-  "deployment" | "repository" | "unit_of_work"
->;
+> {
+  readonly deployment: VerifiedOwnerRepositoryDeploymentV1<
+    TContract["owner_service"]
+  >;
+  readonly repository: OwnerRepositoryPortV1<TContract>;
+  readonly unit_of_work: OwnerUnitOfWorkPortV1<
+    TContract["owner_service"],
+    Readonly<{ owner: OwnerRepositoryPortV1<TContract> }>
+  >;
+}
+
+/**
+ * Creates an exact runtime capability object for application code. The pool,
+ * raw query port, readiness and lifecycle controls remain private to main.
+ */
+export function ownerDatabaseApplicationDependenciesV1<
+  const TContract extends OwnerRepositoryContractV1,
+>(
+  composition: VerifiedOwnerPostgresCompositionV1<TContract>,
+): OwnerDatabaseApplicationDependenciesV1<TContract> {
+  return Object.freeze({
+    deployment: composition.deployment,
+    repository: composition.repository,
+    unit_of_work: composition.unit_of_work,
+  });
+}
 
 /**
  * Opens the service runtime connection, verifies that exact effective identity

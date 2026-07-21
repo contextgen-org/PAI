@@ -27,7 +27,7 @@ await startService({
           ? []
           : [{ name: "owner_postgres", check: postgresComposition.checkReadiness }]),
       ],
-    }, postgresComposition);
+    });
     if (postgresComposition !== undefined) {
       app.addHook("onClose", postgresComposition.close);
     }

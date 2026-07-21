@@ -9,7 +9,10 @@ import { ResponseEnvelopeV1Schema } from "./shared/response-envelope.v1.js";
 import { ServiceIdV1Schema } from "./shared/service-id.v1.js";
 import { TypedEvidenceRefV1Schema } from "./shared/typed-evidence-ref.v1.js";
 import { WorkloadCredentialClaimsV1Schema } from "./shared/workload-credential-claims.v1.js";
-import { TriggerAdmissionDecisionV1Schema } from "./trigger-processor/trigger-admission.v1.js";
+import {
+  TriggerAdmissionDecisionV1Schema,
+  TrustedAdmissionFactsV1Schema,
+} from "./trigger-processor/trigger-admission.v1.js";
 import {
   TriggerProcessStateV1Schema,
   TriggerProcessTransitionEvidenceV1Schema,
@@ -181,6 +184,14 @@ export const TRIGGER_PROCESSOR_SCHEMA_CATALOG = [
     "generated/schema/trigger-processor/trigger-process-state.v1.json",
     "packages/contracts/test/trigger-processor/trigger-process-state.contract.ts",
     TriggerProcessStateV1Schema,
+  ),
+  triggerProcessorEntry(
+    "TrustedAdmissionFactsV1",
+    "urn:pai:trigger-processor:trusted-admission-facts:v1",
+    "packages/contracts/src/trigger-processor/trigger-admission.v1.ts",
+    "generated/schema/trigger-processor/trusted-admission-facts.v1.json",
+    "packages/contracts/test/trigger-processor/trigger-admission.contract.ts",
+    TrustedAdmissionFactsV1Schema,
   ),
   triggerProcessorEntry(
     "TriggerAdmissionDecisionV1",

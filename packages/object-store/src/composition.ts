@@ -30,3 +30,7 @@ export {
   SupabaseStorageAdapter,
   type SupabaseStorageAdapterOptionsV1,
 } from "./supabase-storage-adapter.v1.js";
+export {
+  ObjectStoreReconciliationWorkerV1,
+  type ObjectStoreReconciliationWorkerOptionsV1,
+} from "./object-store-reconciliation-worker.v1.js";

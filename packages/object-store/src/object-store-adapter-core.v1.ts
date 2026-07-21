@@ -497,6 +497,9 @@ export class ObjectStoreAdapterCoreV1
         now,
         locked_until: lockedUntil,
         limit: request.limit,
+        expired_upload_cleanup_not_before: new Date(
+          now.getTime() + expiredUploadCleanupGraceMs,
+        ),
         ...(request.reservation_id === undefined
           ? {}
           : { reservation_id: request.reservation_id }),
@@ -531,7 +534,7 @@ export class ObjectStoreAdapterCoreV1
                 claim_token: claim.claim_token,
                 operation: "put_cleanup",
                 last_error: "pending put was not visible after foreground handoff",
-                ...(claim.foreground_lease_expired
+                ...(claim.foreground_upload_may_still_arrive
                   ? {
                       next_retry_at: new Date(
                         now.getTime() + expiredUploadCleanupGraceMs,
@@ -551,7 +554,7 @@ export class ObjectStoreAdapterCoreV1
                 claim_token: claim.claim_token,
                 operation: "put_cleanup",
                 last_error: error.message,
-                ...(claim.foreground_lease_expired
+                ...(claim.foreground_upload_may_still_arrive
                   ? {
                       next_retry_at: new Date(
                         now.getTime() + expiredUploadCleanupGraceMs,
@@ -575,7 +578,7 @@ export class ObjectStoreAdapterCoreV1
               claim_token: claim.claim_token,
               operation: "put_cleanup",
               last_error: "pending put physical metadata mismatch",
-              ...(claim.foreground_lease_expired
+              ...(claim.foreground_upload_may_still_arrive
                 ? {
                     next_retry_at: new Date(
                       now.getTime() + expiredUploadCleanupGraceMs,
@@ -601,6 +604,19 @@ export class ObjectStoreAdapterCoreV1
             ) {
               throw error;
             }
+          }
+          if (claim.foreground_upload_may_still_arrive) {
+            await this.#metadata.releaseReconciliation({
+              reservation_id: claim.reservation_id,
+              claim_token: claim.claim_token,
+              last_error:
+                "cleanup retained a tombstone because the expired foreground upload may still publish bytes",
+              next_retry_at: new Date(
+                now.getTime() + expiredUploadCleanupGraceMs,
+              ),
+            });
+            retryScheduled += 1;
+            continue;
           }
           await this.#metadata.completeReconciliation({
             reservation_id: claim.reservation_id,
@@ -709,6 +725,7 @@ export class ObjectStoreAdapterCoreV1
         foreground_lease_token: reservation.foreground_lease_token,
       });
     let head: BackendObjectHeadV1;
+    let backendPutCompleted = false;
     try {
       head = await this.#backend.putIfAbsent({
         bucket: policy.bucket,
@@ -718,6 +735,7 @@ export class ObjectStoreAdapterCoreV1
         media_type: request.media_type,
         sha256: request.expected_sha256,
       });
+      backendPutCompleted = true;
       upload.assertComplete();
       head = await this.#readBackVerifiedPhysicalHead(
         {
@@ -783,6 +801,12 @@ export class ObjectStoreAdapterCoreV1
               reservation.reservation_id,
               "put_cleanup",
               reservation.foreground_lease_token,
+              backendPutCompleted
+                ? undefined
+                : new Date(
+                    this.#now().getTime() + expiredUploadCleanupGraceMs,
+                  ),
+              !backendPutCompleted,
             )
             .catch(() => undefined);
           fail("storage_unavailable", "integrity cleanup requires reconciliation", true, {
@@ -810,6 +834,7 @@ export class ObjectStoreAdapterCoreV1
           "put_finalize",
           reservation.foreground_lease_token,
           new Date(this.#now().getTime() + foregroundUploadLeaseMs),
+          !backendPutCompleted,
         )
         .catch(() => undefined);
       fail("storage_unavailable", "object storage outcome requires reconciliation", true, {

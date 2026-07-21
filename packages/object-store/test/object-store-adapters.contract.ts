@@ -22,6 +22,7 @@ import {
 import {
   PAI_OBJECT_CLASS_POLICY_BASES_V1,
   SupabaseStorageAdapter,
+  ObjectStoreReconciliationWorkerV1,
   type ObjectAccessOperationV1,
   type ObjectAccessPolicyVerifierV1,
   type ObjectClassPolicyV1,
@@ -641,6 +642,95 @@ for (const kind of ["memory", "supabase"] as const) {
 }
 
 describe("ObjectStore adapter policy validation", () => {
+  it("persists late-arrival provenance across an explicit uncertain handoff", async () => {
+    const metadata = new InMemoryObjectMetadataRepositoryV1();
+    const reserved = await metadata.reservePut({
+      owner_service: "trigger_processor",
+      object_class: "trigger_process_snapshot",
+      scope,
+      scope_fingerprint: objectScopeFingerprintV1(scope),
+      idempotency_key: "uncertain-upload",
+      request_fingerprint: "request-uncertain-upload",
+      sha256: digest(new Uint8Array()),
+      size_bytes: 0,
+      media_type: "application/octet-stream",
+      retention_until: "2026-07-21T00:00:00.000Z",
+      now: new Date("2026-07-20T00:00:00.000Z"),
+      foreground_lease_until: new Date("2026-07-20T00:05:00.000Z"),
+    });
+    expect(reserved.kind).toBe("claimed");
+    if (reserved.kind !== "claimed") throw new Error("reservation was not claimed");
+    await metadata.handoffPutReconciliation(
+      reserved.reservation_id,
+      "put_finalize",
+      reserved.foreground_lease_token,
+      new Date("2026-07-20T00:05:00.000Z"),
+      true,
+    );
+    const first = await metadata.claimReconciliation({
+      worker_id: "uncertain-worker-1",
+      now: new Date("2026-07-20T00:06:00.000Z"),
+      locked_until: new Date("2026-07-20T00:06:30.000Z"),
+      limit: 1,
+      expired_upload_cleanup_not_before: new Date(
+        "2026-07-20T00:11:00.000Z",
+      ),
+    });
+    expect(first[0]).toMatchObject({
+      foreground_upload_may_still_arrive: true,
+      cleanup_not_before: "2026-07-20T00:05:00.000Z",
+    });
+    await metadata.releaseReconciliation({
+      reservation_id: reserved.reservation_id,
+      claim_token: first[0]!.claim_token,
+      last_error: "transient read-back failure",
+      next_retry_at: new Date("2026-07-20T00:07:00.000Z"),
+    });
+    const reclaimed = await metadata.claimReconciliation({
+      worker_id: "uncertain-worker-2",
+      now: new Date("2026-07-20T00:08:00.000Z"),
+      locked_until: new Date("2026-07-20T00:08:30.000Z"),
+      limit: 1,
+      expired_upload_cleanup_not_before: new Date(
+        "2026-07-20T00:13:00.000Z",
+      ),
+    });
+    expect(reclaimed[0]).toMatchObject({
+      foreground_upload_may_still_arrive: true,
+      cleanup_not_before: "2026-07-20T00:05:00.000Z",
+    });
+  });
+
+  it("runs reconciliation continuously without overlapping the same worker", async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const requests: unknown[] = [];
+    const worker = new ObjectStoreReconciliationWorkerV1({
+      reconciliation: {
+        async reconcilePending(request) {
+          requests.push(request);
+          await blocked;
+          return { claimed: 0, completed: 0, retry_scheduled: 0 };
+        },
+      },
+      worker_id: "object-worker-1",
+      interval_ms: 100,
+      batch_limit: 7,
+      lease_seconds: 11,
+    });
+    worker.start();
+    const first = worker.runOnce();
+    const duplicate = worker.runOnce();
+    expect(duplicate).toBe(first);
+    expect(requests).toEqual([
+      { worker_id: "object-worker-1", limit: 7, lease_seconds: 11 },
+    ]);
+    release();
+    await worker.stop();
+  });
+
   it("rejects owner to bucket drift", () => {
     expect(
       () =>
@@ -672,6 +762,7 @@ describe("ObjectStore adapter policy validation", () => {
     const adapter = new InMemoryObjectStoreAdapterV1({
       policies: [mutablePolicy],
       accessPolicyVerifier: new TestObjectAccessPolicyVerifierV1(),
+      now: () => new Date("2026-07-20T00:00:00.000Z"),
     });
     (mutablePolicy.capabilities.put as string[]).push("attacker.object.put");
     const body = new TextEncoder().encode("policy-snapshot");
@@ -753,6 +844,7 @@ class PutMetadataOutageRepository extends InMemoryObjectMetadataRepositoryV1 {
     operation: "put_finalize" | "put_cleanup",
     foregroundLeaseToken: string,
     notBefore?: Date,
+    foregroundUploadMayStillArrive?: boolean,
   ): Promise<void> {
     if (this.#failHandoff) {
       this.#failHandoff = false;
@@ -763,6 +855,7 @@ class PutMetadataOutageRepository extends InMemoryObjectMetadataRepositoryV1 {
       operation,
       foregroundLeaseToken,
       notBefore,
+      foregroundUploadMayStillArrive,
     );
   }
 }
@@ -847,6 +940,7 @@ class FailFirstPutCleanupHandoffRepository extends InMemoryObjectMetadataReposit
     operation: "put_finalize" | "put_cleanup",
     foregroundLeaseToken: string,
     notBefore?: Date,
+    foregroundUploadMayStillArrive?: boolean,
   ): Promise<void> {
     if (operation === "put_cleanup" && this.#failCleanupHandoff) {
       this.#failCleanupHandoff = false;
@@ -857,6 +951,7 @@ class FailFirstPutCleanupHandoffRepository extends InMemoryObjectMetadataReposit
       operation,
       foregroundLeaseToken,
       notBefore,
+      foregroundUploadMayStillArrive,
     );
   }
 }
@@ -866,6 +961,8 @@ class PausedPutBackend extends InMemoryObjectStorageBackendV1 {
   #markStarted!: () => void;
   #resume!: () => void;
   readonly #resumed: Promise<void>;
+  #request: PutBackendObjectV1 | undefined;
+  public deleteCount = 0;
 
   public constructor() {
     super();
@@ -882,9 +979,33 @@ class PausedPutBackend extends InMemoryObjectStorageBackendV1 {
   }
 
   public override async putIfAbsent(request: PutBackendObjectV1) {
+    this.#request = request;
     this.#markStarted();
     await this.#resumed;
     return super.putIfAbsent(request);
+  }
+
+  public override async delete(
+    ...input: Parameters<InMemoryObjectStorageBackendV1["delete"]>
+  ): Promise<void> {
+    this.deleteCount += 1;
+    return super.delete(...input);
+  }
+
+  public async hasPublishedObject(): Promise<boolean> {
+    if (this.#request === undefined) return false;
+    try {
+      await super.head(this.#request.bucket, this.#request.key);
+      return true;
+    } catch (error) {
+      if (
+        error instanceof ObjectStorageBackendErrorV1 &&
+        error.code === "not_found"
+      ) {
+        return false;
+      }
+      throw error;
+    }
   }
 }
 
@@ -1100,6 +1221,61 @@ describe("ObjectStore ambiguous finalization recovery", () => {
     });
   });
 
+  it("retains an expired-upload tombstone across not-found cleanup and deletes late bytes", async () => {
+    const metadata = new InMemoryObjectMetadataRepositoryV1();
+    const backend = new PausedPutBackend();
+    let now = new Date("2026-07-20T00:00:00.000Z");
+    const store = new InMemoryObjectStoreAdapterV1({
+      metadataRepository: metadata,
+      backend,
+      accessPolicyVerifier: new TestObjectAccessPolicyVerifierV1(),
+      policies: [policy],
+      now: () => now,
+    });
+    const body = new TextEncoder().encode("late-upload-after-not-found-cleanup");
+    const foregroundPut = store.putImmutable(putRequest(body));
+    await backend.started;
+
+    now = new Date("2026-07-20T00:06:00.000Z");
+    await expect(
+      store.reconcilePending({
+        worker_id: "expired-finalizer",
+        limit: 1,
+        lease_seconds: 30,
+      }),
+    ).resolves.toEqual({ claimed: 1, completed: 0, retry_scheduled: 1 });
+
+    now = new Date("2026-07-20T00:12:00.000Z");
+    await expect(
+      store.reconcilePending({
+        worker_id: "not-found-cleaner",
+        limit: 1,
+        lease_seconds: 30,
+      }),
+    ).resolves.toEqual({ claimed: 1, completed: 0, retry_scheduled: 1 });
+    expect(await backend.hasPublishedObject()).toBe(false);
+
+    backend.release();
+    await expect(foregroundPut).rejects.toSatisfy(
+      expectCode("storage_unavailable"),
+    );
+    expect(await backend.hasPublishedObject()).toBe(true);
+
+    now = new Date("2026-07-20T00:18:00.000Z");
+    await expect(
+      store.reconcilePending({
+        worker_id: "late-byte-cleaner",
+        limit: 1,
+        lease_seconds: 30,
+      }),
+    ).resolves.toEqual({ claimed: 1, completed: 0, retry_scheduled: 1 });
+    expect(await backend.hasPublishedObject()).toBe(false);
+    expect(backend.deleteCount).toBeGreaterThanOrEqual(2);
+    await expect(store.putImmutable(putRequest(body))).rejects.toSatisfy(
+      expectCode("precondition_failed"),
+    );
+  });
+
   it("uses trusted read-back after an expired upload lease when delete and cleanup handoff both fail", async () => {
     const metadata = new FailFirstPutCleanupHandoffRepository();
     const backend = new FailFirstIntegrityCleanupBackend();
@@ -1132,6 +1308,9 @@ describe("ObjectStore ambiguous finalization recovery", () => {
       now,
       locked_until: new Date("2026-07-20T00:06:30.000Z"),
       limit: 1,
+      expired_upload_cleanup_not_before: new Date(
+        "2026-07-20T00:11:00.000Z",
+      ),
     })]).toHaveLength(0);
 
     now = new Date("2026-07-20T00:12:00.000Z");
@@ -1141,10 +1320,25 @@ describe("ObjectStore ambiguous finalization recovery", () => {
         limit: 1,
         lease_seconds: 30,
       }),
-    ).resolves.toEqual({ claimed: 1, completed: 1, retry_scheduled: 0 });
-    await expect(store.putImmutable(putRequest(body))).resolves.toMatchObject({
-      replayed: false,
-      sha256: digest(body),
+    ).resolves.toEqual({ claimed: 1, completed: 0, retry_scheduled: 1 });
+    await expect(store.putImmutable(putRequest(body))).rejects.toSatisfy(
+      expectCode("precondition_failed"),
+    );
+
+    now = new Date("2026-07-20T00:18:00.000Z");
+    const persistentClaim = await metadata.claimReconciliation({
+      worker_id: "persistent-cleanup",
+      now,
+      locked_until: new Date("2026-07-20T00:18:30.000Z"),
+      limit: 1,
+      expired_upload_cleanup_not_before: new Date(
+        "2026-07-20T00:23:00.000Z",
+      ),
+    });
+    expect(persistentClaim[0]).toMatchObject({
+      operation: "put_cleanup",
+      foreground_upload_may_still_arrive: true,
+      cleanup_not_before: "2026-07-20T00:11:00.000Z",
     });
   });
 

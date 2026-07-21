@@ -11,7 +11,7 @@ await startService({
   serviceId: "skill_registry",
   defaultPort: 3007,
   buildApp(options) {
-    const app = buildSkillRegistryApp({ ...options, readinessChecks: [...(options.readinessChecks ?? []), ...(postgresComposition === undefined ? [] : [{ name: "owner_postgres", check: postgresComposition.checkReadiness }])] }, postgresComposition);
+    const app = buildSkillRegistryApp({ ...options, readinessChecks: [...(options.readinessChecks ?? []), ...(postgresComposition === undefined ? [] : [{ name: "owner_postgres", check: postgresComposition.checkReadiness }])] });
     if (postgresComposition !== undefined) app.addHook("onClose", postgresComposition.close);
     return app;
   },

@@ -25,6 +25,81 @@ export type TriggerPriorityV1 = Static<typeof TriggerPriorityV1Schema>;
 
 export const MAX_SAFE_SLOT_GENERATION_V1 = Number.MAX_SAFE_INTEGER;
 
+const canonicalTimestampPattern =
+  "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$";
+const trustedAdmissionFactsBaseProperties = {
+  source: TriggerSourceV1Schema,
+  actor_type: TriggerActorTypeV1Schema,
+  bot_state: Type.Union([
+    Type.Literal("active"),
+    Type.Literal("disabled"),
+    Type.Literal("archived"),
+  ]),
+  safety_blocked: Type.Boolean(),
+  trusted_strong_hint: Type.Boolean(),
+  explicit_interrupt: Type.Boolean(),
+  is_catch_up: Type.Boolean(),
+  foreground_slot_generation: Type.Integer({
+    minimum: 0,
+    maximum: MAX_SAFE_SLOT_GENERATION_V1,
+  }),
+};
+
+export const TrustedAdmissionFactsV1Schema = Type.Union(
+  [
+    Type.Object(
+      {
+        ...trustedAdmissionFactsBaseProperties,
+        active_process: Type.Literal("none"),
+        active_process_id: Type.Null(),
+        active_process_slot_generation: Type.Null(),
+        active_process_updated_at: Type.Null(),
+        foreground_slot_process_id: Type.Null(),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        ...trustedAdmissionFactsBaseProperties,
+        active_process: Type.Literal("execution_running"),
+        active_process_id: Type.String({ minLength: 1 }),
+        active_process_slot_generation: Type.Integer({
+          minimum: 0,
+          maximum: MAX_SAFE_SLOT_GENERATION_V1,
+        }),
+        active_process_updated_at: Type.String({
+          minLength: 1,
+          pattern: canonicalTimestampPattern,
+        }),
+        foreground_slot_process_id: Type.String({ minLength: 1 }),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        ...trustedAdmissionFactsBaseProperties,
+        active_process: Type.Literal("cooldown_waiting"),
+        active_process_id: Type.String({ minLength: 1 }),
+        active_process_slot_generation: Type.Integer({
+          minimum: 0,
+          maximum: MAX_SAFE_SLOT_GENERATION_V1,
+        }),
+        active_process_updated_at: Type.String({
+          minLength: 1,
+          pattern: canonicalTimestampPattern,
+        }),
+        foreground_slot_process_id: Type.String({ minLength: 1 }),
+      },
+      { additionalProperties: false },
+    ),
+  ],
+  { $id: "urn:pai:trigger-processor:trusted-admission-facts:v1" },
+);
+
+export type TrustedAdmissionFactsV1 = Static<
+  typeof TrustedAdmissionFactsV1Schema
+>;
+
 export const ACCEPTED_TRIGGER_ADMISSION_REASON_CODES_V1 = [
   "catch_up_foreground_busy",
   "timer_catch_up",

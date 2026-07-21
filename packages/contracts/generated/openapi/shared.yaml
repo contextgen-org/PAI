@@ -1020,6 +1020,353 @@
           }
         ]
       },
+      "TrustedAdmissionFactsV1": {
+        "$id": "urn:pai:trigger-processor:trusted-admission-facts:v1",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "source",
+              "actor_type",
+              "bot_state",
+              "safety_blocked",
+              "trusted_strong_hint",
+              "explicit_interrupt",
+              "is_catch_up",
+              "foreground_slot_generation",
+              "active_process",
+              "active_process_id",
+              "active_process_slot_generation",
+              "active_process_updated_at",
+              "foreground_slot_process_id"
+            ],
+            "properties": {
+              "source": {
+                "anyOf": [
+                  {
+                    "const": "chat",
+                    "type": "string"
+                  },
+                  {
+                    "const": "notification",
+                    "type": "string"
+                  },
+                  {
+                    "const": "timer",
+                    "type": "string"
+                  }
+                ]
+              },
+              "actor_type": {
+                "anyOf": [
+                  {
+                    "const": "super_user",
+                    "type": "string"
+                  },
+                  {
+                    "const": "user",
+                    "type": "string"
+                  },
+                  {
+                    "const": "agent",
+                    "type": "string"
+                  },
+                  {
+                    "const": "developer",
+                    "type": "string"
+                  },
+                  {
+                    "const": "system",
+                    "type": "string"
+                  }
+                ]
+              },
+              "bot_state": {
+                "anyOf": [
+                  {
+                    "const": "active",
+                    "type": "string"
+                  },
+                  {
+                    "const": "disabled",
+                    "type": "string"
+                  },
+                  {
+                    "const": "archived",
+                    "type": "string"
+                  }
+                ]
+              },
+              "safety_blocked": {
+                "type": "boolean"
+              },
+              "trusted_strong_hint": {
+                "type": "boolean"
+              },
+              "explicit_interrupt": {
+                "type": "boolean"
+              },
+              "is_catch_up": {
+                "type": "boolean"
+              },
+              "foreground_slot_generation": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "active_process": {
+                "const": "none",
+                "type": "string"
+              },
+              "active_process_id": {
+                "type": "null"
+              },
+              "active_process_slot_generation": {
+                "type": "null"
+              },
+              "active_process_updated_at": {
+                "type": "null"
+              },
+              "foreground_slot_process_id": {
+                "type": "null"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "source",
+              "actor_type",
+              "bot_state",
+              "safety_blocked",
+              "trusted_strong_hint",
+              "explicit_interrupt",
+              "is_catch_up",
+              "foreground_slot_generation",
+              "active_process",
+              "active_process_id",
+              "active_process_slot_generation",
+              "active_process_updated_at",
+              "foreground_slot_process_id"
+            ],
+            "properties": {
+              "source": {
+                "anyOf": [
+                  {
+                    "const": "chat",
+                    "type": "string"
+                  },
+                  {
+                    "const": "notification",
+                    "type": "string"
+                  },
+                  {
+                    "const": "timer",
+                    "type": "string"
+                  }
+                ]
+              },
+              "actor_type": {
+                "anyOf": [
+                  {
+                    "const": "super_user",
+                    "type": "string"
+                  },
+                  {
+                    "const": "user",
+                    "type": "string"
+                  },
+                  {
+                    "const": "agent",
+                    "type": "string"
+                  },
+                  {
+                    "const": "developer",
+                    "type": "string"
+                  },
+                  {
+                    "const": "system",
+                    "type": "string"
+                  }
+                ]
+              },
+              "bot_state": {
+                "anyOf": [
+                  {
+                    "const": "active",
+                    "type": "string"
+                  },
+                  {
+                    "const": "disabled",
+                    "type": "string"
+                  },
+                  {
+                    "const": "archived",
+                    "type": "string"
+                  }
+                ]
+              },
+              "safety_blocked": {
+                "type": "boolean"
+              },
+              "trusted_strong_hint": {
+                "type": "boolean"
+              },
+              "explicit_interrupt": {
+                "type": "boolean"
+              },
+              "is_catch_up": {
+                "type": "boolean"
+              },
+              "foreground_slot_generation": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "active_process": {
+                "const": "execution_running",
+                "type": "string"
+              },
+              "active_process_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "active_process_slot_generation": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "active_process_updated_at": {
+                "minLength": 1,
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                "type": "string"
+              },
+              "foreground_slot_process_id": {
+                "minLength": 1,
+                "type": "string"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "source",
+              "actor_type",
+              "bot_state",
+              "safety_blocked",
+              "trusted_strong_hint",
+              "explicit_interrupt",
+              "is_catch_up",
+              "foreground_slot_generation",
+              "active_process",
+              "active_process_id",
+              "active_process_slot_generation",
+              "active_process_updated_at",
+              "foreground_slot_process_id"
+            ],
+            "properties": {
+              "source": {
+                "anyOf": [
+                  {
+                    "const": "chat",
+                    "type": "string"
+                  },
+                  {
+                    "const": "notification",
+                    "type": "string"
+                  },
+                  {
+                    "const": "timer",
+                    "type": "string"
+                  }
+                ]
+              },
+              "actor_type": {
+                "anyOf": [
+                  {
+                    "const": "super_user",
+                    "type": "string"
+                  },
+                  {
+                    "const": "user",
+                    "type": "string"
+                  },
+                  {
+                    "const": "agent",
+                    "type": "string"
+                  },
+                  {
+                    "const": "developer",
+                    "type": "string"
+                  },
+                  {
+                    "const": "system",
+                    "type": "string"
+                  }
+                ]
+              },
+              "bot_state": {
+                "anyOf": [
+                  {
+                    "const": "active",
+                    "type": "string"
+                  },
+                  {
+                    "const": "disabled",
+                    "type": "string"
+                  },
+                  {
+                    "const": "archived",
+                    "type": "string"
+                  }
+                ]
+              },
+              "safety_blocked": {
+                "type": "boolean"
+              },
+              "trusted_strong_hint": {
+                "type": "boolean"
+              },
+              "explicit_interrupt": {
+                "type": "boolean"
+              },
+              "is_catch_up": {
+                "type": "boolean"
+              },
+              "foreground_slot_generation": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "active_process": {
+                "const": "cooldown_waiting",
+                "type": "string"
+              },
+              "active_process_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "active_process_slot_generation": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "active_process_updated_at": {
+                "minLength": 1,
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                "type": "string"
+              },
+              "foreground_slot_process_id": {
+                "minLength": 1,
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
       "TriggerAdmissionDecisionV1": {
         "$id": "urn:pai:trigger-processor:trigger-admission-decision:v1",
         "anyOf": [

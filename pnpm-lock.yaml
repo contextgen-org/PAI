@@ -245,6 +245,9 @@ importers:
 
   services/trigger-processor:
     dependencies:
+      '@pai/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
       '@pai/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts

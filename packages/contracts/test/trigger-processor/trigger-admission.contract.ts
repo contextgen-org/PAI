@@ -1,7 +1,10 @@
 import { Value } from "@sinclair/typebox/value";
 import { describe, expect, it } from "vitest";
 
-import { TriggerAdmissionDecisionV1Schema } from "../../src/index.js";
+import {
+  TriggerAdmissionDecisionV1Schema,
+  TrustedAdmissionFactsV1Schema,
+} from "../../src/index.js";
 
 const acceptedDecision = {
   trigger_status: "accepted",
@@ -22,6 +25,37 @@ const acceptedDecision = {
 } as const;
 
 describe("TriggerAdmissionDecisionV1", () => {
+  it("rejects malformed trusted-fact discriminants and undeclared fields", () => {
+    const idleFacts = {
+      source: "chat",
+      actor_type: "user",
+      bot_state: "active",
+      safety_blocked: false,
+      trusted_strong_hint: false,
+      explicit_interrupt: false,
+      is_catch_up: false,
+      foreground_slot_generation: 7,
+      active_process: "none",
+      active_process_id: null,
+      active_process_slot_generation: null,
+      active_process_updated_at: null,
+      foreground_slot_process_id: null,
+    } as const;
+    expect(Value.Check(TrustedAdmissionFactsV1Schema, idleFacts)).toBe(true);
+    expect(
+      Value.Check(TrustedAdmissionFactsV1Schema, {
+        ...idleFacts,
+        active_process: "cooldown_typo",
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(TrustedAdmissionFactsV1Schema, {
+        ...idleFacts,
+        caller_priority: "strong",
+      }),
+    ).toBe(false);
+  });
+
   it("accepts registered reason codes and rejects invented accepted reasons", () => {
     expect(Value.Check(TriggerAdmissionDecisionV1Schema, acceptedDecision)).toBe(
       true,

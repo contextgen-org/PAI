@@ -110,7 +110,14 @@ export interface ObjectReconciliationClaimV1 {
   readonly operation: ObjectReconciliationOperationV1;
   readonly record: ObjectMetadataRecordV1;
   readonly attempt: number;
-  readonly foreground_lease_expired: boolean;
+  /**
+   * Durable reservation provenance. Once true, a foreground upload may still
+   * publish bytes after a reconciliation delete observes not_found. Cleanup
+   * must therefore retain the reservation as a tombstone until a backend can
+   * prove that the upload has been cancelled or can no longer complete.
+   */
+  readonly foreground_upload_may_still_arrive: boolean;
+  readonly cleanup_not_before?: string;
 }
 
 export interface ClaimObjectReconciliationInputV1 {
@@ -119,6 +126,7 @@ export interface ClaimObjectReconciliationInputV1 {
   readonly locked_until: Date;
   readonly limit: number;
   readonly reservation_id?: string;
+  readonly expired_upload_cleanup_not_before: Date;
 }
 
 export interface CompleteObjectReconciliationInputV1 {
@@ -162,6 +170,7 @@ export interface ObjectMetadataRepositoryV1 {
     operation: "put_finalize" | "put_cleanup",
     foregroundLeaseToken: string,
     notBefore?: Date,
+    foregroundUploadMayStillArrive?: boolean,
   ): Promise<void>;
   handoffDeleteReconciliation(reservationId: string): Promise<void>;
   claimReconciliation(
@@ -193,6 +202,8 @@ interface PendingPut extends ReconciliationLease {
   readonly record: ObjectMetadataRecordV1;
   foregroundLeaseToken?: string;
   foregroundLeaseUntil: Date;
+  foregroundUploadMayStillArrive: boolean;
+  cleanupNotBefore?: Date;
 }
 
 interface PendingDelete extends ReconciliationLease {
@@ -281,6 +292,7 @@ export class InMemoryObjectMetadataRepositoryV1
       operation: "put_uploading",
       foregroundLeaseToken,
       foregroundLeaseUntil: input.foreground_lease_until,
+      foregroundUploadMayStillArrive: false,
       attempt: 0,
     });
     return {
@@ -477,6 +489,7 @@ export class InMemoryObjectMetadataRepositoryV1
     operation: "put_finalize" | "put_cleanup",
     foregroundLeaseToken: string,
     notBefore?: Date,
+    foregroundUploadMayStillArrive = false,
   ): Promise<void> {
     const pending = this.#pendingPuts.get(reservationId);
     if (pending === undefined) return;
@@ -488,6 +501,10 @@ export class InMemoryObjectMetadataRepositoryV1
       throw new Error("stale put foreground lease");
     }
     pending.operation = operation;
+    if (foregroundUploadMayStillArrive) {
+      pending.foregroundUploadMayStillArrive = true;
+      if (notBefore !== undefined) pending.cleanupNotBefore ??= notBefore;
+    }
     delete pending.claimToken;
     delete pending.lockedUntil;
     if (notBefore === undefined) delete pending.nextRetryAt;
@@ -512,7 +529,6 @@ export class InMemoryObjectMetadataRepositoryV1
     ];
     const claims: ObjectReconciliationClaimV1[] = [];
     for (const pending of candidates) {
-      let foregroundLeaseExpired = false;
       if (claims.length >= input.limit) break;
       if (
         (input.reservation_id !== undefined &&
@@ -524,7 +540,11 @@ export class InMemoryObjectMetadataRepositoryV1
       }
       if ("record" in pending && pending.operation === "put_uploading") {
         if (pending.foregroundLeaseUntil > input.now) continue;
-        foregroundLeaseExpired = true;
+        if (input.expired_upload_cleanup_not_before <= input.now) {
+          throw new Error("expired upload cleanup guard must be in the future");
+        }
+        pending.foregroundUploadMayStillArrive = true;
+        pending.cleanupNotBefore ??= input.expired_upload_cleanup_not_before;
         pending.operation = "put_finalize";
         delete pending.foregroundLeaseToken;
       }
@@ -542,7 +562,11 @@ export class InMemoryObjectMetadataRepositoryV1
         operation: pending.operation as ObjectReconciliationOperationV1,
         record,
         attempt: pending.attempt,
-        foreground_lease_expired: foregroundLeaseExpired,
+        foreground_upload_may_still_arrive:
+          "record" in pending && pending.foregroundUploadMayStillArrive,
+        ...("record" in pending && pending.cleanupNotBefore !== undefined
+          ? { cleanup_not_before: pending.cleanupNotBefore.toISOString() }
+          : {}),
       });
     }
     return claims;
@@ -557,6 +581,11 @@ export class InMemoryObjectMetadataRepositoryV1
         throw new Error("stale reconciliation claim");
       }
       if (put.operation === "put_cleanup") {
+        if (put.foregroundUploadMayStillArrive) {
+          throw new Error(
+            "late-upload cleanup tombstone cannot be completed without backend cancellation proof",
+          );
+        }
         this.#abortPendingPut(put);
         return undefined;
       }
@@ -600,7 +629,12 @@ export class InMemoryObjectMetadataRepositoryV1
     delete pending.claimToken;
     delete pending.lockedUntil;
     pending.lastError = input.last_error;
-    pending.nextRetryAt = input.next_retry_at;
+    pending.nextRetryAt =
+      "record" in pending &&
+      pending.cleanupNotBefore !== undefined &&
+      input.next_retry_at < pending.cleanupNotBefore
+        ? pending.cleanupNotBefore
+        : input.next_retry_at;
   }
 
   public async redirectReconciliation(
@@ -614,8 +648,25 @@ export class InMemoryObjectMetadataRepositoryV1
     pending.lastError = input.last_error;
     delete pending.claimToken;
     delete pending.lockedUntil;
-    if (input.next_retry_at === undefined) delete pending.nextRetryAt;
-    else pending.nextRetryAt = input.next_retry_at;
+    if (pending.foregroundUploadMayStillArrive) {
+      if (input.next_retry_at !== undefined) {
+        pending.cleanupNotBefore ??= input.next_retry_at;
+      }
+      const requested = input.next_retry_at ?? pending.cleanupNotBefore;
+      if (requested === undefined) {
+        delete pending.nextRetryAt;
+      } else {
+        pending.nextRetryAt =
+          pending.cleanupNotBefore !== undefined &&
+          requested < pending.cleanupNotBefore
+            ? pending.cleanupNotBefore
+            : requested;
+      }
+    } else if (input.next_retry_at === undefined) {
+      delete pending.nextRetryAt;
+    } else {
+      pending.nextRetryAt = input.next_retry_at;
+    }
   }
 
   public setLegalHold(objectRef: ObjectRefV1, legalHold: boolean): void {

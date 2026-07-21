@@ -1,49 +1,15 @@
 import type {
-  TriggerActorTypeV1,
   TriggerPriorityV1,
-  TriggerSourceV1,
 } from "@pai/contracts";
 import {
   TriggerAdmissionDecisionV1Schema,
   type TriggerAdmissionDecisionV1,
+  TrustedAdmissionFactsV1Schema,
+  type TrustedAdmissionFactsV1,
 } from "@pai/contracts";
 import { Value } from "@sinclair/typebox/value";
 
-interface TrustedAdmissionFactsBaseV1 {
-  readonly source: TriggerSourceV1;
-  readonly actor_type: TriggerActorTypeV1;
-  readonly bot_state: "active" | "disabled" | "archived";
-  readonly safety_blocked: boolean;
-  readonly trusted_strong_hint: boolean;
-  readonly explicit_interrupt: boolean;
-  readonly is_catch_up: boolean;
-  readonly foreground_slot_generation: number;
-}
-
-export type TrustedAdmissionFactsV1 = TrustedAdmissionFactsBaseV1 &
-  (
-    | {
-        readonly active_process: "none";
-        readonly active_process_id: null;
-        readonly active_process_slot_generation: null;
-        readonly active_process_updated_at: null;
-        readonly foreground_slot_process_id: null;
-      }
-    | {
-        readonly active_process: "execution_running";
-        readonly active_process_id: string;
-        readonly active_process_slot_generation: number;
-        readonly active_process_updated_at: string;
-        readonly foreground_slot_process_id: string;
-      }
-    | {
-        readonly active_process: "cooldown_waiting";
-        readonly active_process_id: string;
-        readonly active_process_slot_generation: number;
-        readonly active_process_updated_at: string;
-        readonly foreground_slot_process_id: string;
-      }
-  );
+export type { TrustedAdmissionFactsV1 } from "@pai/contracts";
 
 export class InvalidTrustedAdmissionFactsError extends Error {
   public constructor(message: string) {
@@ -334,6 +300,11 @@ function decideTriggerAdmissionUncheckedV1(
 export function decideTriggerAdmissionV1(
   facts: TrustedAdmissionFactsV1,
 ): TriggerAdmissionDecisionV1 {
+  if (!Value.Check(TrustedAdmissionFactsV1Schema, facts)) {
+    throw new InvalidTrustedAdmissionFactsError(
+      "admission facts violate TrustedAdmissionFactsV1",
+    );
+  }
   const decision = decideTriggerAdmissionUncheckedV1(facts);
   if (!Value.Check(TriggerAdmissionDecisionV1Schema, decision)) {
     throw new InvalidTrustedAdmissionFactsError(

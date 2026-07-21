@@ -14,7 +14,9 @@ import { TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 } from "../../../services/trig
 import {
   defineOwnerRepositoryContractV1,
   OWNER_DATABASE_TARGETS_V1,
-  verifyOwnerRepositoryDeploymentFromPostgresV1,
+  ownerDatabaseApplicationDependenciesV1,
+  ownerFunctionSignatureV1,
+  verifyOwnerWriterDefinitionV1,
 } from "../src/index.js";
 
 const contracts = [
@@ -197,13 +199,22 @@ describe("owner repository contracts", () => {
         "p_dedupe_key",
         "p_trigger_id",
         "p_process_id",
-        "p_admission_precondition",
-        "p_admission_decision",
+        "p_authenticated_context",
+        "p_admission_request",
       ]),
     );
     expect(
       signature?.arguments.map(({ argument_name }) => argument_name),
     ).not.toContain("p_expected_slot_process_id");
+    expect(
+      signature?.arguments.map(({ argument_name }) => argument_name),
+    ).not.toEqual(
+      expect.arrayContaining([
+        "p_priority",
+        "p_admission_precondition",
+        "p_admission_decision",
+      ]),
+    );
     expect(signature?.writes_tables).toEqual(
       expect.arrayContaining([
         "triggers",
@@ -285,22 +296,98 @@ describe("owner repository contracts", () => {
     ).toThrow(/owner database target drift/);
   });
 
-  it("does not treat an empty real-owner FK manifest as a verified deployment", async () => {
-    const neverQueried = {
-      async query(): Promise<{ readonly rows: readonly Record<string, unknown>[] }> {
-        throw new Error("PostgreSQL must not be queried before manifest completeness");
-      },
-    };
-    await expect(
-      verifyOwnerRepositoryDeploymentFromPostgresV1(
-        ACTION_RUNTIME_REPOSITORY_CONTRACT_V1,
-        neverQueried,
+  it("pins a complete non-empty canonical FK snapshot for every database owner", () => {
+    for (const contract of contracts) {
+      expect(contract.foreign_key_snapshot).toMatchObject({
+        status: "complete",
+      });
+      expect(contract.foreign_keys.length).toBeGreaterThan(0);
+      expect(
+        contract.foreign_keys.every(
+          (foreignKey) =>
+            foreignKey.referenced_schema === contract.schema &&
+            foreignKey.validated &&
+            foreignKey.columns.length === foreignKey.referenced_columns.length,
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("projects an exact application capability without raw PostgreSQL access", () => {
+    const composition = {
+      deployment: { owner_service: "trigger_processor" },
+      repository: { owner_service: "trigger_processor" },
+      unit_of_work: { owner_service: "trigger_processor" },
+      postgres: { query: () => Promise.resolve({ rows: [] }) },
+      checkReadiness: () => Promise.resolve(),
+      close: () => Promise.resolve(),
+    } as never;
+    const application = ownerDatabaseApplicationDependenciesV1(composition);
+    expect(Object.keys(application).sort()).toEqual([
+      "deployment",
+      "repository",
+      "unit_of_work",
+    ]);
+    expect(application).not.toHaveProperty("postgres");
+    expect(application).not.toHaveProperty("close");
+    expect(Object.isFrozen(application)).toBe(true);
+  });
+
+  it("rejects generic row locks as a slot/process admission fence", () => {
+    const signature = ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "test_server_side_admission_v1",
+      primary_table: "weak_trigger_queue_items",
+      writer_kind: "state_transition",
+      arguments: [["p_admission_request", "jsonb"]],
+      reads_tables: [
+        "bots",
+        "bot_permission_bindings",
+        "bot_foreground_slots",
+        "trigger_processes",
+      ],
+      writes_tables: ["weak_trigger_queue_items"],
+      effects: [
         {
-          expected_schema_owner: "pai_migrator",
-          runtime_postgres: neverQueried,
+          table_name: "weak_trigger_queue_items",
+          operation: "enqueue",
+          concurrency_control: "slot_and_process_state_fence",
         },
+      ],
+      returns: "jsonb",
+    });
+    const body = (locks: string) => `
+      CREATE FUNCTION trigger_processor.test_server_side_admission_v1(
+        p_admission_request jsonb
+      ) RETURNS jsonb LANGUAGE plpgsql AS $body$
+      BEGIN
+        ${locks}
+        PERFORM b.id, binding.bot_id, p_admission_request
+          FROM trigger_processor.bots b
+          JOIN trigger_processor.bot_permission_bindings binding ON true;
+        INSERT INTO trigger_processor.weak_trigger_queue_items(id) VALUES ('id');
+        RETURN '{}'::jsonb;
+      END $body$`;
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        signature,
+        body(`
+          PERFORM 1 FROM trigger_processor.bot_foreground_slots FOR UPDATE;
+          PERFORM 1 FROM trigger_processor.trigger_processes FOR UPDATE;
+        `),
       ),
-    ).rejects.toThrow(/foreign-key snapshot is missing/);
+    ).not.toThrow();
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        signature,
+        body(`
+          PERFORM 1 FROM trigger_processor.bots FOR UPDATE;
+          PERFORM 1 FROM trigger_processor.bot_permission_bindings FOR UPDATE;
+        `),
+      ),
+    ).toThrow(/slot\/process fence drift/);
   });
 
   it("fails closed on permission coverage, direct writes, or writer signature drift", () => {

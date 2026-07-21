@@ -11,7 +11,7 @@ await startService({
   serviceId: "memory",
   defaultPort: 3004,
   buildApp(options) {
-    const app = buildMemoryApp({ ...options, readinessChecks: [...(options.readinessChecks ?? []), ...(postgresComposition === undefined ? [] : [{ name: "owner_postgres", check: postgresComposition.checkReadiness }])] }, postgresComposition);
+    const app = buildMemoryApp({ ...options, readinessChecks: [...(options.readinessChecks ?? []), ...(postgresComposition === undefined ? [] : [{ name: "owner_postgres", check: postgresComposition.checkReadiness }])] });
     if (postgresComposition !== undefined) app.addHook("onClose", postgresComposition.close);
     return app;
   },
