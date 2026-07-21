@@ -43,7 +43,6 @@ describe("TriggerAdmissionDecisionV1", () => {
       },
       payload: { text: "hello" },
       dedupe_key: "dedupe-1",
-      request_hash: "request-hash-1",
       idempotency_key: "submit-1",
       is_catch_up: false,
       explicit_interrupt: false,
@@ -53,6 +52,12 @@ describe("TriggerAdmissionDecisionV1", () => {
       Value.Check(AdmitTriggerRequestBodyV1Schema, {
         ...body,
         source: "chat",
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(AdmitTriggerRequestBodyV1Schema, {
+        ...body,
+        request_hash: "caller-supplied",
       }),
     ).toBe(false);
     expect(
@@ -96,7 +101,7 @@ describe("TriggerAdmissionDecisionV1", () => {
         source: "chat",
         required_capability: "trigger.submit.chat",
         allowed_caller: "observation_gateway",
-        responses: [200, 400, 401, 403, 409, 503],
+        responses: [200, 400, 401, 403, 409, 500, 503],
       }),
       expect.objectContaining({
         operation_id: "admitTriggerFromNotificationV1",
@@ -104,7 +109,7 @@ describe("TriggerAdmissionDecisionV1", () => {
         source: "notification",
         required_capability: "trigger.submit.notification",
         allowed_caller: "observation_gateway",
-        responses: [200, 400, 401, 403, 409, 503],
+        responses: [200, 400, 401, 403, 409, 500, 503],
       }),
       expect.objectContaining({
         operation_id: "admitTriggerFromTimerV1",
@@ -112,7 +117,7 @@ describe("TriggerAdmissionDecisionV1", () => {
         source: "timer",
         required_capability: "trigger.submit.timer",
         allowed_caller: "timer_trigger_app",
-        responses: [200, 400, 401, 403, 409, 503],
+        responses: [200, 400, 401, 403, 409, 500, 503],
       }),
     ]);
   });

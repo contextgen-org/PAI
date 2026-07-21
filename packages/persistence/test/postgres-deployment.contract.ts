@@ -208,6 +208,35 @@ const POSTGRES_CONTRACT = defineOwnerRepositoryContractV1({
       validated: true,
     },
   ],
+  database_indexes: [
+    {
+      index_name: "contract_audits_pkey",
+      table_name: "contract_audits",
+      definition:
+        "CREATE UNIQUE INDEX contract_audits_pkey ON timer.contract_audits USING btree (audit_id)",
+      unique: true,
+      primary: true,
+      valid: true,
+    },
+    {
+      index_name: "contract_children_pkey",
+      table_name: "contract_children",
+      definition:
+        "CREATE UNIQUE INDEX contract_children_pkey ON timer.contract_children USING btree (child_id)",
+      unique: true,
+      primary: true,
+      valid: true,
+    },
+    {
+      index_name: "contract_parents_pkey",
+      table_name: "contract_parents",
+      definition:
+        "CREATE UNIQUE INDEX contract_parents_pkey ON timer.contract_parents USING btree (parent_key, parent_version)",
+      unique: true,
+      primary: true,
+      valid: true,
+    },
+  ],
   append_only_tables: ["contract_audits"],
   outbox_tables: [],
   inbox_tables: [],
@@ -548,6 +577,15 @@ describePostgres("PostgreSQL owner deployment verification", () => {
       }),
     ],
     [
+      "expected-version copied through an expression into local variable",
+      replacementWriterSql({
+        extraDeclare: "v_copy bigint;",
+        beforeExpectedVersionCheck:
+          "v_copy := coalesce(p_expected_parent_version, p_expected_parent_version);",
+        expectedVersionCheck: "p_expected_parent_version = v_copy",
+      }),
+    ],
+    [
       "proof hidden behind a constant-false branch",
       replacementWriterSql({
         beforeExpectedVersionCheck: `
@@ -557,6 +595,45 @@ describePostgres("PostgreSQL owner deployment verification", () => {
           END IF;
         `,
       }),
+    ],
+    [
+      "proof hidden behind an arithmetic constant-false branch",
+      replacementWriterSql({
+        beforeExpectedVersionCheck: `
+          IF 2 = 3 THEN
+            INSERT INTO timer.contract_audits(audit_id, child_id, created_at)
+            VALUES ('unreachable-' || p_child_id, p_child_id, clock_timestamp());
+          END IF;
+        `,
+      }),
+    ],
+    [
+      "proof hidden inside a nested dollar-quoted string literal",
+      `CREATE OR REPLACE FUNCTION timer.write_contract_child_v1(
+         p_parent_key text,
+         p_expected_parent_version bigint,
+         p_child_id text,
+         p_payload jsonb
+       ) RETURNS jsonb
+       LANGUAGE plpgsql
+       SECURITY DEFINER
+       SET search_path = timer, pg_temp
+       AS $body$
+       BEGIN
+         PERFORM $proof$
+           IF current_version <> p_expected_parent_version THEN
+             RAISE EXCEPTION 'stale';
+           END IF;
+           INSERT INTO timer.contract_parents(parent_key, parent_version)
+             VALUES (p_parent_key, p_expected_parent_version + 1);
+           INSERT INTO timer.contract_children(child_id, parent_key, parent_version, payload)
+             VALUES (p_child_id, p_parent_key, p_expected_parent_version + 1, p_payload);
+           INSERT INTO timer.contract_audits(audit_id, child_id, created_at)
+             VALUES ('audit-' || p_child_id, p_child_id, clock_timestamp());
+         $proof$;
+         RETURN '{}'::jsonb;
+       END;
+       $body$`,
     ],
     [
       "declared effects after an unconditional RETURN",
@@ -625,6 +702,11 @@ describePostgres("PostgreSQL owner deployment verification", () => {
          RETURN '{}'::jsonb;
        END;
        $body$`,
+    ],
+    [
+      "unexpected independent pg_index entry",
+      `CREATE INDEX contract_children_payload_idx
+         ON timer.contract_children USING gin (payload)`,
     ],
   ])("fails closed on %s drift", async (_label, driftSql) => {
     const postgres = await reset();

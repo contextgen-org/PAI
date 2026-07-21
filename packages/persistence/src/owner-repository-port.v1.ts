@@ -150,6 +150,15 @@ export interface OwnerDatabaseUniqueConstraintV1<TTable extends string = string>
   readonly validated: boolean;
 }
 
+export interface OwnerDatabaseIndexV1<TTable extends string = string> {
+  readonly index_name: string;
+  readonly table_name: TTable;
+  readonly definition: string;
+  readonly unique: boolean;
+  readonly primary: boolean;
+  readonly valid: boolean;
+}
+
 export function ownerForeignKeyV1<
   const TSchema extends OwnerSchemaV1,
   const TTable extends string,
@@ -279,6 +288,7 @@ export interface OwnerRepositoryContractV1<
   readonly database_checks?: readonly OwnerDatabaseCheckV1<TTable>[];
   readonly database_columns?: readonly OwnerDatabaseColumnV1<TTable>[];
   readonly database_unique_constraints?: readonly OwnerDatabaseUniqueConstraintV1<TTable>[];
+  readonly database_indexes?: readonly OwnerDatabaseIndexV1<TTable>[];
   readonly append_only_tables: readonly TTable[];
   readonly outbox_tables: readonly TTable[];
   readonly inbox_tables: readonly TTable[];
@@ -652,6 +662,23 @@ export function defineOwnerRepositoryContractV1<
     Object.freeze(constraint.columns);
     Object.freeze(constraint);
   }
+  assertUniqueIdentifiers(
+    "database_indexes.index_name",
+    (contract.database_indexes ?? []).map(({ index_name }) => index_name),
+  );
+  for (const index of contract.database_indexes ?? []) {
+    if (
+      !tableSet.has(index.table_name) ||
+      index.definition.trim().length === 0 ||
+      (!index.unique && index.primary) ||
+      !index.valid
+    ) {
+      throw new Error(
+        `invalid owner database index snapshot: ${index.index_name}`,
+      );
+    }
+    Object.freeze(index);
+  }
   const signatureNames = contract.function_signatures.map(
     ({ function_name }) => function_name,
   );
@@ -854,8 +881,12 @@ function staticFunctionBody(definition: string): string {
   return bodyMatch[2];
 }
 
+function stripDollarQuotedStringLiterals(value: string): string {
+  return value.replace(/\$([a-z_][a-z0-9_]*)?\$[\s\S]*?\$\1\$/gi, "''");
+}
+
 function semanticFunctionDefinition(definition: string): string {
-  return staticFunctionBody(definition)
+  return stripDollarQuotedStringLiterals(staticFunctionBody(definition))
     .replace(/\/\*[\s\S]*?\*\//g, " ")
     .replace(/--[^\r\n]*/g, " ")
     .toLowerCase();
@@ -872,36 +903,111 @@ function beforeFirstUnconditionalReturn(value: string): string {
   return match === null ? value : value.slice(0, match.index);
 }
 
+function unquoteSqlLiteral(value: string): string {
+  return value.slice(1, -1).replace(/''/g, "'");
+}
+
+function evaluateConstantBooleanCondition(condition: string): boolean | undefined {
+  let normalized = condition.trim().replace(/\s+/g, " ");
+  while (/^\([^()]*\)$/.test(normalized)) {
+    normalized = normalized.slice(1, -1).trim();
+  }
+  if (/^false$/i.test(normalized)) return false;
+  if (/^true$/i.test(normalized)) return true;
+  const notMatch = /^not\s+(.+)$/i.exec(normalized);
+  if (notMatch?.[1] !== undefined) {
+    const inner = evaluateConstantBooleanCondition(notMatch[1]);
+    return inner === undefined ? undefined : !inner;
+  }
+  const booleanComparison =
+    /^(true|false)\s*(=|<>|!=|is\s+(?:not\s+)?distinct\s+from)\s*(true|false)$/i
+      .exec(normalized);
+  if (booleanComparison !== null) {
+    const left = booleanComparison[1]?.toLowerCase() === "true";
+    const operator = booleanComparison[2]?.toLowerCase().replace(/\s+/g, " ");
+    const right = booleanComparison[3]?.toLowerCase() === "true";
+    if (operator === "=" || operator === "is not distinct from") return left === right;
+    if (operator === "<>" || operator === "!=" || operator === "is distinct from") {
+      return left !== right;
+    }
+  }
+  const numericComparison =
+    /^(-?\d+)\s*(=|<>|!=|<=|>=|<|>)\s*(-?\d+)$/i.exec(normalized);
+  if (numericComparison !== null) {
+    const left = Number.parseInt(numericComparison[1] ?? "", 10);
+    const operator = numericComparison[2];
+    const right = Number.parseInt(numericComparison[3] ?? "", 10);
+    if (Number.isSafeInteger(left) && Number.isSafeInteger(right)) {
+      switch (operator) {
+        case "=":
+          return left === right;
+        case "<>":
+        case "!=":
+          return left !== right;
+        case "<":
+          return left < right;
+        case ">":
+          return left > right;
+        case "<=":
+          return left <= right;
+        case ">=":
+          return left >= right;
+      }
+    }
+  }
+  const stringComparison =
+    /^('(?:''|[^'])*')\s*(=|<>|!=|is\s+(?:not\s+)?distinct\s+from)\s*('(?:''|[^'])*')$/i
+      .exec(normalized);
+  if (stringComparison !== null) {
+    const left = unquoteSqlLiteral(stringComparison[1] ?? "");
+    const operator = stringComparison[2]?.toLowerCase().replace(/\s+/g, " ");
+    const right = unquoteSqlLiteral(stringComparison[3] ?? "");
+    if (operator === "=" || operator === "is not distinct from") return left === right;
+    if (operator === "<>" || operator === "!=" || operator === "is distinct from") {
+      return left !== right;
+    }
+  }
+  return undefined;
+}
+
+function rejectExpectedValueLocalCopy(
+  signature: OwnerFunctionSignatureV1,
+  localName: string | undefined,
+  expression: string | undefined,
+): void {
+  const local = localName?.toLowerCase();
+  if (
+    local !== undefined &&
+    expression !== undefined &&
+    !local.startsWith("p_") &&
+    /\bp_expected_[a-z0-9_]+\b/i.test(expression)
+  ) {
+    throw new Error(
+      `PostgreSQL function CAS fence drift: ${signature.schema}.${signature.function_name} derives a local variable from a caller expected value`,
+    );
+  }
+}
+
 function assertNoUnreachableProofScaffolding(
   signature: OwnerFunctionSignatureV1,
   executable: string,
 ): void {
-  const constantFalseIf =
-    /\bif\s+(?:\(?\s*)?(?:false|1\s*=\s*0|0\s*=\s*1|true\s*=\s*false|false\s*=\s*true|not\s+true)(?:\s*\)?)\s+then\b/i;
-  if (constantFalseIf.test(executable)) {
-    throw new Error(
-      `unreachable proof block is forbidden in owner writer: ${signature.schema}.${signature.function_name}`,
-    );
-  }
-  for (const match of executable.matchAll(
-    /\b([a-z][a-z0-9_]*)\s*:=\s*(p_expected_[a-z0-9_]+)\b/gi,
-  )) {
-    const localName = match[1]?.toLowerCase();
-    if (localName !== undefined && !localName.startsWith("p_")) {
+  for (const match of executable.matchAll(/\bif\s+([\s\S]{1,240}?)\s+then\b/gi)) {
+    if (evaluateConstantBooleanCondition(match[1] ?? "") === false) {
       throw new Error(
-        `PostgreSQL function CAS fence drift: ${signature.schema}.${signature.function_name} copies caller expected value into a local variable`,
+        `unreachable proof block is forbidden in owner writer: ${signature.schema}.${signature.function_name}`,
       );
     }
   }
   for (const match of executable.matchAll(
-    /\bselect\s+(p_expected_[a-z0-9_]+)\s+into\s+([a-z][a-z0-9_]*)\b/gi,
+    /\b([a-z][a-z0-9_]*)\s*:=\s*([^;]*\bp_expected_[a-z0-9_]+\b[^;]*);/gi,
   )) {
-    const localName = match[2]?.toLowerCase();
-    if (localName !== undefined && !localName.startsWith("p_")) {
-      throw new Error(
-        `PostgreSQL function CAS fence drift: ${signature.schema}.${signature.function_name} copies caller expected value into a local variable`,
-      );
-    }
+    rejectExpectedValueLocalCopy(signature, match[1], match[2]);
+  }
+  for (const match of executable.matchAll(
+    /\bselect\s+([^;]*\bp_expected_[a-z0-9_]+\b[^;]*?)\s+into\s+([a-z][a-z0-9_]*)\b/gi,
+  )) {
+    rejectExpectedValueLocalCopy(signature, match[2], match[1]);
   }
 }
 
@@ -1395,6 +1501,21 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
       `canonical PostgreSQL foreign-key snapshot is pending for ${contract.owner_service}: ${contract.foreign_key_snapshot.reason}`,
     );
   }
+  if (contract.database_columns === undefined) {
+    throw new Error(
+      `canonical PostgreSQL column snapshot is required for live owner verification: ${contract.owner_service}`,
+    );
+  }
+  if (contract.database_unique_constraints === undefined) {
+    throw new Error(
+      `canonical PostgreSQL primary-key/unique snapshot is required for live owner verification: ${contract.owner_service}`,
+    );
+  }
+  if (contract.database_indexes === undefined) {
+    throw new Error(
+      `canonical PostgreSQL pg_index snapshot is required for live owner verification: ${contract.owner_service}`,
+    );
+  }
   const schemaResult = await postgres.query<{
     schema_name: string;
     schema_owner: string;
@@ -1668,13 +1789,11 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     row: OwnerDatabaseColumnV1 | (typeof columnResult.rows)[number],
   ): string =>
     `${row.table_name}.${row.column_name}:${row.postgres_type}:not_null=${row.not_null}:default=${row.default_expression ?? ""}:identity=${row.identity}:generated=${row.generated}`;
-  if (contract.database_columns !== undefined) {
-    assertSameSet(
-      `${contract.schema} database columns`,
-      columnResult.rows.map(columnSnapshot),
-      contract.database_columns.map(columnSnapshot),
-    );
-  }
+  assertSameSet(
+    `${contract.schema} database columns`,
+    columnResult.rows.map(columnSnapshot),
+    contract.database_columns.map(columnSnapshot),
+  );
 
   const tableAclResult = await postgres.query<{
     table_name: string;
@@ -2034,13 +2153,43 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
       | (typeof uniqueConstraintResult.rows)[number],
   ): string =>
     `${row.constraint_name}:${row.table_name}(${row.columns.join(",")}):kind=${row.kind}:deferrable=${row.deferrable}:initially_deferred=${row.initially_deferred}:validated=${row.validated}`;
-  if (contract.database_unique_constraints !== undefined) {
-    assertSameSet(
-      `${contract.schema} unique constraints`,
-      uniqueConstraintResult.rows.map(uniqueSnapshot),
-      contract.database_unique_constraints.map(uniqueSnapshot),
-    );
-  }
+  assertSameSet(
+    `${contract.schema} unique constraints`,
+    uniqueConstraintResult.rows.map(uniqueSnapshot),
+    contract.database_unique_constraints.map(uniqueSnapshot),
+  );
+
+  const indexResult = await postgres.query<{
+    index_name: string;
+    table_name: string;
+    definition: string;
+    unique: boolean;
+    primary: boolean;
+    valid: boolean;
+  }>(
+    `SELECT idx.relname AS index_name,
+            tab.relname AS table_name,
+            pg_catalog.pg_get_indexdef(idx.oid) AS definition,
+            i.indisunique AS unique,
+            i.indisprimary AS primary,
+            i.indisvalid AS valid
+       FROM pg_catalog.pg_index i
+       JOIN pg_catalog.pg_class idx ON idx.oid = i.indexrelid
+       JOIN pg_catalog.pg_class tab ON tab.oid = i.indrelid
+       JOIN pg_catalog.pg_namespace n ON n.oid = tab.relnamespace
+      WHERE n.nspname = $1
+      ORDER BY tab.relname, idx.relname`,
+    [contract.schema],
+  );
+  const indexSnapshot = (
+    row: OwnerDatabaseIndexV1 | (typeof indexResult.rows)[number],
+  ): string =>
+    `${row.index_name}:${row.table_name}:unique=${row.unique}:primary=${row.primary}:valid=${row.valid}:definition=${row.definition}`;
+  assertSameSet(
+    `${contract.schema} database indexes`,
+    indexResult.rows.map(indexSnapshot),
+    contract.database_indexes.map(indexSnapshot),
+  );
 
   const checkConstraintResult = await postgres.query<{
     constraint_name: string;

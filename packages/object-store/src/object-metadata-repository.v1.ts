@@ -2,12 +2,16 @@ import { randomUUID } from "node:crypto";
 
 import type { ServiceIdV1 } from "@pai/contracts";
 
+import type { BackendPutTerminalReceiptV1 } from "./object-storage-backend.v1.js";
 import type {
   ObjectRefV1,
   ObjectScopeV1,
 } from "./object-store-port.v1.js";
 
 const expiredUploadTerminationMs = 10 * 60_000;
+const transactionalPostgresObjectMetadataRepositoryBrand = Symbol(
+  "transactionalPostgresObjectMetadataRepositoryV1",
+);
 
 function foregroundUploadTerminalAt(foregroundLeaseUntil: Date): Date {
   return new Date(foregroundLeaseUntil.getTime() + expiredUploadTerminationMs);
@@ -59,6 +63,7 @@ export type ReservePutResultV1 =
       readonly reservation_id: string;
       readonly object_ref: ObjectRefV1;
       readonly foreground_lease_token: string;
+      readonly upload_attempt_token: string;
     }
   | { readonly kind: "replay"; readonly record: ObjectMetadataRecordV1 }
   | { readonly kind: "conflict" }
@@ -123,6 +128,7 @@ export interface ObjectReconciliationClaimV1 {
    * prove that the upload has been cancelled or can no longer complete.
    */
   readonly foreground_upload_may_still_arrive: boolean;
+  readonly upload_attempt_token?: string;
   readonly cleanup_not_before?: string;
   readonly foreground_upload_terminal_at?: string;
 }
@@ -140,6 +146,7 @@ export interface CompleteObjectReconciliationInputV1 {
   readonly reservation_id: string;
   readonly claim_token: string;
   readonly version?: string;
+  readonly backend_put_terminal_receipt?: BackendPutTerminalReceiptV1;
 }
 
 export interface ReleaseObjectReconciliationInputV1 {
@@ -195,6 +202,23 @@ export interface ObjectMetadataRepositoryV1 {
   ): Promise<void>;
 }
 
+export interface TransactionalPostgresObjectMetadataRepositoryV1
+  extends ObjectMetadataRepositoryV1 {
+  readonly durability: "transactional_postgres";
+  readonly [transactionalPostgresObjectMetadataRepositoryBrand]: true;
+}
+
+export function isTransactionalPostgresObjectMetadataRepositoryV1(
+  repository: ObjectMetadataRepositoryV1,
+): repository is TransactionalPostgresObjectMetadataRepositoryV1 {
+  return (
+    repository.durability === "transactional_postgres" &&
+    (repository as Partial<TransactionalPostgresObjectMetadataRepositoryV1>)[
+      transactionalPostgresObjectMetadataRepositoryBrand
+    ] === true
+  );
+}
+
 interface ReconciliationLease {
   operation: ObjectReconciliationOperationV1 | "put_uploading";
   claimToken?: string;
@@ -212,6 +236,7 @@ interface PendingPut extends ReconciliationLease {
   foregroundLeaseUntil: Date;
   foregroundUploadTerminalAt: Date;
   foregroundUploadMayStillArrive: boolean;
+  uploadAttemptToken: string;
   cleanupNotBefore?: Date;
 }
 
@@ -277,6 +302,7 @@ export class InMemoryObjectMetadataRepositoryV1
 
     const reservationId = randomUUID();
     const foregroundLeaseToken = randomUUID();
+    const uploadAttemptToken = randomUUID();
     const objectRef = `objv1_${randomUUID().replaceAll("-", "")}` as ObjectRefV1;
     const record: ObjectMetadataRecordV1 = {
       object_ref: objectRef,
@@ -307,6 +333,7 @@ export class InMemoryObjectMetadataRepositoryV1
         input.foreground_lease_until,
       ),
       foregroundUploadMayStillArrive: false,
+      uploadAttemptToken,
       attempt: 0,
     });
     return {
@@ -314,6 +341,7 @@ export class InMemoryObjectMetadataRepositoryV1
       reservation_id: reservationId,
       object_ref: objectRef,
       foreground_lease_token: foregroundLeaseToken,
+      upload_attempt_token: uploadAttemptToken,
     };
   }
 
@@ -595,6 +623,9 @@ export class InMemoryObjectMetadataRepositoryV1
         attempt: pending.attempt,
         foreground_upload_may_still_arrive:
           "record" in pending && pending.foregroundUploadMayStillArrive,
+        ...("record" in pending && pending.foregroundUploadMayStillArrive
+          ? { upload_attempt_token: pending.uploadAttemptToken }
+          : {}),
         ...("record" in pending && pending.cleanupNotBefore !== undefined
           ? { cleanup_not_before: pending.cleanupNotBefore.toISOString() }
           : {}),
@@ -619,9 +650,16 @@ export class InMemoryObjectMetadataRepositoryV1
       }
       if (put.operation === "put_cleanup") {
         if (put.foregroundUploadMayStillArrive) {
-          throw new Error(
-            "late-upload cleanup tombstone cannot be completed without backend cancellation proof",
-          );
+          const receipt = input.backend_put_terminal_receipt;
+          if (
+            receipt === undefined ||
+            receipt.upload_attempt_token !== put.uploadAttemptToken ||
+            !Number.isFinite(Date.parse(receipt.terminal_at))
+          ) {
+            throw new Error(
+              "late-upload cleanup tombstone cannot be completed without a matching backend terminal receipt",
+            );
+          }
         }
         this.#abortPendingPut(put);
         return undefined;

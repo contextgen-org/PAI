@@ -2,6 +2,7 @@ import type { BotAuthorizationScopeV1 } from "@pai/auth";
 import {
   AdmitTriggerRequestBodyV1Schema,
   AdmitTriggerResponseV1Schema,
+  type AdmitTriggerResponseV1,
   type TriggerSourceV1,
 } from "@pai/contracts";
 import { OwnerRepositoryTransientErrorV1 } from "@pai/persistence";
@@ -84,6 +85,19 @@ function mergeInternalPolicies(
 }
 
 function admissionError(error: InvalidAdmitTriggerCommandError): ServiceError {
+  if (error.kind === "server_invariant") {
+    return new ServiceError({
+      code: "internal_error",
+      message: "admission writer violated its canonical response contract",
+      statusCode: 500,
+      retryable: false,
+      details: {
+        schema_version: "admit_trigger_response.v1",
+        reason: error.message,
+      },
+      cause: error,
+    });
+  }
   const denied = error.kind === "authorization_denied";
   return new ServiceError({
     code: denied ? "authorization_scope_mismatch" : "invalid_request",
@@ -96,6 +110,30 @@ function admissionError(error: InvalidAdmitTriggerCommandError): ServiceError {
     },
     cause: error,
   });
+}
+
+function admissionResponseStatusCode(
+  response: AdmitTriggerResponseV1,
+): 200 | 409 | 500 | 503 {
+  switch (response.code) {
+    case "trigger_accepted":
+    case "trigger_rejected":
+      return 200;
+    case "idempotency_conflict":
+    case "stale_admission_fence":
+      return 409;
+    case "serialization_retry_exhausted":
+    case "transient_database_error":
+    case "service_unavailable":
+      return 503;
+    case "invalid_request":
+    case "unauthenticated":
+    case "authorization_denied":
+    case "capability_denied":
+    case "authorization_scope_mismatch":
+    case "internal_error":
+      return 500;
+  }
 }
 
 function ownerRepositoryTransientError(
@@ -144,16 +182,18 @@ export function buildTriggerProcessorApp(
               401: AdmitTriggerResponseV1Schema,
               403: AdmitTriggerResponseV1Schema,
               409: AdmitTriggerResponseV1Schema,
+              500: AdmitTriggerResponseV1Schema,
               503: AdmitTriggerResponseV1Schema,
             },
           },
         },
-        async (request) => {
+        async (request, reply) => {
           try {
-            return await triggerAdmission.admit(
+            const response = await triggerAdmission.admit(
               getWorkloadAuthContext(request),
               withAuthenticatedRouteContext(request.body, source, request.id),
             );
+            return reply.code(admissionResponseStatusCode(response)).send(response);
           } catch (error) {
             if (error instanceof InvalidAdmitTriggerCommandError) {
               throw admissionError(error);

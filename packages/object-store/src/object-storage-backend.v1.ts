@@ -28,11 +28,30 @@ export interface BackendObjectHeadV1 {
 export interface PutBackendObjectV1 {
   readonly bucket: ObjectStoreBucketV1;
   readonly key: string;
+  readonly upload_attempt_token: string;
   readonly body: AsyncIterable<Uint8Array>;
   readonly size_bytes: number;
   readonly media_type: string;
   readonly sha256: string;
 }
+
+export interface BackendPutTerminalReceiptV1 {
+  readonly upload_attempt_token: string;
+  readonly terminal_at: string;
+}
+
+export interface FinalizeAbandonedPutAttemptInputV1 {
+  readonly bucket: ObjectStoreBucketV1;
+  readonly key: string;
+  readonly upload_attempt_token: string;
+}
+
+export type FinalizeAbandonedPutAttemptResultV1 =
+  | {
+      readonly kind: "terminal";
+      readonly receipt: BackendPutTerminalReceiptV1;
+    }
+  | { readonly kind: "active_or_unknown" };
 
 export interface BackendObjectRangeV1 {
   readonly offset: number;
@@ -48,6 +67,9 @@ export interface BackendObjectStreamV1 {
 
 export interface ObjectStorageBackendV1 {
   putIfAbsent(request: PutBackendObjectV1): Promise<BackendObjectHeadV1>;
+  finalizeAbandonedPutAttempt?(
+    request: FinalizeAbandonedPutAttemptInputV1,
+  ): Promise<FinalizeAbandonedPutAttemptResultV1>;
   head(bucket: ObjectStoreBucketV1, key: string): Promise<BackendObjectHeadV1>;
   get(
     bucket: ObjectStoreBucketV1,
@@ -68,6 +90,7 @@ interface InMemoryBackendObject extends BackendObjectHeadV1 {
 
 export class InMemoryObjectStorageBackendV1 implements ObjectStorageBackendV1 {
   readonly #objects = new Map<string, InMemoryBackendObject>();
+  readonly #activePutAttempts = new Set<string>();
 
   #key(bucket: ObjectStoreBucketV1, key: string): string {
     return `${bucket}/${key}`;
@@ -83,30 +106,51 @@ export class InMemoryObjectStorageBackendV1 implements ObjectStorageBackendV1 {
         "object already exists",
       );
     }
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    for await (const chunk of request.body) {
-      chunks.push(chunk.slice());
-      size += chunk.byteLength;
+    this.#activePutAttempts.add(request.upload_attempt_token);
+    try {
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      for await (const chunk of request.body) {
+        chunks.push(chunk.slice());
+        size += chunk.byteLength;
+      }
+      if (size !== request.size_bytes) {
+        throw new ObjectStorageBackendErrorV1("unavailable", "stream size changed");
+      }
+      const body = new Uint8Array(size);
+      let offset = 0;
+      for (const chunk of chunks) {
+        body.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      const object: InMemoryBackendObject = {
+        version: `mem_${randomUUID()}`,
+        size_bytes: body.byteLength,
+        media_type: request.media_type,
+        sha256: request.sha256,
+        body,
+      };
+      this.#objects.set(key, object);
+      return object;
+    } finally {
+      this.#activePutAttempts.delete(request.upload_attempt_token);
     }
-    if (size !== request.size_bytes) {
-      throw new ObjectStorageBackendErrorV1("unavailable", "stream size changed");
+  }
+
+  public async finalizeAbandonedPutAttempt(
+    request: FinalizeAbandonedPutAttemptInputV1,
+  ): Promise<FinalizeAbandonedPutAttemptResultV1> {
+    if (this.#activePutAttempts.has(request.upload_attempt_token)) {
+      return { kind: "active_or_unknown" };
     }
-    const body = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) {
-      body.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    const object: InMemoryBackendObject = {
-      version: `mem_${randomUUID()}`,
-      size_bytes: body.byteLength,
-      media_type: request.media_type,
-      sha256: request.sha256,
-      body,
+    this.#objects.delete(this.#key(request.bucket, request.key));
+    return {
+      kind: "terminal",
+      receipt: {
+        upload_attempt_token: request.upload_attempt_token,
+        terminal_at: new Date().toISOString(),
+      },
     };
-    this.#objects.set(key, object);
-    return object;
   }
 
   public async head(

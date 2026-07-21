@@ -47,7 +47,6 @@ const admitTriggerRequestBodyProperties = {
   scope: botScopeSchema,
   payload: Type.Record(Type.String(), Type.Unknown()),
   dedupe_key: Type.String({ minLength: 1 }),
-  request_hash: Type.String({ minLength: 1 }),
   idempotency_key: Type.String({ minLength: 1 }),
   is_catch_up: Type.Boolean(),
   explicit_interrupt: Type.Boolean(),

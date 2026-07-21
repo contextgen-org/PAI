@@ -595,21 +595,12 @@ export class ObjectStoreAdapterCoreV1
             version: head.version,
           });
         } else {
-          try {
-            await this.#backend.delete(policy.bucket, key);
-          } catch (error) {
-            if (
-              !(error instanceof ObjectStorageBackendErrorV1) ||
-              error.code !== "not_found"
-            ) {
-              throw error;
-            }
-          }
           if (claim.foreground_upload_may_still_arrive) {
             const terminalAt =
               claim.foreground_upload_terminal_at === undefined
                 ? Number.NaN
                 : Date.parse(claim.foreground_upload_terminal_at);
+            const uploadAttemptToken = claim.upload_attempt_token;
             if (!Number.isFinite(terminalAt) || now.getTime() < terminalAt) {
               await this.#metadata.releaseReconciliation({
                 reservation_id: claim.reservation_id,
@@ -626,45 +617,61 @@ export class ObjectStoreAdapterCoreV1
               retryScheduled += 1;
               continue;
             }
-            try {
-              await this.#backend.head(policy.bucket, key);
+            if (
+              uploadAttemptToken === undefined ||
+              this.#backend.finalizeAbandonedPutAttempt === undefined
+            ) {
               await this.#metadata.releaseReconciliation({
                 reservation_id: claim.reservation_id,
                 claim_token: claim.claim_token,
                 last_error:
-                  "cleanup deleted a late upload but object storage still reports bytes",
+                  "cleanup retained tombstone because backend cannot prove the foreground upload attempt is terminal",
                 next_retry_at: new Date(
                   now.getTime() + expiredUploadCleanupGraceMs,
                 ),
               });
               retryScheduled += 1;
               continue;
-            } catch (headError) {
-              if (
-                !(
-                  headError instanceof ObjectStorageBackendErrorV1 &&
-                  headError.code === "not_found"
-                )
-              ) {
-                throw headError;
-              }
             }
-            await this.#metadata.releaseReconciliation({
+            const terminal = await this.#backend.finalizeAbandonedPutAttempt({
+              bucket: policy.bucket,
+              key,
+              upload_attempt_token: uploadAttemptToken,
+            });
+            if (terminal.kind !== "terminal") {
+              await this.#metadata.releaseReconciliation({
+                reservation_id: claim.reservation_id,
+                claim_token: claim.claim_token,
+                last_error:
+                  "cleanup retained tombstone because the foreground upload attempt is still active or unknown",
+                next_retry_at: new Date(
+                  now.getTime() + expiredUploadCleanupGraceMs,
+                ),
+              });
+              retryScheduled += 1;
+              continue;
+            }
+            await this.#metadata.completeReconciliation({
               reservation_id: claim.reservation_id,
               claim_token: claim.claim_token,
-              last_error:
-                "cleanup retained tombstone because backend has not proven the foreground upload attempt is cancelled",
-              next_retry_at: new Date(
-                now.getTime() + expiredUploadCleanupGraceMs,
-              ),
+              backend_put_terminal_receipt: terminal.receipt,
             });
-            retryScheduled += 1;
-            continue;
+          } else {
+            try {
+              await this.#backend.delete(policy.bucket, key);
+            } catch (error) {
+              if (
+                !(error instanceof ObjectStorageBackendErrorV1) ||
+                error.code !== "not_found"
+              ) {
+                throw error;
+              }
+            }
+            await this.#metadata.completeReconciliation({
+              reservation_id: claim.reservation_id,
+              claim_token: claim.claim_token,
+            });
           }
-          await this.#metadata.completeReconciliation({
-            reservation_id: claim.reservation_id,
-            claim_token: claim.claim_token,
-          });
         }
         completed += 1;
       } catch (error) {
@@ -773,6 +780,7 @@ export class ObjectStoreAdapterCoreV1
       head = await this.#backend.putIfAbsent({
         bucket: policy.bucket,
         key,
+        upload_attempt_token: reservation.upload_attempt_token,
         body: upload.body,
         size_bytes: request.size_bytes,
         media_type: request.media_type,

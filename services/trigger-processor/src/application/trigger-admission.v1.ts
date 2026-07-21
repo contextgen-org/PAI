@@ -26,8 +26,10 @@ export type TriggerProcessorOwnerDatabaseV1 =
 export class InvalidAdmitTriggerCommandError extends Error {
   public constructor(
     message: string,
-    public readonly kind: "invalid_request" | "authorization_denied" =
-      "invalid_request",
+    public readonly kind:
+      | "invalid_request"
+      | "authorization_denied"
+      | "server_invariant" = "invalid_request",
   ) {
     super(message);
     this.name = "InvalidAdmitTriggerCommandError";
@@ -177,11 +179,6 @@ export function createTriggerAdmissionApplicationV1(
         command.explicit_interrupt,
       );
       const requestHash = canonicalAdmissionRequestHash(command);
-      if (command.request_hash !== requestHash) {
-        throw new InvalidAdmitTriggerCommandError(
-          "request_hash does not match the canonical route-injected admission request",
-        );
-      }
       return database.unit_of_work.withTransaction(
         {
           operation: "admit_trigger",
@@ -226,6 +223,7 @@ export function createTriggerAdmissionApplicationV1(
           if (!Value.Check(AdmitTriggerResponseV1Schema, result)) {
             throw new InvalidAdmitTriggerCommandError(
               "admit_trigger_v1 returned a non-canonical response",
+              "server_invariant",
             );
           }
           return result;

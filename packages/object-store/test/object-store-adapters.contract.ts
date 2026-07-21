@@ -30,7 +30,10 @@ import {
   type VerifyObjectAccessDecisionInputV1,
 } from "../src/composition.js";
 import { InMemoryObjectStoreAdapterV1 } from "../src/in-memory-object-store-adapter.v1.js";
-import { InMemoryObjectMetadataRepositoryV1 } from "../src/object-metadata-repository.v1.js";
+import {
+  InMemoryObjectMetadataRepositoryV1,
+  type ObjectMetadataRepositoryV1,
+} from "../src/object-metadata-repository.v1.js";
 import {
   InMemoryObjectStorageBackendV1,
   ObjectStorageBackendErrorV1,
@@ -695,6 +698,7 @@ describe("ObjectStore adapter policy validation", () => {
     });
     expect(first[0]).toMatchObject({
       foreground_upload_may_still_arrive: true,
+      upload_attempt_token: reserved.upload_attempt_token,
       cleanup_not_before: "2026-07-20T00:05:00.000Z",
     });
     await metadata.releaseReconciliation({
@@ -714,8 +718,76 @@ describe("ObjectStore adapter policy validation", () => {
     });
     expect(reclaimed[0]).toMatchObject({
       foreground_upload_may_still_arrive: true,
+      upload_attempt_token: reserved.upload_attempt_token,
       cleanup_not_before: "2026-07-20T00:05:00.000Z",
     });
+  });
+
+  it("requires a matching backend terminal receipt before completing a late-upload cleanup tombstone", async () => {
+    const metadata = new InMemoryObjectMetadataRepositoryV1();
+    const reserved = await metadata.reservePut({
+      owner_service: "trigger_processor",
+      object_class: "trigger_process_snapshot",
+      scope,
+      scope_fingerprint: objectScopeFingerprintV1(scope),
+      idempotency_key: "receipt-gated-upload",
+      request_fingerprint: "request-receipt-gated-upload",
+      sha256: digest(new Uint8Array()),
+      size_bytes: 0,
+      media_type: "application/octet-stream",
+      retention_until: "2026-07-21T00:00:00.000Z",
+      now: new Date("2026-07-20T00:00:00.000Z"),
+      foreground_lease_until: new Date("2026-07-20T00:05:00.000Z"),
+    });
+    expect(reserved.kind).toBe("claimed");
+    if (reserved.kind !== "claimed") throw new Error("reservation was not claimed");
+    await metadata.handoffPutReconciliation(
+      reserved.reservation_id,
+      "put_cleanup",
+      reserved.foreground_lease_token,
+      new Date("2026-07-20T00:05:00.000Z"),
+      true,
+    );
+    const claimed = await metadata.claimReconciliation({
+      worker_id: "receipt-worker",
+      now: new Date("2026-07-20T00:06:00.000Z"),
+      locked_until: new Date("2026-07-20T00:06:30.000Z"),
+      limit: 1,
+      expired_upload_cleanup_not_before: new Date(
+        "2026-07-20T00:11:00.000Z",
+      ),
+    });
+    expect(claimed[0]).toMatchObject({
+      operation: "put_cleanup",
+      foreground_upload_may_still_arrive: true,
+      upload_attempt_token: reserved.upload_attempt_token,
+    });
+    await expect(
+      metadata.completeReconciliation({
+        reservation_id: reserved.reservation_id,
+        claim_token: claimed[0]!.claim_token,
+      }),
+    ).rejects.toThrow(/terminal receipt/);
+    await expect(
+      metadata.completeReconciliation({
+        reservation_id: reserved.reservation_id,
+        claim_token: claimed[0]!.claim_token,
+        backend_put_terminal_receipt: {
+          upload_attempt_token: "wrong-attempt",
+          terminal_at: "2026-07-20T00:06:00.000Z",
+        },
+      }),
+    ).rejects.toThrow(/terminal receipt/);
+    await expect(
+      metadata.completeReconciliation({
+        reservation_id: reserved.reservation_id,
+        claim_token: claimed[0]!.claim_token,
+        backend_put_terminal_receipt: {
+          upload_attempt_token: reserved.upload_attempt_token,
+          terminal_at: "2026-07-20T00:06:00.000Z",
+        },
+      }),
+    ).resolves.toBeUndefined();
   });
 
   it("runs reconciliation continuously without overlapping the same worker", async () => {
@@ -764,6 +836,27 @@ describe("ObjectStore adapter policy validation", () => {
       () =>
         new SupabaseStorageAdapter({
           metadataRepository: new InMemoryObjectMetadataRepositoryV1(),
+          accessPolicyVerifier: new TestObjectAccessPolicyVerifierV1(),
+          policies: [policy],
+          url: "https://storage.test.invalid",
+          secretKey: "test-secret",
+          fetch: fakeSupabaseFetch(new Map()),
+        }),
+    ).toThrow(/transactional Postgres metadata repository/);
+
+    const selfReportedTransactionalRepository = new Proxy(
+      new InMemoryObjectMetadataRepositoryV1(),
+      {
+        get(target, property, receiver) {
+          if (property === "durability") return "transactional_postgres";
+          return Reflect.get(target, property, receiver);
+        },
+      },
+    ) as ObjectMetadataRepositoryV1;
+    expect(
+      () =>
+        new SupabaseStorageAdapter({
+          metadataRepository: selfReportedTransactionalRepository,
           accessPolicyVerifier: new TestObjectAccessPolicyVerifierV1(),
           policies: [policy],
           url: "https://storage.test.invalid",
@@ -994,7 +1087,9 @@ class PausedPutBackend extends InMemoryObjectStorageBackendV1 {
   #resume!: () => void;
   readonly #resumed: Promise<void>;
   #request: PutBackendObjectV1 | undefined;
+  #released = false;
   public deleteCount = 0;
+  public terminalFinalizeCount = 0;
 
   public constructor() {
     super();
@@ -1007,6 +1102,7 @@ class PausedPutBackend extends InMemoryObjectStorageBackendV1 {
   }
 
   public release(): void {
+    this.#released = true;
     this.#resume();
   }
 
@@ -1022,6 +1118,14 @@ class PausedPutBackend extends InMemoryObjectStorageBackendV1 {
   ): Promise<void> {
     this.deleteCount += 1;
     return super.delete(...input);
+  }
+
+  public override async finalizeAbandonedPutAttempt(
+    ...input: Parameters<InMemoryObjectStorageBackendV1["finalizeAbandonedPutAttempt"]>
+  ) {
+    this.terminalFinalizeCount += 1;
+    if (!this.#released) return { kind: "active_or_unknown" as const };
+    return super.finalizeAbandonedPutAttempt(...input);
   }
 
   public async hasPublishedObject(): Promise<boolean> {
@@ -1253,7 +1357,7 @@ describe("ObjectStore ambiguous finalization recovery", () => {
     });
   });
 
-  it("retains an expired-upload tombstone when terminal cleanup observes not-found before late bytes arrive", async () => {
+  it("requires an upload-attempt terminal receipt before clearing an expired-upload tombstone", async () => {
     const metadata = new InMemoryObjectMetadataRepositoryV1();
     const backend = new PausedPutBackend();
     let now = new Date("2026-07-20T00:00:00.000Z");
@@ -1296,6 +1400,8 @@ describe("ObjectStore ambiguous finalization recovery", () => {
       }),
     ).resolves.toEqual({ claimed: 1, completed: 0, retry_scheduled: 1 });
     expect(await backend.hasPublishedObject()).toBe(false);
+    expect(backend.terminalFinalizeCount).toBe(1);
+    expect(backend.deleteCount).toBe(0);
 
     backend.release();
     await expect(foregroundPut).rejects.toSatisfy(
@@ -1310,12 +1416,14 @@ describe("ObjectStore ambiguous finalization recovery", () => {
         limit: 1,
         lease_seconds: 30,
       }),
-    ).resolves.toEqual({ claimed: 1, completed: 0, retry_scheduled: 1 });
+    ).resolves.toEqual({ claimed: 1, completed: 1, retry_scheduled: 0 });
     expect(await backend.hasPublishedObject()).toBe(false);
-    expect(backend.deleteCount).toBeGreaterThanOrEqual(2);
-    await expect(store.putImmutable(putRequest(body))).rejects.toSatisfy(
-      expectCode("precondition_failed"),
-    );
+    expect(backend.terminalFinalizeCount).toBe(2);
+    expect(backend.deleteCount).toBe(0);
+    await expect(store.putImmutable(putRequest(body))).resolves.toMatchObject({
+      replayed: false,
+      sha256: digest(body),
+    });
   });
 
   it("uses trusted read-back after an expired upload lease when delete and cleanup handoff both fail", async () => {
@@ -1374,10 +1482,11 @@ describe("ObjectStore ambiguous finalization recovery", () => {
         limit: 1,
         lease_seconds: 30,
       }),
-    ).resolves.toEqual({ claimed: 1, completed: 0, retry_scheduled: 1 });
-    await expect(store.putImmutable(putRequest(body))).rejects.toSatisfy(
-      expectCode("precondition_failed"),
-    );
+    ).resolves.toEqual({ claimed: 1, completed: 1, retry_scheduled: 0 });
+    await expect(store.putImmutable(putRequest(body))).resolves.toMatchObject({
+      replayed: false,
+      sha256: digest(body),
+    });
   });
 
   it("redirects a terminal put-finalize mismatch to cleanup instead of retrying forever", async () => {

@@ -34,7 +34,6 @@
                   "scope",
                   "payload",
                   "dedupe_key",
-                  "request_hash",
                   "idempotency_key",
                   "is_catch_up",
                   "explicit_interrupt"
@@ -119,10 +118,6 @@
                     }
                   },
                   "dedupe_key": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "request_hash": {
                     "minLength": 1,
                     "type": "string"
                   },
@@ -499,6 +494,95 @@
             }
           },
           "409": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
             "description": "Canonical error envelope",
             "content": {
               "application/json": {
@@ -708,7 +792,6 @@
                   "scope",
                   "payload",
                   "dedupe_key",
-                  "request_hash",
                   "idempotency_key",
                   "is_catch_up",
                   "explicit_interrupt"
@@ -793,10 +876,6 @@
                     }
                   },
                   "dedupe_key": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "request_hash": {
                     "minLength": 1,
                     "type": "string"
                   },
@@ -1173,6 +1252,95 @@
             }
           },
           "409": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
             "description": "Canonical error envelope",
             "content": {
               "application/json": {
@@ -1382,7 +1550,6 @@
                   "scope",
                   "payload",
                   "dedupe_key",
-                  "request_hash",
                   "idempotency_key",
                   "is_catch_up",
                   "explicit_interrupt"
@@ -1467,10 +1634,6 @@
                     }
                   },
                   "dedupe_key": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "request_hash": {
                     "minLength": 1,
                     "type": "string"
                   },
@@ -1847,6 +2010,95 @@
             }
           },
           "409": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        {
+                          "const": "invalid_request",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unauthenticated",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "internal_error",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
             "description": "Canonical error envelope",
             "content": {
               "application/json": {
@@ -3060,7 +3312,6 @@
           "scope",
           "payload",
           "dedupe_key",
-          "request_hash",
           "idempotency_key",
           "is_catch_up",
           "explicit_interrupt"
@@ -3148,10 +3399,6 @@
             "minLength": 1,
             "type": "string"
           },
-          "request_hash": {
-            "minLength": 1,
-            "type": "string"
-          },
           "idempotency_key": {
             "minLength": 1,
             "type": "string"
@@ -3174,7 +3421,6 @@
           "scope",
           "payload",
           "dedupe_key",
-          "request_hash",
           "idempotency_key",
           "is_catch_up",
           "explicit_interrupt",
@@ -3261,10 +3507,6 @@
             }
           },
           "dedupe_key": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "request_hash": {
             "minLength": 1,
             "type": "string"
           },

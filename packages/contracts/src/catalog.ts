@@ -248,7 +248,7 @@ export interface TriggerProcessorHttpOperationV1 {
   readonly allowed_caller: "observation_gateway" | "timer_trigger_app";
   readonly request_schema_name: "AdmitTriggerRequestBodyV1";
   readonly response_schema_name: "AdmitTriggerResponseV1";
-  readonly responses: readonly [200, 400, 401, 403, 409, 503];
+  readonly responses: readonly [200, 400, 401, 403, 409, 500, 503];
 }
 
 export const TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1 = [
@@ -261,7 +261,7 @@ export const TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1 = [
     allowed_caller: "observation_gateway",
     request_schema_name: "AdmitTriggerRequestBodyV1",
     response_schema_name: "AdmitTriggerResponseV1",
-    responses: [200, 400, 401, 403, 409, 503],
+    responses: [200, 400, 401, 403, 409, 500, 503],
   },
   {
     operation_id: "admitTriggerFromNotificationV1",
@@ -272,7 +272,7 @@ export const TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1 = [
     allowed_caller: "observation_gateway",
     request_schema_name: "AdmitTriggerRequestBodyV1",
     response_schema_name: "AdmitTriggerResponseV1",
-    responses: [200, 400, 401, 403, 409, 503],
+    responses: [200, 400, 401, 403, 409, 500, 503],
   },
   {
     operation_id: "admitTriggerFromTimerV1",
@@ -283,6 +283,6 @@ export const TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1 = [
     allowed_caller: "timer_trigger_app",
     request_schema_name: "AdmitTriggerRequestBodyV1",
     response_schema_name: "AdmitTriggerResponseV1",
-    responses: [200, 400, 401, 403, 409, 503],
+    responses: [200, 400, 401, 403, 409, 500, 503],
   },
 ] as const satisfies readonly TriggerProcessorHttpOperationV1[];

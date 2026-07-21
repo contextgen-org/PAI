@@ -1,6 +1,9 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-import type { ObjectMetadataRepositoryV1 } from "./object-metadata-repository.v1.js";
+import {
+  isTransactionalPostgresObjectMetadataRepositoryV1,
+  type ObjectMetadataRepositoryV1,
+} from "./object-metadata-repository.v1.js";
 import type { ObjectAccessPolicyVerifierV1 } from "./object-access-policy.v1.js";
 import { ObjectStoreAdapterCoreV1 } from "./object-store-adapter-core.v1.js";
 import {
@@ -218,7 +221,9 @@ export interface SupabaseStorageAdapterOptionsV1 {
 export class SupabaseStorageAdapter extends ObjectStoreAdapterCoreV1 {
   public constructor(options: SupabaseStorageAdapterOptionsV1) {
     if (
-      options.metadataRepository.durability !== "transactional_postgres" &&
+      !isTransactionalPostgresObjectMetadataRepositoryV1(
+        options.metadataRepository,
+      ) &&
       options.allowVolatileMetadataRepositoryForTests !== true
     ) {
       throw new Error(

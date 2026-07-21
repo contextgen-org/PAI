@@ -16,6 +16,7 @@ import {
   OWNER_DATABASE_TARGETS_V1,
   ownerDatabaseApplicationDependenciesV1,
   ownerFunctionSignatureV1,
+  verifyOwnerRepositoryDeploymentFromPostgresV1,
   verifyOwnerWriterDefinitionV1,
 } from "../src/index.js";
 
@@ -296,6 +297,27 @@ describe("owner repository contracts", () => {
     ).toThrow(/owner database target drift/);
   });
 
+  it("requires canonical schema snapshots before live PostgreSQL verification", async () => {
+    const queries: string[] = [];
+    const postgres = {
+      async query<TRow extends Record<string, unknown>>(sql: string) {
+        queries.push(sql);
+        return { rows: [] as TRow[] };
+      },
+    };
+    await expect(
+      verifyOwnerRepositoryDeploymentFromPostgresV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        postgres,
+        {
+          expected_schema_owner: "pai_migrator",
+          runtime_postgres: postgres,
+        },
+      ),
+    ).rejects.toThrow(/canonical PostgreSQL column snapshot is required/);
+    expect(queries).toEqual([]);
+  });
+
   it("pins a complete non-empty canonical FK snapshot for every database owner", () => {
     for (const contract of contracts) {
       expect(contract.foreign_key_snapshot).toMatchObject({
@@ -525,6 +547,68 @@ describe("owner repository contracts", () => {
         mergeBody,
       ),
     ).toThrow(/undeclared PostgreSQL read|CAS fence drift/);
+
+    const indirectExpectedCopyBody = partialExpectedBody.replace(
+      "BEGIN",
+      "DECLARE v_copy text;\n      BEGIN",
+    ).replace(
+      "AND p.phase = p_expected_phase;",
+      `AND p.phase = p_expected_phase
+           AND p.status = p_expected_status;
+        v_copy := coalesce(p_expected_phase, p_expected_phase);
+        IF p_expected_phase = v_copy THEN
+          RETURN '{}'::jsonb;
+        END IF;`,
+    );
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        transitionSignature,
+        indirectExpectedCopyBody,
+      ),
+    ).toThrow(/CAS fence drift/);
+
+    const constantFalseProofBody = partialExpectedBody.replace(
+      `UPDATE trigger_processor.trigger_processes p
+           SET status = p_next_state->>'status'
+         WHERE p.id = p_process_id
+           AND p.phase = p_expected_phase;`,
+      `IF 2 = 3 THEN
+          UPDATE trigger_processor.trigger_processes p
+             SET status = p_next_state->>'status'
+           WHERE p.id = p_process_id
+             AND p.phase = p_expected_phase
+             AND p.status = p_expected_status;
+        END IF;`,
+    );
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        transitionSignature,
+        constantFalseProofBody,
+      ),
+    ).toThrow(/unreachable proof block/);
+
+    const dollarQuotedProofBody = partialExpectedBody.replace(
+      `UPDATE trigger_processor.trigger_processes p
+           SET status = p_next_state->>'status'
+         WHERE p.id = p_process_id
+           AND p.phase = p_expected_phase;`,
+      `PERFORM $proof$
+          UPDATE trigger_processor.trigger_processes p
+             SET status = p_next_state->>'status'
+           WHERE p.id = p_process_id
+             AND p.phase = p_expected_phase
+             AND p.status = p_expected_status;
+        $proof$;`,
+    );
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        transitionSignature,
+        dollarQuotedProofBody,
+      ),
+    ).toThrow(/effect drift|CAS fence drift/);
   });
 
   it("fails closed on permission coverage, direct writes, or writer signature drift", () => {

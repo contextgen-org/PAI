@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import type { VerifiedWorkloadCredential } from "@pai/auth";
 import { TriggerAdmissionDecisionV1Schema } from "@pai/contracts";
 import { OwnerRepositoryTransientErrorV1 } from "@pai/persistence";
@@ -8,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createTriggerAdmissionApplicationV1,
+  InvalidAdmitTriggerCommandError,
   type TriggerProcessorOwnerDatabaseV1,
 } from "../src/application/trigger-admission.v1.js";
 import { buildTriggerProcessorApp } from "../src/app.js";
@@ -32,37 +31,6 @@ const base = {
   foreground_slot_process_id: null,
   foreground_slot_generation: 7,
 };
-
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(",")}]`;
-  }
-  if (value !== null && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
-function commandHash(command: Readonly<Record<string, unknown>>): string {
-  return `sha256:${createHash("sha256")
-    .update(
-      canonicalJson({
-        dedupe_key: command.dedupe_key,
-        explicit_interrupt: command.explicit_interrupt,
-        idempotency_key: command.idempotency_key,
-        is_catch_up: command.is_catch_up,
-        payload: command.payload,
-        process_id: command.process_id,
-        scope: command.scope,
-        source: command.source,
-        trigger_id: command.trigger_id,
-      }),
-    )
-    .digest("hex")}`;
-}
 
 describe("Trigger admission", () => {
   it("calculates priority from source and actor instead of accepting caller priority", () => {
@@ -431,7 +399,7 @@ describe("Trigger admission", () => {
       },
       protectedHeader: { alg: "EdDSA", kid: "workload-key-1", typ: "JWT" },
     } as const satisfies VerifiedWorkloadCredential;
-    const commandWithoutHash = {
+    const command = {
       trigger_id: "trigger-1",
       process_id: "process-1",
       scope: {
@@ -450,10 +418,6 @@ describe("Trigger admission", () => {
       is_catch_up: false,
       explicit_interrupt: false,
     } as const;
-    const command = {
-      ...commandWithoutHash,
-      request_hash: commandHash(commandWithoutHash),
-    } as const;
     await expect(
       application.admit(credential, command),
     ).resolves.toMatchObject({
@@ -471,7 +435,7 @@ describe("Trigger admission", () => {
       arguments: expect.objectContaining({
         p_trigger_id: "trigger-1",
         p_process_id: "process-1",
-        p_request_hash: command.request_hash,
+        p_request_hash: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
         p_actor: { actor_type: "user", actor_id: "user-1" },
         p_admission_request: {
           is_catch_up: false,
@@ -503,16 +467,6 @@ describe("Trigger admission", () => {
     await expect(
       application.admit(credential, {
         ...command,
-        payload: { text: "changed" },
-      }),
-    ).rejects.toThrow("request_hash");
-    await expect(
-      application.admit(credential, {
-        ...command,
-        request_hash: commandHash({
-          ...commandWithoutHash,
-          explicit_interrupt: true,
-        }),
         explicit_interrupt: true,
       }),
     ).rejects.toThrow("explicit interrupt");
@@ -532,15 +486,11 @@ describe("Trigger admission", () => {
     await expect(
       application.admit(developerCredential, {
         ...command,
-        request_hash: commandHash({
-          ...commandWithoutHash,
-          explicit_interrupt: true,
-        }),
         explicit_interrupt: true,
       }),
     ).rejects.toThrow("explicit interrupt");
     const notificationCommandWithoutHash = {
-      ...commandWithoutHash,
+      ...command,
       source: "notification",
     } as const;
     const notificationCredential = {
@@ -553,10 +503,6 @@ describe("Trigger admission", () => {
     await expect(
       application.admit(notificationCredential, {
         ...notificationCommandWithoutHash,
-        request_hash: commandHash({
-          ...notificationCommandWithoutHash,
-          explicit_interrupt: true,
-        }),
         explicit_interrupt: true,
       }),
     ).rejects.toThrow("explicit interrupt");
@@ -575,10 +521,6 @@ describe("Trigger admission", () => {
     await expect(
       application.admit(superUserCredential, {
         ...command,
-        request_hash: commandHash({
-          ...commandWithoutHash,
-          explicit_interrupt: true,
-        }),
         explicit_interrupt: true,
       }),
     ).resolves.toMatchObject({ code: "trigger_accepted" });
@@ -694,5 +636,101 @@ describe("Trigger admission", () => {
       retryable: true,
     });
     await transientApp.close();
+
+    const conflictApp = buildTriggerProcessorApp(
+      {
+        logger: false,
+        auth: {
+          verifier: {
+            async verify() {
+              return credential;
+            },
+          },
+        },
+      },
+      {
+        async admit(_credential, commandValue) {
+          return {
+            code: "idempotency_conflict",
+            message: "admission idempotency key has a different request",
+            retryable: false,
+            details: {},
+            trace_id: (commandValue as { readonly trace_id: string }).trace_id,
+          };
+        },
+      },
+    );
+    const conflict = await conflictApp.inject({
+      method: "POST",
+      url: "/internal/v1/triggers/admit/chat",
+      headers: { authorization: "Bearer aaa.bbb.ccc" },
+      payload: routeBody,
+    });
+    expect(conflict.statusCode).toBe(409);
+    expect(JSON.parse(conflict.payload)).toMatchObject({
+      code: "idempotency_conflict",
+      retryable: false,
+    });
+    await conflictApp.close();
+
+    const invalidWriterDatabase = {
+      repository: {},
+      deployment: {},
+      unit_of_work: {
+        owner_service: "trigger_processor",
+        async withTransaction(_request: Record<string, unknown>, work: Function) {
+          return work(
+            { owner_service: "trigger_processor", transaction_id: "tx-invalid" },
+            {
+              owner: {
+                async executeWriter() {
+                  return {
+                    code: "future_uncontracted_code",
+                    message: "invalid",
+                    retryable: false,
+                    details: {},
+                    trace_id: "trace-invalid",
+                  };
+                },
+              },
+            },
+          );
+        },
+      },
+    } as unknown as TriggerProcessorOwnerDatabaseV1;
+    const invalidWriterApplication =
+      createTriggerAdmissionApplicationV1(invalidWriterDatabase);
+    await expect(
+      invalidWriterApplication.admit(credential, command),
+    ).rejects.toMatchObject({
+      kind: "server_invariant",
+      message: "admit_trigger_v1 returned a non-canonical response",
+    } satisfies Partial<InvalidAdmitTriggerCommandError>);
+
+    const invariantApp = buildTriggerProcessorApp(
+      {
+        logger: false,
+        auth: {
+          verifier: {
+            async verify() {
+              return credential;
+            },
+          },
+        },
+      },
+      invalidWriterApplication,
+    );
+    const invariant = await invariantApp.inject({
+      method: "POST",
+      url: "/internal/v1/triggers/admit/chat",
+      headers: { authorization: "Bearer aaa.bbb.ccc" },
+      payload: routeBody,
+    });
+    expect(invariant.statusCode).toBe(500);
+    expect(JSON.parse(invariant.payload)).toMatchObject({
+      code: "internal_error",
+      retryable: false,
+    });
+    await invariantApp.close();
   });
 });
