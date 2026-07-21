@@ -311,6 +311,27 @@ describe("durable outbox dispatcher V1", () => {
     });
   });
 
+  it("fails a durable event whose target is outside the route matrix", async () => {
+    const store = new DurableStoreFake([event()]);
+    store.records[0]!.target = "memory.runtime_event_append";
+    let publishes = 0;
+    const transport: DurableEventTransportPortV1 = {
+      async publish() {
+        publishes += 1;
+        return { transport_ref: "unreachable" };
+      },
+    };
+    const clock = { now: new Date("2026-07-21T05:00:01.000Z") };
+
+    await expect(dispatcher(store, transport, clock).dispatchBatch()).resolves
+      .toMatchObject({ failed: 1, retry_wait: 0 });
+    expect(publishes).toBe(0);
+    expect(store.acknowledgements[0]?.error).toEqual({
+      code: "outbox_contract_violation",
+      retryable: false,
+    });
+  });
+
   it("classifies a non-JSON payload as a non-retryable contract violation", async () => {
     const invalid = event({ payload: { invalid: 1n } as never });
     const store = new DurableStoreFake([event()]);
@@ -353,11 +374,17 @@ describe("durable inbox consumer V1", () => {
         return { status: "replayed" };
       },
     };
-    const consumer = createDurableInboxConsumerV1(inbox);
+    const consumer = createDurableInboxConsumerV1(inbox, {
+      consumer_service: "trigger_processor",
+    });
     await expect(consumer.consume(event())).resolves.toEqual({ status: "processed" });
     await expect(consumer.consume(event())).resolves.toEqual({ status: "replayed" });
     await expect(
-      consumer.consume(event({ payload: { runtime_run_id: "run_drift" } })),
+      consumer.consume(
+        event({
+          payload: { runtime_run_id: "run_drift", outcome: "completed" },
+        }),
+      ),
     ).rejects.toThrow(/payload hash conflict/);
   });
 
@@ -368,10 +395,22 @@ describe("durable inbox consumer V1", () => {
         applies += 1;
         return { status: "processed" };
       },
-    });
+    }, { consumer_service: "trigger_processor" });
     await expect(
       consumer.consume(event({ event_type: "runtime.run.unregistered" })),
     ).rejects.toThrow(/producer owner union/u);
+    expect(applies).toBe(0);
+  });
+
+  it("rejects events outside the durable consumer route matrix before side effects", async () => {
+    let applies = 0;
+    const consumer = createDurableInboxConsumerV1({
+      async apply() {
+        applies += 1;
+        return { status: "processed" };
+      },
+    }, { consumer_service: "memory" });
+    await expect(consumer.consume(event())).rejects.toThrow(/consumer/u);
     expect(applies).toBe(0);
   });
 });

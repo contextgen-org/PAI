@@ -362,6 +362,77 @@ describe("owner repository contracts", () => {
     ).toThrow(/CHECK constraint drift/u);
   });
 
+  it("rejects semantic weakening of integer range and meta enqueue CHECKs", () => {
+    const generationExpectation =
+      TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks?.find(
+        ({ constraint_name }) =>
+          constraint_name === "bot_foreground_slots_generation_safe_check",
+      );
+    const reasonExpectation =
+      TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks?.find(
+        ({ constraint_name }) =>
+          constraint_name === "trigger_processes_meta_enqueue_reason_check",
+      );
+    const presenceExpectation =
+      TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks?.find(
+        ({ constraint_name }) =>
+          constraint_name === "trigger_processes_meta_enqueue_presence_check",
+      );
+    expect(generationExpectation).toBeDefined();
+    expect(reasonExpectation).toBeDefined();
+    expect(presenceExpectation).toBeDefined();
+    if (
+      generationExpectation === undefined ||
+      reasonExpectation === undefined ||
+      presenceExpectation === undefined
+    ) return;
+
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        generationExpectation,
+        "CHECK ((slot_generation >= 0) AND (slot_generation <= 9007199254740991))",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        generationExpectation,
+        "CHECK (((slot_generation >= 0) AND (slot_generation <= 9007199254740991)) OR true)",
+      ),
+    ).toThrow(/CHECK constraint drift/u);
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        generationExpectation,
+        "CHECK ((slot_generation >= 0) AND (slot_generation <= 9223372036854775807))",
+      ),
+    ).toThrow(/CHECK constraint drift/u);
+
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        reasonExpectation,
+        "CHECK (meta_enqueue_reason IS NULL OR meta_enqueue_reason IN ('cooldown_expired', 'user_retracted', 'system_interrupted', 'failed_with_learnable_snapshot'))",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        reasonExpectation,
+        "CHECK (meta_enqueue_reason IS NULL OR meta_enqueue_reason IN ('cooldown_expired', 'user_retracted', 'system_interrupted', 'failed_with_learnable_snapshot', 'attacker_reason'))",
+      ),
+    ).toThrow(/CHECK constraint drift/u);
+
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        presenceExpectation,
+        "CHECK (phase <> 'meta_enqueued' OR meta_enqueue_reason IS NOT NULL)",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        presenceExpectation,
+        "CHECK (phase <> 'meta_enqueued' OR true)",
+      ),
+    ).toThrow(/CHECK constraint drift/u);
+  });
+
   it("requires Meta's nested envelope projection to contain exactly the five controlled fields", () => {
     const expectation = META_COGNITION_REPOSITORY_CONTRACT_V1.database_checks
       .find(
@@ -618,6 +689,71 @@ describe("owner repository contracts", () => {
     expect(application).not.toHaveProperty("outbox");
     expect(application).not.toHaveProperty("close");
     expect(Object.isFrozen(application)).toBe(true);
+  });
+
+  it("rejects runtime search_path mutation and unqualified owner table access", () => {
+    const signature = MEMORY_REPOSITORY_CONTRACT_V1.function_signatures.find(
+      ({ function_name }) => function_name === "claim_memory_event_outbox_v1",
+    );
+    expect(signature).toBeDefined();
+    if (signature === undefined) return;
+    const body = (statement: string) => `
+      CREATE FUNCTION memory.claim_memory_event_outbox_v1(
+        p_worker_id text,
+        p_limit integer,
+        p_lease_seconds integer,
+        p_now timestamptz
+      ) RETURNS SETOF jsonb
+      LANGUAGE plpgsql
+      SECURITY DEFINER
+      SET search_path = memory, pg_temp
+      AS $body$
+      BEGIN
+        ${statement}
+        RETURN QUERY
+          UPDATE memory.memory_event_outbox
+             SET status = 'dispatching',
+                 claim_token = p_worker_id,
+                 locked_until = p_now + make_interval(secs => p_lease_seconds),
+                 attempt_count = attempt_count + 1
+           WHERE id IN (
+             SELECT id
+               FROM memory.memory_event_outbox
+              WHERE status = 'pending'
+              ORDER BY created_at
+              FOR UPDATE SKIP LOCKED
+              LIMIT p_limit
+           )
+           RETURNING to_jsonb(memory.memory_event_outbox);
+      END
+      $body$`;
+
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(
+        MEMORY_REPOSITORY_CONTRACT_V1,
+        signature,
+        body("PERFORM pg_catalog.set_config('search_path', 'pg_temp', true);"),
+      ),
+    ).toThrow(/search_path/u);
+
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(
+        MEMORY_REPOSITORY_CONTRACT_V1,
+        signature,
+        body(""),
+      ),
+    ).not.toThrow();
+
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(
+        MEMORY_REPOSITORY_CONTRACT_V1,
+        signature,
+        body("").replaceAll(
+          "memory.memory_event_outbox",
+          "memory_event_outbox",
+        ),
+      ),
+    ).toThrow(/unqualified|effect drift/u);
   });
 
   it("rejects generic row locks as a slot/process admission fence", () => {

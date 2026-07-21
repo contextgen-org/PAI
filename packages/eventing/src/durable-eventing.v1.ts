@@ -1,7 +1,10 @@
 import {
-  assertDurableEventEnvelopeV1,
+  assertOwnerDurableEventEnvelopeV1,
   DurableEventEnvelopeValidationErrorV1,
+  isDurableEventConsumerAllowedV1,
+  isDurableEventTargetAllowedV1,
   isOwnerDurableEventTypeV1,
+  type DurableEventConsumerServiceIdV1,
   type DurableEventEnvelopeV1,
   type ServiceIdV1,
 } from "@pai/contracts";
@@ -240,7 +243,7 @@ export function createDurableOutboxDispatcherV1(
         let failure: Readonly<{ code: string; retryable: boolean }> | undefined;
         let attemptCount = 1;
         try {
-          assertDurableEventEnvelopeV1(record.envelope);
+          assertOwnerDurableEventEnvelopeV1(record.envelope);
           if (
             !Number.isSafeInteger(record.attempt_count) ||
             (record.attempt_count as number) < 1 ||
@@ -267,6 +270,11 @@ export function createDurableOutboxDispatcherV1(
           ) {
             throw new OutboxClaimContractErrorV1(
               "outbox event type is outside the producer owner union",
+            );
+          }
+          if (!isDurableEventTargetAllowedV1(record.envelope, record.target)) {
+            throw new OutboxClaimContractErrorV1(
+              "outbox target is outside the owner durable route matrix",
             );
           }
           if (
@@ -343,6 +351,7 @@ export interface TransactionalInboxApplyPortV1 {
 
 export function createDurableInboxConsumerV1(
   inbox: TransactionalInboxApplyPortV1,
+  config: Readonly<{ consumer_service: DurableEventConsumerServiceIdV1 }>,
 ): Readonly<{
   consume: (
     envelope: DurableEventEnvelopeV1,
@@ -350,10 +359,17 @@ export function createDurableInboxConsumerV1(
 }> {
   return Object.freeze({
     async consume(envelope) {
-      assertDurableEventEnvelopeV1(envelope);
+      assertOwnerDurableEventEnvelopeV1(envelope);
       if (!isOwnerDurableEventTypeV1(envelope.producer, envelope.event_type)) {
         throw new DurableEventEnvelopeValidationErrorV1([
           "/event_type: must belong to the producer owner union",
+        ]);
+      }
+      if (
+        !isDurableEventConsumerAllowedV1(envelope, config.consumer_service)
+      ) {
+        throw new DurableEventEnvelopeValidationErrorV1([
+          "/producer: event branch is not accepted by this durable consumer",
         ]);
       }
       return inbox.apply({

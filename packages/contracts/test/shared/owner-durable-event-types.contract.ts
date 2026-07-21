@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   OWNER_DURABLE_EVENT_TYPES_V1,
+  assertOwnerDurableEventEnvelopeV1,
+  durableEventTargetConsumerV1,
+  isDurableEventConsumerAllowedV1,
+  isDurableEventTargetAllowedV1,
   SERVICE_IDS,
   isOwnerDurableEventTypeV1,
 } from "../../src/index.js";
@@ -45,6 +49,63 @@ describe("owner durable event type unions V1", () => {
         "observation_gateway",
         "timer.occurrence.due",
       ),
+    ).toBe(false);
+  });
+
+  it("validates owner schema version and minimum payload branch", () => {
+    const envelope = {
+      event_id: "evt_runtime_001",
+      event_type: "runtime.run.completed",
+      schema_version: "runtime_domain_event.v1",
+      producer: "action_runtime",
+      occurred_at: "2026-07-21T05:00:00.000Z",
+      idempotency_key: "runtime_run_001:completed",
+      trace_id: "trace_001",
+      payload: { runtime_run_id: "runtime_run_001", outcome: "completed" },
+    } as const;
+    expect(() => assertOwnerDurableEventEnvelopeV1(envelope)).not.toThrow();
+    expect(() =>
+      assertOwnerDurableEventEnvelopeV1({
+        ...envelope,
+        schema_version: "attacker.v999",
+      }),
+    ).toThrow(/schema_version/u);
+    expect(() =>
+      assertOwnerDurableEventEnvelopeV1({
+        ...envelope,
+        payload: { arbitrary: "shape" },
+      }),
+    ).toThrow(/payload\/runtime_run_id/u);
+  });
+
+  it("binds durable events to explicit consumer services and route targets", () => {
+    const runtimeEnvelope = {
+      event_id: "evt_runtime_002",
+      event_type: "runtime.run.completed",
+      schema_version: "runtime_domain_event.v1",
+      producer: "action_runtime",
+      occurred_at: "2026-07-21T05:00:00.000Z",
+      idempotency_key: "runtime_run_002:completed",
+      trace_id: "trace_002",
+      payload: { runtime_run_id: "runtime_run_002", outcome: "completed" },
+    } as const;
+    assertOwnerDurableEventEnvelopeV1(runtimeEnvelope);
+    expect(
+      isDurableEventConsumerAllowedV1(runtimeEnvelope, "trigger_processor"),
+    ).toBe(true);
+    expect(isDurableEventConsumerAllowedV1(runtimeEnvelope, "memory")).toBe(
+      false,
+    );
+    expect(durableEventTargetConsumerV1("trigger_processor.runtime_event_append"))
+      .toBe("trigger_processor");
+    expect(
+      isDurableEventTargetAllowedV1(
+        runtimeEnvelope,
+        "trigger_processor.runtime_event_append",
+      ),
+    ).toBe(true);
+    expect(
+      isDurableEventTargetAllowedV1(runtimeEnvelope, "memory.runtime_event_append"),
     ).toBe(false);
   });
 });

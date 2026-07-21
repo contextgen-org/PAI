@@ -5,6 +5,7 @@ import { DirectActivePolicyV1Schema } from "./policy/direct-active-policy.v1.js"
 import { DelegatedPrincipalContextV1Schema } from "./shared/delegated-principal-context.v1.js";
 import { DeploymentEnvironmentV1Schema } from "./shared/deployment-environment.v1.js";
 import { DurableEventEnvelopeV1Schema } from "./shared/durable-event-envelope.v1.js";
+import { OwnerDurableEventEnvelopeV1Schema } from "./shared/owner-durable-event-types.v1.js";
 import { ReleaseChannelV1Schema } from "./shared/release-channel.v1.js";
 import { ResponseEnvelopeV1Schema } from "./shared/response-envelope.v1.js";
 import { ServiceIdV1Schema } from "./shared/service-id.v1.js";
@@ -195,6 +196,20 @@ export const PENDING_OWNER_SCHEMA_GENERATION = [
       "packages/contracts/test/shared/durable-event-envelope.contract.ts",
     ],
     schema: DurableEventEnvelopeV1Schema,
+  },
+  {
+    schema_name: "OwnerDurableEventEnvelopeV1",
+    schema_id: "urn:pai:shared:owner-durable-event-envelope:v1",
+    version: "1.0.0",
+    registration_status: "pending_owner_catalog_row",
+    source_file: "packages/contracts/src/shared/owner-durable-event-types.v1.ts",
+    generated_outputs: [
+      "generated/schema/shared/owner-durable-event-envelope.v1.json",
+    ],
+    contract_tests: [
+      "packages/contracts/test/shared/owner-durable-event-types.contract.ts",
+    ],
+    schema: OwnerDurableEventEnvelopeV1Schema,
   },
 ] as const satisfies readonly PendingOwnerSchemaGenerationEntry[];
 

@@ -409,6 +409,17 @@ const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
         "retry_wait",
         "failed",
       ],
+      semantic_constraint: {
+        kind: "text_enum",
+        column_name: "status",
+        allowed_values: [
+          "pending",
+          "dispatching",
+          "sent",
+          "retry_wait",
+          "failed",
+        ],
+      },
     },
   ],
   append_only_tables: ["eventing_outbox", "eventing_inbox", "eventing_dlq"],

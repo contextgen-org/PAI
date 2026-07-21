@@ -4,7 +4,11 @@ import {
   DEPLOYMENT_ENVIRONMENTS,
   RELEASE_CHANNELS,
   SERVICE_IDS,
+  assertOwnerDurableEventEnvelopeV1,
   assertDurableEventEnvelopeV1,
+  DurableEventEnvelopeValidationErrorV1,
+  durableEventTargetConsumerV1,
+  isDurableEventTargetAllowedV1,
   isOwnerDurableEventTypeV1,
   type DeploymentEnvironmentV1,
   type DurableEventEnvelopeV1,
@@ -418,7 +422,7 @@ export async function openVerifiedRedisStreamCompositionV1(options: Readonly<{
       if (target.trim().length === 0) {
         throw new Error("Redis route target must be non-empty");
       }
-      if (target === "observation" || target === "observation_gateway") {
+      if (durableEventTargetConsumerV1(target) === undefined) {
         throw new Error("Observation cannot be an outbox route target");
       }
       return [
@@ -484,7 +488,19 @@ export async function openVerifiedRedisStreamCompositionV1(options: Readonly<{
         envelope: DurableEventEnvelopeV1;
         payload_hash: string;
       }>) {
-        assertDurableEventEnvelopeV1(request.envelope);
+        try {
+          assertOwnerDurableEventEnvelopeV1(request.envelope);
+        } catch (error) {
+          if (error instanceof DurableEventEnvelopeValidationErrorV1) {
+            throw new EventTransportErrorV1(
+              "transport_rejected",
+              false,
+              "event envelope is outside the owner durable contract",
+              { cause: error },
+            );
+          }
+          throw error;
+        }
         if (
           request.envelope.producer !== options.namespace.owner_service ||
           !isOwnerDurableEventTypeV1(
@@ -496,6 +512,13 @@ export async function openVerifiedRedisStreamCompositionV1(options: Readonly<{
             "transport_rejected",
             false,
             "event producer or type is outside the Redis owner namespace",
+          );
+        }
+        if (!isDurableEventTargetAllowedV1(request.envelope, request.target)) {
+          throw new EventTransportErrorV1(
+            "transport_rejected",
+            false,
+            "event target is outside the owner durable route matrix",
           );
         }
         if (canonicalPayloadHashV1(request.envelope.payload) !== request.payload_hash) {

@@ -120,6 +120,13 @@ describe("Redis Stream transport V1", () => {
         routes: { observation_gateway: "stream:memory_events" },
       }),
     ).rejects.toThrow(/outbox route target/u);
+    await expect(
+      openVerifiedRedisStreamCompositionV1({
+        url: "redis://127.0.0.1:1",
+        namespace,
+        routes: { memory: "stream:memory_events" },
+      }),
+    ).rejects.toThrow(/outbox route target/u);
   });
 
   it("enters degraded mode after three failures and recovers only on success", () => {

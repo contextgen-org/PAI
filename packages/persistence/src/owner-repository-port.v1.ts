@@ -155,6 +155,23 @@ export interface OwnerDatabaseCheckV1<TTable extends string = string> {
           field_name: string;
           column_name: string;
         }>[];
+      }>
+    | Readonly<{
+        kind: "integer_range";
+        column_name: string;
+        min: number;
+        max: number;
+      }>
+    | Readonly<{
+        kind: "nullable_text_enum";
+        column_name: string;
+        allowed_values: readonly string[];
+      }>
+    | Readonly<{
+        kind: "implies_not_null";
+        column_name: string;
+        condition_column_name: string;
+        condition_equals: string;
       }>;
 }
 
@@ -621,41 +638,66 @@ export function defineOwnerRepositoryContractV1<
   for (const check of contract.database_checks ?? []) {
     const semantic = check.semantic_constraint;
     const tableColumns = selectColumnsByTable.get(check.table_name);
-    const invalidSemantic =
-      semantic !== undefined &&
-      (!sqlIdentifierPattern.test(semantic.column_name) ||
-        !tableColumns?.has(semantic.column_name) ||
-        (semantic.kind === "text_enum"
-          ? semantic.allowed_values.length === 0 ||
+    let invalidSemantic =
+      semantic === undefined ||
+      !sqlIdentifierPattern.test(semantic.column_name) ||
+      !tableColumns?.has(semantic.column_name);
+    if (!invalidSemantic && semantic !== undefined) {
+      switch (semantic.kind) {
+        case "text_enum":
+        case "nullable_text_enum":
+          invalidSemantic =
+            semantic.allowed_values.length === 0 ||
             new Set(semantic.allowed_values).size !==
               semantic.allowed_values.length ||
-            semantic.allowed_values.some((value) => value.length === 0)
-          : semantic.kind === "text_equals"
-            ? semantic.value.length === 0
-            : semantic.kind === "json_text_equals"
-              ? !sqlIdentifierPattern.test(semantic.field_name) ||
-                semantic.value.length === 0 ||
-                semantic.required_keys.length === 0 ||
-                new Set(semantic.required_keys).size !==
-                  semantic.required_keys.length ||
-                !semantic.required_keys.includes(semantic.field_name) ||
-                semantic.required_keys.some((value) => value.length === 0)
-              : semantic.producer_value.length === 0 ||
-                semantic.required_keys.length === 0 ||
-                new Set(semantic.required_keys).size !==
-                  semantic.required_keys.length ||
-                semantic.required_keys.some((value) => value.length === 0) ||
-                semantic.field_bindings.length === 0 ||
-                new Set(
-                  semantic.field_bindings.map(({ field_name }) => field_name),
-                ).size !== semantic.field_bindings.length ||
-                semantic.field_bindings.some(
-                  ({ field_name, column_name }) =>
-                    !sqlIdentifierPattern.test(field_name) ||
-                    !sqlIdentifierPattern.test(column_name) ||
-                    !semantic.required_keys.includes(field_name) ||
-                    !tableColumns?.has(column_name),
-                )));
+            semantic.allowed_values.some((value) => value.length === 0);
+          break;
+        case "text_equals":
+          invalidSemantic = semantic.value.length === 0;
+          break;
+        case "json_text_equals":
+          invalidSemantic =
+            !sqlIdentifierPattern.test(semantic.field_name) ||
+            semantic.value.length === 0 ||
+            semantic.required_keys.length === 0 ||
+            new Set(semantic.required_keys).size !==
+              semantic.required_keys.length ||
+            !semantic.required_keys.includes(semantic.field_name) ||
+            semantic.required_keys.some((value) => value.length === 0);
+          break;
+        case "json_event_envelope":
+          invalidSemantic =
+            semantic.producer_value.length === 0 ||
+            semantic.required_keys.length === 0 ||
+            new Set(semantic.required_keys).size !==
+              semantic.required_keys.length ||
+            semantic.required_keys.some((value) => value.length === 0) ||
+            semantic.field_bindings.length === 0 ||
+            new Set(
+              semantic.field_bindings.map(({ field_name }) => field_name),
+            ).size !== semantic.field_bindings.length ||
+            semantic.field_bindings.some(
+              ({ field_name, column_name }) =>
+                !sqlIdentifierPattern.test(field_name) ||
+                !sqlIdentifierPattern.test(column_name) ||
+                !semantic.required_keys.includes(field_name) ||
+                !tableColumns?.has(column_name),
+            );
+          break;
+        case "integer_range":
+          invalidSemantic =
+            !Number.isSafeInteger(semantic.min) ||
+            !Number.isSafeInteger(semantic.max) ||
+            semantic.min > semantic.max;
+          break;
+        case "implies_not_null":
+          invalidSemantic =
+            !sqlIdentifierPattern.test(semantic.condition_column_name) ||
+            !tableColumns?.has(semantic.condition_column_name) ||
+            semantic.condition_equals.length === 0;
+          break;
+      }
+    }
     if (
       !tableSet.has(check.table_name) ||
       check.required_definition_fragments.length === 0 ||
@@ -664,7 +706,10 @@ export function defineOwnerRepositoryContractV1<
     ) {
       throw new Error(`invalid owner database check: ${check.constraint_name}`);
     }
-    if (semantic?.kind === "text_enum") {
+    if (
+      semantic?.kind === "text_enum" ||
+      semantic?.kind === "nullable_text_enum"
+    ) {
       Object.freeze(semantic.allowed_values);
     }
     if (
@@ -1546,7 +1591,7 @@ function mutationPattern(
   table: string,
   verbs: readonly string[],
 ): RegExp {
-  const qualifiedTable = `(?:"?${escapeRegularExpression(schema)}"?\\s*\\.\\s*)?"?${escapeRegularExpression(table)}"?`;
+  const qualifiedTable = `"?${escapeRegularExpression(schema)}"?\\s*\\.\\s*"?${escapeRegularExpression(table)}"?`;
   return new RegExp(
     `\\b(?:${verbs.join("|")})\\s+(?:into\\s+)?(?:only\\s+)?${qualifiedTable}\\b`,
     "i",
@@ -1586,6 +1631,14 @@ function assertFunctionEffectsInDefinition(
       `DELETE is forbidden by writer-only V1: ${signature.schema}.${signature.function_name}`,
     );
   }
+  if (
+    /\bset\s+(?:local\s+|session\s+)?search_path\b/iu.test(semantic) ||
+    /\b(?:pg_catalog\s*\.\s*)?set_config\s*\(\s*'search_path'/iu.test(semantic)
+  ) {
+    throw new Error(
+      `runtime search_path changes are forbidden in owner writer: ${signature.schema}.${signature.function_name}`,
+    );
+  }
   for (const effect of signature.effects) {
     const verbs = [...allowedMutationVerbs(effect.operation)];
     if (!mutationPattern(contract.schema, effect.table_name, verbs).test(reachableExecutable)) {
@@ -1620,13 +1673,14 @@ function assertFunctionEffectsInDefinition(
     if (
       observedVerb === undefined ||
       observedTable === undefined ||
+      observedSchema === undefined ||
       observedSchema !== contract.schema ||
       !declaredTables.has(observedTable) ||
       declaredEffect === undefined ||
       !allowedMutationVerbs(declaredEffect.operation).has(observedVerb)
     ) {
       throw new Error(
-        `undeclared PostgreSQL mutation in ${signature.schema}.${signature.function_name}: ${observedSchema}.${observedTable ?? "unknown"}`,
+        `undeclared PostgreSQL mutation in ${signature.schema}.${signature.function_name}: ${observedSchema ?? "unqualified"}.${observedTable ?? "unknown"}`,
       );
     }
   }
@@ -1652,11 +1706,12 @@ function assertFunctionEffectsInDefinition(
       continue;
     }
     if (
-      (observedSchema !== undefined && observedSchema !== contract.schema) ||
+      observedSchema === undefined ||
+      observedSchema !== contract.schema ||
       !declaredReads.has(observedTable)
     ) {
       throw new Error(
-        `undeclared PostgreSQL read in ${signature.schema}.${signature.function_name}: ${observedSchema ?? contract.schema}.${observedTable}`,
+        `undeclared PostgreSQL read in ${signature.schema}.${signature.function_name}: ${observedSchema ?? "unqualified"}.${observedTable}`,
       );
     }
   }
@@ -1676,11 +1731,12 @@ function assertFunctionEffectsInDefinition(
         continue;
       }
       if (
-        (observedSchema !== undefined && observedSchema !== contract.schema) ||
+        observedSchema === undefined ||
+        observedSchema !== contract.schema ||
         !declaredReads.has(observedTable)
       ) {
         throw new Error(
-          `undeclared PostgreSQL read in ${signature.schema}.${signature.function_name}: ${observedSchema ?? contract.schema}.${observedTable}`,
+          `undeclared PostgreSQL read in ${signature.schema}.${signature.function_name}: ${observedSchema ?? "unqualified"}.${observedTable}`,
         );
       }
     }
@@ -1699,11 +1755,12 @@ function assertFunctionEffectsInDefinition(
       continue;
     }
     if (
-      (observedSchema !== undefined && observedSchema !== contract.schema) ||
+      observedSchema === undefined ||
+      observedSchema !== contract.schema ||
       !declaredReads.has(observedTable)
     ) {
       throw new Error(
-        `undeclared PostgreSQL read in ${signature.schema}.${signature.function_name}: ${observedSchema ?? contract.schema}.${observedTable}`,
+        `undeclared PostgreSQL read in ${signature.schema}.${signature.function_name}: ${observedSchema ?? "unqualified"}.${observedTable}`,
       );
     }
   }
@@ -1804,6 +1861,17 @@ function postgresCheckExpression(definition: string): string | undefined {
 }
 
 function splitCheckConjunction(expression: string): readonly string[] {
+  return splitCheckBooleanOperator(expression, "and");
+}
+
+function splitCheckDisjunction(expression: string): readonly string[] {
+  return splitCheckBooleanOperator(expression, "or");
+}
+
+function splitCheckBooleanOperator(
+  expression: string,
+  operator: "and" | "or",
+): readonly string[] {
   const terms: string[] = [];
   let depth = 0;
   let inString = false;
@@ -1829,13 +1897,13 @@ function splitCheckConjunction(expression: string): readonly string[] {
     }
     if (
       depth === 0 &&
-      expression.slice(index, index + 3).toLowerCase() === "and" &&
+      expression.slice(index, index + operator.length).toLowerCase() === operator &&
       !/[a-z0-9_]/iu.test(expression[index - 1] ?? " ") &&
-      !/[a-z0-9_]/iu.test(expression[index + 3] ?? " ")
+      !/[a-z0-9_]/iu.test(expression[index + operator.length] ?? " ")
     ) {
       terms.push(stripBalancedOuterParentheses(expression.slice(start, index)));
-      start = index + 3;
-      index += 2;
+      start = index + operator.length;
+      index += operator.length - 1;
     }
   }
   terms.push(stripBalancedOuterParentheses(expression.slice(start)));
@@ -1886,6 +1954,66 @@ function matchesPostgresTextEnum(
     observedValues !== undefined &&
     sorted(observedValues).join("\u0000") ===
       sorted(allowedValues).join("\u0000")
+  );
+}
+
+function matchesNullablePostgresTextEnum(
+  expression: string,
+  column: string,
+  allowedValues: readonly string[],
+): boolean {
+  const terms = splitCheckDisjunction(expression);
+  const nullTerms = terms.filter((term) =>
+    new RegExp(`^\\b${column}\\b\\s+is\\s+null$`, "iu").test(term),
+  );
+  const enumTerms = terms.filter((term) =>
+    matchesPostgresTextEnum(term, column, allowedValues),
+  );
+  return nullTerms.length === 1 && enumTerms.length === 1 && terms.length === 2;
+}
+
+function matchesIntegerRange(
+  expression: string,
+  column: string,
+  min: number,
+  max: number,
+): boolean {
+  const terms = splitCheckConjunction(expression);
+  const minPattern = new RegExp(
+    `^(?:\\b${column}\\b\\s*>=\\s*${min}|${min}\\s*<=\\s*\\b${column}\\b)$`,
+    "iu",
+  );
+  const maxPattern = new RegExp(
+    `^(?:\\b${column}\\b\\s*<=\\s*${max}|${max}\\s*>=\\s*\\b${column}\\b)$`,
+    "iu",
+  );
+  return (
+    terms.length === 2 &&
+    terms.some((term) => minPattern.test(term)) &&
+    terms.some((term) => maxPattern.test(term))
+  );
+}
+
+function matchesImplicationNotNull(
+  expression: string,
+  column: string,
+  conditionColumn: string,
+  conditionEquals: string,
+): boolean {
+  const value = escapeRegularExpression(conditionEquals.replace(/'/gu, "''"));
+  const terms = splitCheckDisjunction(expression);
+  const guardPattern = new RegExp(
+    `^\\b${conditionColumn}\\b\\s*<>\\s*'${value}'${postgresTextCastPattern}$`,
+    "iu",
+  );
+  const requiredPattern = new RegExp(
+    `^\\b${column}\\b\\s+is\\s+not\\s+null$`,
+    "iu",
+  );
+  return (
+    terms.length === 2 &&
+    terms.some((term) => guardPattern.test(term)) &&
+    terms.some((term) => requiredPattern.test(term))
   );
 }
 
@@ -2035,6 +2163,29 @@ function checkSemanticMatches(
           lengthTerms.length +
           producerTerms.length +
           bindingTerms.reduce((count, matches) => count + matches.length, 0)
+    );
+  }
+  if (semantic.kind === "integer_range") {
+    return matchesIntegerRange(
+      expression,
+      column,
+      semantic.min,
+      semantic.max,
+    );
+  }
+  if (semantic.kind === "nullable_text_enum") {
+    return matchesNullablePostgresTextEnum(
+      expression,
+      column,
+      semantic.allowed_values,
+    );
+  }
+  if (semantic.kind === "implies_not_null") {
+    return matchesImplicationNotNull(
+      expression,
+      column,
+      escapeRegularExpression(semantic.condition_column_name),
+      semantic.condition_equals,
     );
   }
   return matchesPostgresTextEnum(

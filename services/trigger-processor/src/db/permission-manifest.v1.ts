@@ -1,4 +1,7 @@
-import { OWNER_DURABLE_EVENT_TYPES_V1 } from "@pai/contracts";
+import {
+  META_ENQUEUE_REASONS_V1,
+  OWNER_DURABLE_EVENT_TYPES_V1,
+} from "@pai/contracts";
 import {
   defineOwnerRepositoryContractV1,
   ownerForeignKeysV1,
@@ -588,9 +591,15 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
         constraint_name: "bot_foreground_slots_generation_safe_check",
         table_name: "bot_foreground_slots",
         required_definition_fragments: [
-          "generation >= 0",
-          "generation <= 9007199254740991",
+          "slot_generation >= 0",
+          "slot_generation <= 9007199254740991",
         ],
+        semantic_constraint: {
+          kind: "integer_range",
+          column_name: "slot_generation",
+          min: 0,
+          max: Number.MAX_SAFE_INTEGER,
+        },
       },
       {
         constraint_name: "trigger_processes_meta_enqueue_reason_check",
@@ -602,6 +611,11 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
           "system_interrupted",
           "failed_with_learnable_snapshot",
         ],
+        semantic_constraint: {
+          kind: "nullable_text_enum",
+          column_name: "meta_enqueue_reason",
+          allowed_values: META_ENQUEUE_REASONS_V1,
+        },
       },
       {
         constraint_name: "trigger_processes_meta_enqueue_presence_check",
@@ -610,6 +624,12 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
           "phase <> 'meta_enqueued'",
           "meta_enqueue_reason IS NOT NULL",
         ],
+        semantic_constraint: {
+          kind: "implies_not_null",
+          column_name: "meta_enqueue_reason",
+          condition_column_name: "phase",
+          condition_equals: "meta_enqueued",
+        },
       },
     ],
   foreign_key_snapshot: {

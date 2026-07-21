@@ -36,14 +36,24 @@ describe("Shared Architecture Contracts catalog", () => {
         (entry) => entry.schema_name === "DurableEventEnvelopeV1",
       ),
     ).toBe(false);
-    expect(PENDING_OWNER_SCHEMA_GENERATION).toHaveLength(1);
-    expect(PENDING_OWNER_SCHEMA_GENERATION[0]).toMatchObject({
-      schema_name: "DurableEventEnvelopeV1",
-      registration_status: "pending_owner_catalog_row",
-      generated_outputs: [
-        "generated/schema/shared/durable-event-envelope.v1.json",
-      ],
-    });
+    expect(PENDING_OWNER_SCHEMA_GENERATION).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          schema_name: "DurableEventEnvelopeV1",
+          registration_status: "pending_owner_catalog_row",
+          generated_outputs: [
+            "generated/schema/shared/durable-event-envelope.v1.json",
+          ],
+        }),
+        expect.objectContaining({
+          schema_name: "OwnerDurableEventEnvelopeV1",
+          registration_status: "pending_owner_catalog_row",
+          generated_outputs: [
+            "generated/schema/shared/owner-durable-event-envelope.v1.json",
+          ],
+        }),
+      ]),
+    );
     const registeredNames = new Set(
       SHARED_SCHEMA_CATALOG.map((entry) => entry.schema_name),
     );
