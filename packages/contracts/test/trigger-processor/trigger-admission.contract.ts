@@ -2,6 +2,9 @@ import { Value } from "@sinclair/typebox/value";
 import { describe, expect, it } from "vitest";
 
 import {
+  AdmitTriggerCommandV1Schema,
+  AdmitTriggerRequestBodyV1Schema,
+  AdmitTriggerResponseV1Schema,
   TriggerAdmissionDecisionV1Schema,
   TrustedAdmissionFactsV1Schema,
 } from "../../src/index.js";
@@ -25,6 +28,56 @@ const acceptedDecision = {
 } as const;
 
 describe("TriggerAdmissionDecisionV1", () => {
+  it("separates canonical HTTP body from route-injected source and trace", () => {
+    const body = {
+      trigger_id: "trigger-1",
+      process_id: "process-1",
+      scope: {
+        scope_kind: "bot",
+        workspace_id: "workspace-1",
+        bot_id: "bot-1",
+        owner_agent_id: "agent-1",
+        deployment_environment: "dev",
+        release_channel: "stable",
+      },
+      payload: { text: "hello" },
+      dedupe_key: "dedupe-1",
+      request_hash: "request-hash-1",
+      idempotency_key: "submit-1",
+      is_catch_up: false,
+      explicit_interrupt: false,
+    } as const;
+    expect(Value.Check(AdmitTriggerRequestBodyV1Schema, body)).toBe(true);
+    expect(
+      Value.Check(AdmitTriggerRequestBodyV1Schema, {
+        ...body,
+        source: "chat",
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(AdmitTriggerRequestBodyV1Schema, {
+        ...body,
+        trace_id: "caller-trace",
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(AdmitTriggerCommandV1Schema, {
+        ...body,
+        source: "chat",
+        trace_id: "route-trace",
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(AdmitTriggerResponseV1Schema, {
+        code: "trigger_accepted",
+        message: "accepted",
+        retryable: false,
+        details: { trigger_id: "trigger-1" },
+        trace_id: "route-trace",
+      }),
+    ).toBe(true);
+  });
+
   it("rejects malformed trusted-fact discriminants and undeclared fields", () => {
     const idleFacts = {
       source: "chat",

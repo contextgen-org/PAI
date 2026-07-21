@@ -124,6 +124,11 @@ export interface StartServiceOptions {
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly workloadVerifier?: WorkloadCredentialVerifierPort;
   readonly internalRouteAuthPolicies?: readonly InternalRouteAuthPolicy[];
+  /**
+   * Defaults to true so production owners fail closed when an internal route is
+   * configured but no workload verifier can be constructed from JWKS.
+   */
+  readonly requireWorkloadVerifier?: boolean;
 }
 
 export function createWorkloadVerifierFromEnv(
@@ -147,6 +152,7 @@ export async function startService(options: StartServiceOptions): Promise<void> 
     options.workloadVerifier ?? createWorkloadVerifierFromEnv(env);
   if (
     (options.internalRouteAuthPolicies?.length ?? 0) > 0 &&
+    (options.requireWorkloadVerifier ?? true) &&
     verifier === undefined
   ) {
     throw new Error(

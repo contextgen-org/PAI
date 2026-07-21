@@ -347,7 +347,15 @@ describe("Trigger admission", () => {
               owner: {
                 async executeWriter(_transaction: unknown, writerRequest: Record<string, unknown>) {
                   calls.push({ writer: writerRequest });
-                  return { persisted: true };
+                  return {
+                    code: "trigger_accepted",
+                    message: "accepted",
+                    retryable: false,
+                    details: { trigger_id: "trigger-1" },
+                    trace_id:
+                      (writerRequest.arguments as Record<string, unknown>)
+                        .p_trace_id,
+                  };
                 },
               },
             },
@@ -411,7 +419,10 @@ describe("Trigger admission", () => {
     } as const;
     await expect(
       application.admit(credential, command),
-    ).resolves.toEqual({ persisted: true });
+    ).resolves.toMatchObject({
+      code: "trigger_accepted",
+      trace_id: "trace-1",
+    });
     expect(calls[0]?.transaction).toMatchObject({
       operation: "admit_trigger",
       isolation: "serializable",
@@ -467,7 +478,7 @@ describe("Trigger admission", () => {
       },
       application,
     );
-    const { source: _source, ...routeBody } = command;
+    const { source: _source, trace_id: _traceId, ...routeBody } = command;
     const routed = await routedApp.inject({
       method: "POST",
       url: "/internal/v1/triggers/admit/chat",
@@ -475,6 +486,15 @@ describe("Trigger admission", () => {
       payload: routeBody,
     });
     expect(routed.statusCode).toBe(200);
+    expect(JSON.parse(routed.payload)).toMatchObject({
+      code: "trigger_accepted",
+      trace_id: routed.headers["x-trace-id"],
+    });
+    expect(calls.at(-1)?.writer).toMatchObject({
+      arguments: expect.objectContaining({
+        p_trace_id: routed.headers["x-trace-id"],
+      }),
+    });
     expect(verificationRequirements).toEqual([
       expect.objectContaining({
         audience: "trigger_processor",
@@ -492,6 +512,20 @@ describe("Trigger admission", () => {
       },
     });
     expect(deniedScope.statusCode).toBe(403);
+    const invalidBody = await routedApp.inject({
+      method: "POST",
+      url: "/internal/v1/triggers/admit/chat",
+      headers: { authorization: "Bearer aaa.bbb.ccc" },
+      payload: {
+        ...routeBody,
+        payload: undefined,
+      },
+    });
+    expect(invalidBody.statusCode).toBe(400);
+    expect(JSON.parse(invalidBody.payload)).toMatchObject({
+      code: "invalid_request",
+      trace_id: invalidBody.headers["x-trace-id"],
+    });
     await routedApp.close();
   });
 });

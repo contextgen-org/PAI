@@ -1268,12 +1268,13 @@ describe("ObjectStore ambiguous finalization recovery", () => {
         limit: 1,
         lease_seconds: 30,
       }),
-    ).resolves.toEqual({ claimed: 1, completed: 0, retry_scheduled: 1 });
+    ).resolves.toEqual({ claimed: 1, completed: 1, retry_scheduled: 0 });
     expect(await backend.hasPublishedObject()).toBe(false);
     expect(backend.deleteCount).toBeGreaterThanOrEqual(2);
-    await expect(store.putImmutable(putRequest(body))).rejects.toSatisfy(
-      expectCode("precondition_failed"),
-    );
+    await expect(store.putImmutable(putRequest(body))).resolves.toMatchObject({
+      replayed: false,
+      sha256: digest(body),
+    });
   });
 
   it("uses trusted read-back after an expired upload lease when delete and cleanup handoff both fail", async () => {
@@ -1326,19 +1327,16 @@ describe("ObjectStore ambiguous finalization recovery", () => {
     );
 
     now = new Date("2026-07-20T00:18:00.000Z");
-    const persistentClaim = await metadata.claimReconciliation({
-      worker_id: "persistent-cleanup",
-      now,
-      locked_until: new Date("2026-07-20T00:18:30.000Z"),
-      limit: 1,
-      expired_upload_cleanup_not_before: new Date(
-        "2026-07-20T00:23:00.000Z",
-      ),
-    });
-    expect(persistentClaim[0]).toMatchObject({
-      operation: "put_cleanup",
-      foreground_upload_may_still_arrive: true,
-      cleanup_not_before: "2026-07-20T00:11:00.000Z",
+    await expect(
+      store.reconcilePending({
+        worker_id: "terminal-cleanup",
+        limit: 1,
+        lease_seconds: 30,
+      }),
+    ).resolves.toEqual({ claimed: 1, completed: 1, retry_scheduled: 0 });
+    await expect(store.putImmutable(putRequest(body))).resolves.toMatchObject({
+      replayed: false,
+      sha256: digest(body),
     });
   });
 

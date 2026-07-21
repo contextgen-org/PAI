@@ -47,7 +47,7 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "runtime_policy_input_artifacts",
-      select_columns: ["policy_input_ref","trigger_process_id","runtime_run_id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","expected_catalog_version","catalog_as_of","policy_canonical_bytes","policy_input_hash","intent_policy_snapshot_ref","intent_policy_snapshot_hash","intent_policy_snapshot_canonical_bytes","policy_created_at","policy_expires_at","retention_until","created_at"],
+      select_columns: ["policy_input_ref","trigger_process_id","runtime_run_id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","expected_catalog_version","catalog_as_of","policy_canonical_bytes","policy_input_hash","intent_policy_snapshot_ref","intent_policy_snapshot_hash","intent_policy_snapshot_canonical_bytes","tool_permission_profile_ref","tool_permission_profile_revision","tool_permission_profile_hash","tool_policy_epoch","policy_created_at","policy_expires_at","retention_until","created_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -63,7 +63,7 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "runtime_policy_snapshots",
-      select_columns: ["id","runtime_run_id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","policy_input_ref","policy_input_hash","policy_input_created_at","policy_input","requested_catalog_version","effective_catalog_version","catalog_as_of","skill_resolution_ids","resolved_skill_digests","resolved_skills","allowed_tools","tool_scopes","resource_scopes","network_scope","filesystem_scope","timer_scope","memory_scope","expires_at","security_revocation_epoch","revocation_policy","policy_snapshot_hash","created_at"],
+      select_columns: ["id","runtime_run_id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","policy_input_ref","policy_input_hash","policy_input_created_at","policy_input","requested_catalog_version","effective_catalog_version","catalog_as_of","tool_permission_profile_ref","tool_permission_profile_revision","tool_permission_profile_hash","tool_policy_epoch","skill_resolution_ids","resolved_skill_digests","resolved_skills","allowed_tools","tool_scopes","resource_scopes","network_scope","filesystem_scope","timer_scope","memory_scope","expires_at","security_revocation_epoch","revocation_policy","policy_snapshot_hash","created_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,

@@ -606,21 +606,56 @@ export class ObjectStoreAdapterCoreV1
             }
           }
           if (claim.foreground_upload_may_still_arrive) {
-            await this.#metadata.releaseReconciliation({
-              reservation_id: claim.reservation_id,
-              claim_token: claim.claim_token,
-              last_error:
-                "cleanup retained a tombstone because the expired foreground upload may still publish bytes",
-              next_retry_at: new Date(
-                now.getTime() + expiredUploadCleanupGraceMs,
-              ),
-            });
-            retryScheduled += 1;
-            continue;
+            const terminalAt =
+              claim.foreground_upload_terminal_at === undefined
+                ? Number.NaN
+                : Date.parse(claim.foreground_upload_terminal_at);
+            if (!Number.isFinite(terminalAt) || now.getTime() < terminalAt) {
+              await this.#metadata.releaseReconciliation({
+                reservation_id: claim.reservation_id,
+                claim_token: claim.claim_token,
+                last_error:
+                  "cleanup retained a tombstone until the foreground upload terminal horizon",
+                next_retry_at: new Date(
+                  Math.max(
+                    now.getTime() + expiredUploadCleanupGraceMs,
+                    Number.isFinite(terminalAt) ? terminalAt : now.getTime(),
+                  ),
+                ),
+              });
+              retryScheduled += 1;
+              continue;
+            }
+            try {
+              await this.#backend.head(policy.bucket, key);
+              await this.#metadata.releaseReconciliation({
+                reservation_id: claim.reservation_id,
+                claim_token: claim.claim_token,
+                last_error:
+                  "cleanup deleted a late upload but object storage still reports bytes",
+                next_retry_at: new Date(
+                  now.getTime() + expiredUploadCleanupGraceMs,
+                ),
+              });
+              retryScheduled += 1;
+              continue;
+            } catch (headError) {
+              if (
+                !(
+                  headError instanceof ObjectStorageBackendErrorV1 &&
+                  headError.code === "not_found"
+                )
+              ) {
+                throw headError;
+              }
+            }
           }
           await this.#metadata.completeReconciliation({
             reservation_id: claim.reservation_id,
             claim_token: claim.claim_token,
+            ...(claim.foreground_upload_may_still_arrive
+              ? { late_upload_terminal_proof: true }
+              : {}),
           });
         }
         completed += 1;
@@ -789,7 +824,10 @@ export class ObjectStoreAdapterCoreV1
             }
           }
         }
-        if (physicalCleanupComplete) {
+        if (
+          physicalCleanupComplete &&
+          (backendPutCompleted || upload.completed())
+        ) {
           await this.#metadata.abortPut(
             reservation.reservation_id,
             reservation.foreground_lease_token,

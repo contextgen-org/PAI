@@ -329,7 +329,9 @@ function hasConcurrencyArgument(
     return names.some(
       (name) =>
         name.startsWith("p_expected_") &&
-        (name.includes("generation") || name.includes("fence")),
+        (name.includes("generation") ||
+          name.includes("fence") ||
+          name.includes("process_id")),
     );
   }
   if (control === "lease_fence") {
@@ -492,6 +494,12 @@ export function defineOwnerRepositoryContractV1<
       );
     }
   }
+  const selectColumnsByTable = new Map(
+    contract.table_permissions.map(({ table_name, select_columns }) => [
+      table_name,
+      new Set<string>(select_columns),
+    ]),
+  );
   assertUniqueIdentifiers(
     "foreign_keys.constraint_name",
     (contract.foreign_keys ?? []).map(({ constraint_name }) => constraint_name),
@@ -514,6 +522,10 @@ export function defineOwnerRepositoryContractV1<
   }
   Object.freeze(contract.foreign_key_snapshot);
   for (const foreignKey of contract.foreign_keys ?? []) {
+    const sourceColumns = selectColumnsByTable.get(foreignKey.table_name);
+    const referencedColumns = selectColumnsByTable.get(
+      foreignKey.referenced_table,
+    );
     assertUniqueIdentifiers(
       `${foreignKey.constraint_name}.columns`,
       foreignKey.columns,
@@ -528,6 +540,10 @@ export function defineOwnerRepositoryContractV1<
       !tableSet.has(foreignKey.referenced_table) ||
       foreignKey.columns.length === 0 ||
       foreignKey.columns.length !== foreignKey.referenced_columns.length ||
+      foreignKey.columns.some((column) => !sourceColumns?.has(column)) ||
+      foreignKey.referenced_columns.some(
+        (column) => !referencedColumns?.has(column),
+      ) ||
       foreignKey.match_type === "partial" ||
       foreignKey.initially_deferred && !foreignKey.deferrable ||
       !foreignKey.validated
@@ -795,7 +811,9 @@ function concurrencyArgumentNames(
     return names.filter(
       (name) =>
         name.startsWith("p_expected_") &&
-        (name.includes("generation") || name.includes("fence")),
+        (name.includes("generation") ||
+          name.includes("fence") ||
+          name.includes("process_id")),
     );
   }
   if (control === "lease_fence") {
@@ -823,6 +841,7 @@ function assertConcurrencyFenceIsConsumed(
   signature: OwnerFunctionSignatureV1,
   effect: OwnerFunctionEffectV1,
   executable: string,
+  semantic: string,
 ): void {
   const candidates = concurrencyArgumentNames(
     signature,
@@ -837,13 +856,73 @@ function assertConcurrencyFenceIsConsumed(
     );
   }
   if (effect.concurrency_control === "slot_and_process_state_fence") {
-    const statements = executable.split(";");
+    const statements = semantic.split(";");
+    const qualifiedTable = (table: string): string =>
+      `(?:"?${escapeRegularExpression(signature.schema)}"?\\s*\\.\\s*)?"?${escapeRegularExpression(table)}"?`;
+    const referencesTable = (statement: string, table: string): boolean =>
+      new RegExp(
+        `\\b(?:from|join)\\s+(?:only\\s+)?${qualifiedTable(table)}\\b`,
+        "i",
+      ).test(statement);
+    const aliasesForTable = (
+      statement: string,
+      table: string,
+    ): readonly string[] => {
+      const aliases = new Set<string>([table]);
+      const pattern = new RegExp(
+        `\\b(?:from|join)\\s+(?:only\\s+)?${qualifiedTable(table)}(?:\\s+(?:as\\s+)?("?([a-z][a-z0-9_]*)"?))?`,
+        "gi",
+      );
+      for (const match of statement.matchAll(pattern)) {
+        const alias = match[2];
+        if (
+          alias !== undefined &&
+          ![
+            "where",
+            "join",
+            "left",
+            "right",
+            "full",
+            "cross",
+            "inner",
+            "for",
+            "on",
+          ].includes(alias)
+        ) {
+          aliases.add(alias);
+        }
+      }
+      return [...aliases];
+    };
+    const lockedSlotAndProcess = statements.some((statement) => {
+      if (
+        !referencesTable(statement, "bot_foreground_slots") ||
+        !referencesTable(statement, "trigger_processes") ||
+        !/\bfor\s+(?:no\s+key\s+)?update\b/i.test(statement) ||
+        !/\bwhere\b/i.test(statement)
+      ) {
+        return false;
+      }
+      const slotAliases = aliasesForTable(statement, "bot_foreground_slots");
+      const processAliases = aliasesForTable(statement, "trigger_processes");
+      return slotAliases.some((slotAlias) =>
+        processAliases.some((processAlias) => {
+          const slot = escapeRegularExpression(slotAlias);
+          const process = escapeRegularExpression(processAlias);
+          return (
+            new RegExp(`\\b${slot}\\.process_id\\s*=\\s*${process}\\.id\\b`, "i")
+              .test(statement) ||
+            new RegExp(`\\b${process}\\.id\\s*=\\s*${slot}\\.process_id\\b`, "i")
+              .test(statement)
+          );
+        }),
+      );
+    });
     const locksTable = (table: string): boolean => {
-      const qualified = `(?:"?${escapeRegularExpression(signature.schema)}"?\\s*\\.\\s*)?"?${escapeRegularExpression(table)}"?`;
       return statements.some(
         (statement) =>
           new RegExp(
-            `\\b(?:from|join)\\s+(?:only\\s+)?${qualified}\\b`,
+            `\\b(?:from|join)\\s+(?:only\\s+)?${qualifiedTable(table)}\\b`,
             "i",
           ).test(
             statement,
@@ -878,15 +957,47 @@ function assertConcurrencyFenceIsConsumed(
       signature.arguments.some(
         ({ argument_name }) => argument_name === "p_admission_request",
       ) &&
+      signature.arguments.some(
+        ({ argument_name }) => argument_name === "p_authenticated_context",
+      ) &&
+      signature.arguments.some(({ argument_name }) => argument_name === "p_scope") &&
       ["bots", "bot_permission_bindings"].every((table) =>
         new RegExp(
           `\\b(?:from|join)\\s+(?:"?${escapeRegularExpression(signature.schema)}"?\\s*\\.\\s*)?"?${table}"?\\b`,
           "i",
-        ).test(executable),
-      );
+        ).test(semantic),
+      ) &&
+      [
+        "workspace_id",
+        "bot_id",
+        "owner_agent_id",
+        "deployment_environment",
+        "release_channel",
+      ].every((field) =>
+        new RegExp(
+          `\\bp_scope\\s*(?:->>|#>>?)\\s*(?:array\\s*\\[\\s*)?['"]${field}['"]`,
+          "i",
+        ).test(semantic),
+      ) &&
+      ["workload_subject", "capability"].every((field) =>
+        new RegExp(
+          `\\bp_authenticated_context\\s*(?:->>|#>>?)\\s*(?:array\\s*\\[\\s*)?['"]${field}['"]`,
+          "i",
+        ).test(semantic),
+      ) &&
+      ["is_catch_up", "explicit_interrupt"].every((field) =>
+        new RegExp(
+          `\\bp_admission_request\\s*(?:->>|#>>?)\\s*(?:array\\s*\\[\\s*)?['"]${field}['"]`,
+          "i",
+        ).test(semantic),
+      ) &&
+      !/\bjoin\s+(?:"?[a-z][a-z0-9_]*"?\s*\.\s*)?"?bot_permission_bindings"?\s+(?:as\s+)?[a-z][a-z0-9_]*\s+on\s+true\b/i
+        .test(semantic);
     if (
-      !locksTable("bot_foreground_slots") ||
-      !locksTable("trigger_processes") ||
+      !lockedSlotAndProcess ||
+      (usesCallerPrecondition &&
+        (!locksTable("bot_foreground_slots") ||
+          !locksTable("trigger_processes"))) ||
       (usesCallerPrecondition
         ? !comparesEveryPreconditionField
         : !recomputesServerSide)
@@ -904,7 +1015,7 @@ function assertConcurrencyFenceIsConsumed(
     const argumentNames = new Set(
       signature.arguments.map(({ argument_name }) => argument_name),
     );
-    const compared = consumed.some((name) => {
+    const compared = (name: string): boolean => {
       const escaped = escapeRegularExpression(name);
       const comparison = "(?:=|<>|is\\s+(?:not\\s+)?distinct\\s+from)";
       const rowValue = "((?:[a-z][a-z0-9_]*\\.)?[a-z][a-z0-9_]*)";
@@ -928,8 +1039,8 @@ function assertConcurrencyFenceIsConsumed(
           !column.startsWith("p_")
         );
       });
-    });
-    if (!compared) {
+    };
+    if (consumed.length !== candidates.length || !candidates.every(compared)) {
       throw new Error(
         `PostgreSQL function CAS fence drift: ${signature.schema}.${signature.function_name}`,
       );
@@ -955,7 +1066,13 @@ function assertFunctionEffectsInDefinition(
   definition: string,
   ownerFunctionNames: ReadonlySet<string>,
 ): void {
-  const executable = executableFunctionDefinition(definition);
+  const semantic = semanticFunctionDefinition(definition);
+  const executable = semantic.replace(/'(?:''|[^'])*'/g, "''");
+  if (/\bif\s+false\s+then\b/i.test(executable)) {
+    throw new Error(
+      `unreachable proof block is forbidden in owner writer: ${signature.schema}.${signature.function_name}`,
+    );
+  }
   if (/\bexecute\b/i.test(executable)) {
     throw new Error(
       `dynamic SQL is forbidden in owner writer: ${signature.schema}.${signature.function_name}`,
@@ -981,7 +1098,7 @@ function assertFunctionEffectsInDefinition(
         `PostgreSQL function effect drift: ${signature.schema}.${signature.function_name} does not ${effect.operation} ${effect.table_name}`,
       );
     }
-    assertConcurrencyFenceIsConsumed(signature, effect, executable);
+    assertConcurrencyFenceIsConsumed(signature, effect, executable, semantic);
   }
   const declaredTables = new Set<string>(signature.writes_tables);
   const mutationTargetPattern =
@@ -1059,6 +1176,28 @@ function assertFunctionEffectsInDefinition(
           `undeclared PostgreSQL read in ${signature.schema}.${signature.function_name}: ${observedSchema ?? contract.schema}.${observedTable}`,
         );
       }
+    }
+  }
+  const mergeUsingPattern =
+    /\bmerge\s+into\s+(?:only\s+)?(?:"?[a-z][a-z0-9_]*"?\s*\.\s*)?"?[a-z][a-z0-9_]*"?\b[\s\S]{0,2000}?\busing\s+(?:only\s+)?(?:"?([a-z][a-z0-9_]*)"?\s*\.\s*)?"?([a-z][a-z0-9_]*)"?\b/gi;
+  for (const match of executable.matchAll(mergeUsingPattern)) {
+    const observedSchema = match[1];
+    const observedTable = match[2];
+    const suffix = executable.slice((match.index ?? 0) + match[0].length);
+    if (
+      observedTable === undefined ||
+      commonTableExpressions.has(observedTable) ||
+      /^\s*\(/u.test(suffix)
+    ) {
+      continue;
+    }
+    if (
+      (observedSchema !== undefined && observedSchema !== contract.schema) ||
+      !declaredReads.has(observedTable)
+    ) {
+      throw new Error(
+        `undeclared PostgreSQL read in ${signature.schema}.${signature.function_name}: ${observedSchema ?? contract.schema}.${observedTable}`,
+      );
     }
   }
   const qualifiedFunctionCallPattern =
@@ -1148,6 +1287,45 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     throw new Error(`PostgreSQL schema owner drift for ${contract.schema}`);
   }
 
+  const appRoleResult = await postgres.query<{
+    role_name: string;
+    can_login: boolean;
+    inherits_privileges: boolean;
+    is_superuser: boolean;
+    bypasses_rls: boolean;
+    can_create_role: boolean;
+    can_create_database: boolean;
+    can_replicate: boolean;
+  }>(
+    `SELECT r.rolname AS role_name,
+            r.rolcanlogin AS can_login,
+            r.rolinherit AS inherits_privileges,
+            r.rolsuper AS is_superuser,
+            r.rolbypassrls AS bypasses_rls,
+            r.rolcreaterole AS can_create_role,
+            r.rolcreatedb AS can_create_database,
+            r.rolreplication AS can_replicate
+       FROM pg_catalog.pg_roles r
+      WHERE r.rolname = $1`,
+    [contract.app_role],
+  );
+  const appRole = appRoleResult.rows[0];
+  if (
+    appRoleResult.rows.length !== 1 ||
+    appRole === undefined ||
+    appRole.can_login ||
+    !appRole.inherits_privileges ||
+    appRole.is_superuser ||
+    appRole.bypasses_rls ||
+    appRole.can_create_role ||
+    appRole.can_create_database ||
+    appRole.can_replicate
+  ) {
+    throw new Error(
+      `application PostgreSQL role is not least-privilege for ${contract.owner_service}`,
+    );
+  }
+
   const runtimeIdentityResult = await options.runtime_postgres.query<{
     current_user: string;
     session_user: string;
@@ -1218,6 +1396,59 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     throw new Error(
       `runtime PostgreSQL role membership drift for ${contract.owner_service}`,
     );
+  }
+  const runtimeMembershipOptionsResult = await options.runtime_postgres.query<{
+    role_name: string;
+    admin_option: boolean;
+    inherit_option: boolean;
+    set_option: boolean;
+  }>(
+    `SELECT inherited.rolname AS role_name,
+            m.admin_option,
+            m.inherit_option,
+            m.set_option
+       FROM pg_catalog.pg_auth_members m
+       JOIN pg_catalog.pg_roles inherited ON inherited.oid = m.roleid
+       JOIN pg_catalog.pg_roles member ON member.oid = m.member
+      WHERE member.rolname = current_user`,
+  );
+  if (
+    runtimeMembershipOptionsResult.rows.length !== 1 ||
+    runtimeMembershipOptionsResult.rows[0]?.role_name !== contract.app_role ||
+    runtimeMembershipOptionsResult.rows[0]?.admin_option ||
+    runtimeMembershipOptionsResult.rows[0]?.set_option ||
+    runtimeMembershipOptionsResult.rows[0]?.inherit_option !== true
+  ) {
+    throw new Error(
+      `runtime PostgreSQL role membership options drift for ${contract.owner_service}`,
+    );
+  }
+
+  const tableOwnerResult = await postgres.query<{
+    table_name: string;
+    table_owner: string;
+  }>(
+    `SELECT c.relname AS table_name,
+            pg_catalog.pg_get_userbyid(c.relowner) AS table_owner
+       FROM pg_catalog.pg_class c
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1 AND c.relkind IN ('r','p')
+      ORDER BY c.relname`,
+    [contract.schema],
+  );
+  assertSameSet(
+    `${contract.schema} owned tables`,
+    tableOwnerResult.rows
+      .filter(({ table_owner }) => table_owner === options.expected_schema_owner)
+      .map(({ table_name }) => table_name),
+    contract.tables,
+  );
+  if (
+    tableOwnerResult.rows.some(
+      ({ table_owner }) => table_owner !== options.expected_schema_owner,
+    )
+  ) {
+    throw new Error(`PostgreSQL table owner drift for ${contract.schema}`);
   }
 
   const columnResult = await postgres.query<{
@@ -1617,9 +1848,12 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
   const contractFingerprint = fingerprint(contract);
   const databaseFingerprint = fingerprint({
     schema: schemaResult.rows,
+    app_role: appRoleResult.rows,
     columns: columnResult.rows,
+    table_owners: tableOwnerResult.rows,
     runtime_identity: runtimeIdentityResult.rows,
     runtime_membership: runtimeMembershipResult.rows,
+    runtime_membership_options: runtimeMembershipOptionsResult.rows,
     table_acl: tableAclResult.rows,
     column_acl: columnAclResult.rows,
     runtime_column_privileges: runtimeColumnPrivilegeResult.rows,

@@ -133,7 +133,7 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "semantic_key_aliases",
-      select_columns: ["id","bot_id","old_canonicalization_version","old_semantic_key","new_canonicalization_version","new_semantic_key","actor_ref","reason","evidence_refs","created_at"],
+      select_columns: ["id","bot_id","old_canonicalization_version","old_semantic_key","new_canonicalization_version","new_semantic_key","target_fact_id","actor_ref","reason","evidence_refs","created_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,

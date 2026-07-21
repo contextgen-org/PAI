@@ -127,7 +127,9 @@ DO $$ BEGIN
     CREATE ROLE authenticated NOLOGIN;
   END IF;
 END $$;
+ALTER ROLE pai_timer_app NOLOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
 ALTER ROLE pai_timer_runtime LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD 'timer-runtime-test';
+REVOKE pai_timer_app FROM pai_timer_runtime;
 REVOKE pai_runtime_bridge FROM pai_timer_runtime;
 REVOKE pai_memory_app FROM pai_timer_runtime;
 GRANT pai_timer_app TO pai_timer_runtime;
@@ -379,6 +381,13 @@ describePostgres("PostgreSQL owner deployment verification", () => {
       }),
     ],
     [
+      "MERGE USING cross-owner SECURITY DEFINER read",
+      replacementWriterSql({
+        extraStatement:
+          "MERGE INTO timer.contract_children c USING memory.owner_secrets s ON c.child_id = s.child_id WHEN MATCHED THEN UPDATE SET payload = '{}'::jsonb;",
+      }),
+    ],
+    [
       "unused expected-version argument",
       replacementWriterSql({ expectedVersionCheck: "current_version <> 0" }),
     ],
@@ -535,6 +544,26 @@ describePostgres("PostgreSQL owner deployment verification", () => {
         runtime_postgres: runtime(),
       }),
     ).rejects.toThrow(/membership|privilege drift/);
+  });
+
+  it("fails closed on application role flags or table owner drift", async () => {
+    const postgres = await reset();
+    await postgres.query("ALTER ROLE pai_timer_app CREATEROLE");
+    await expect(
+      verifyOwnerRepositoryDeploymentFromPostgresV1(POSTGRES_CONTRACT, postgres, {
+        expected_schema_owner: "pai_migrator",
+        runtime_postgres: runtime(),
+      }),
+    ).rejects.toThrow(/application PostgreSQL role|least-privilege/);
+
+    await reset();
+    await postgres.query("ALTER TABLE timer.contract_children OWNER TO pai_timer_app");
+    await expect(
+      verifyOwnerRepositoryDeploymentFromPostgresV1(POSTGRES_CONTRACT, postgres, {
+        expected_schema_owner: "pai_migrator",
+        runtime_postgres: runtime(),
+      }),
+    ).rejects.toThrow(/table owner drift|owned tables/);
   });
 
   it("fails closed on a cross-owner schema and function grant", async () => {

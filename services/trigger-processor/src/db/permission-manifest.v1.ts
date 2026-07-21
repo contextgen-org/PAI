@@ -69,7 +69,7 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "trigger_processes",
-      select_columns: ["id","trigger_id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","phase","status","wait_reason","current_runtime_run_id","runtime_policy_created_at","runtime_policy_expires_at","inherited_from_process_id","blocked_by_process_id","canonical_process_id","preempted_by_process_id","preempt_commit_result","preempt_isolation_proof_ref","merged_into_process_id","merged_into_queue_item_id","terminal_reason","terminal_outcome","meta_enqueue_reason","cancel_requested_at","cancellation_status","cancel_reason_code","cancel_actor_principal_id","cancel_actor_role","runtime_cancel_signal_id","cancellation_isolation_status","cancelled_at","cooldown_until","snapshot_retention_until","context_snapshot_ref","intent_ref","created_at","updated_at"],
+      select_columns: ["id","trigger_id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","phase","status","wait_reason","current_runtime_run_id","runtime_policy_created_at","runtime_policy_expires_at","current_snapshot_id","inherited_from_process_id","blocked_by_process_id","canonical_process_id","preempted_by_process_id","successor_process_id","superseded_by_process_id","preempt_commit_result","preempt_isolation_proof_ref","merged_into_process_id","merged_into_queue_item_id","terminal_reason","terminal_outcome","meta_enqueue_reason","cancel_requested_at","cancellation_status","cancel_reason_code","cancel_actor_principal_id","cancel_actor_role","runtime_cancel_signal_id","cancellation_isolation_status","cancelled_at","cooldown_until","snapshot_retention_until","context_snapshot_ref","intent_ref","created_at","updated_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -149,7 +149,7 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "runtime_start_reservations",
-      select_columns: ["id","trigger_process_id","reserved_runtime_run_id","start_fence_generation","start_fence_token_hash","request_hash","policy_schema_version","policy_input_ref","policy_input_hash","policy_canonical_bytes","policy_input_created_at","policy_expires_at","status","claimed_at","cancel_requested_at","cancelled_at","started_at","completed_at","created_at","updated_at"],
+      select_columns: ["id","trigger_process_id","reserved_runtime_run_id","start_fence_generation","start_fence_token_hash","request_hash","policy_schema_version","policy_input_ref","policy_input_hash","policy_canonical_bytes","policy_input_created_at","policy_expires_at","intent_policy_snapshot_ref","intent_version","intent_policy_snapshot_hash","status","claimed_at","cancel_requested_at","cancelled_at","started_at","completed_at","created_at","updated_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,

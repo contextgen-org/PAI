@@ -127,7 +127,7 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "skill_resolution_attempts",
-      select_columns: ["id","runtime_run_id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","policy_input_ref","policy_input_hash","policy_input_created_at","policy_expires_at","requested_catalog_version","effective_catalog_version","catalog_as_of","security_revocation_epoch","skill_permission_summary_ref","skill_permission_summary_hash","request_hash","idempotency_key","status","error_code","response_payload","valid_until","trace_id","created_at","completed_at"],
+      select_columns: ["id","runtime_run_id","start_attempt_no","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","policy_input_ref","policy_input_hash","policy_input_created_at","policy_expires_at","requested_catalog_version","effective_catalog_version","catalog_as_of","security_revocation_epoch","skill_permission_summary_ref","skill_permission_summary_hash","request_hash","idempotency_key","status","error_code","response_payload","valid_until","trace_id","created_at","completed_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -135,7 +135,7 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "skill_resolutions",
-      select_columns: ["id","resolution_attempt_id","runtime_run_id","skill_id","skill_key","required","version_id","package_digest","manifest_digest","runtime_target","permission_decision","granted_capability_refs","status","resolution_token_hash","valid_until","trace_id","created_at"],
+      select_columns: ["id","resolution_attempt_id","runtime_run_id","start_attempt_no","skill_id","skill_key","required","version_id","package_digest","manifest_digest","runtime_target","permission_decision","granted_capability_refs","status","resolution_token_hash","valid_until","trace_id","created_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -183,7 +183,7 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "skill_management_commands",
-      select_columns: ["id","operation","workspace_id","bot_id","deployment_environment","release_channel","skill_id","version_id","expected_revision","request_hash","idempotency_key","actor_principal_id","actor_role","reason","result_revision","result_catalog_version","result_security_revocation_epoch","response_payload","trace_id","created_at","completed_at"],
+      select_columns: ["id","operation","workspace_id","bot_id","deployment_environment","release_channel","skill_id","version_id","target_version_id","expected_revision","request_hash","idempotency_key","actor_principal_id","actor_role","reason","result_revision","result_catalog_version","result_security_revocation_epoch","response_payload","trace_id","created_at","completed_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -199,7 +199,7 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "skill_catalog_revision_entries",
-      select_columns: ["catalog_revision_id","skill_id","activation_revision_id","version_id","package_digest","manifest_digest","runtime_target"],
+      select_columns: ["catalog_revision_id","workspace_id","bot_id","deployment_environment","release_channel","skill_id","activation_revision_id","version_id","package_digest","manifest_digest","runtime_target"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,

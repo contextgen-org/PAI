@@ -7,6 +7,12 @@ import type {
   ObjectScopeV1,
 } from "./object-store-port.v1.js";
 
+const expiredUploadTerminationMs = 10 * 60_000;
+
+function foregroundUploadTerminalAt(foregroundLeaseUntil: Date): Date {
+  return new Date(foregroundLeaseUntil.getTime() + expiredUploadTerminationMs);
+}
+
 export type ObjectMetadataStateV1 =
   | "put_pending"
   | "available"
@@ -118,6 +124,7 @@ export interface ObjectReconciliationClaimV1 {
    */
   readonly foreground_upload_may_still_arrive: boolean;
   readonly cleanup_not_before?: string;
+  readonly foreground_upload_terminal_at?: string;
 }
 
 export interface ClaimObjectReconciliationInputV1 {
@@ -133,6 +140,7 @@ export interface CompleteObjectReconciliationInputV1 {
   readonly reservation_id: string;
   readonly claim_token: string;
   readonly version?: string;
+  readonly late_upload_terminal_proof?: boolean;
 }
 
 export interface ReleaseObjectReconciliationInputV1 {
@@ -202,6 +210,7 @@ interface PendingPut extends ReconciliationLease {
   readonly record: ObjectMetadataRecordV1;
   foregroundLeaseToken?: string;
   foregroundLeaseUntil: Date;
+  foregroundUploadTerminalAt: Date;
   foregroundUploadMayStillArrive: boolean;
   cleanupNotBefore?: Date;
 }
@@ -292,6 +301,9 @@ export class InMemoryObjectMetadataRepositoryV1
       operation: "put_uploading",
       foregroundLeaseToken,
       foregroundLeaseUntil: input.foreground_lease_until,
+      foregroundUploadTerminalAt: foregroundUploadTerminalAt(
+        input.foreground_lease_until,
+      ),
       foregroundUploadMayStillArrive: false,
       attempt: 0,
     });
@@ -318,6 +330,9 @@ export class InMemoryObjectMetadataRepositoryV1
     }
     if (input.foreground_lease_until > pending.foregroundLeaseUntil) {
       pending.foregroundLeaseUntil = input.foreground_lease_until;
+      pending.foregroundUploadTerminalAt = foregroundUploadTerminalAt(
+        input.foreground_lease_until,
+      );
     }
   }
 
@@ -504,6 +519,12 @@ export class InMemoryObjectMetadataRepositoryV1
     if (foregroundUploadMayStillArrive) {
       pending.foregroundUploadMayStillArrive = true;
       if (notBefore !== undefined) pending.cleanupNotBefore ??= notBefore;
+      if (
+        notBefore !== undefined &&
+        foregroundUploadTerminalAt(notBefore) > pending.foregroundUploadTerminalAt
+      ) {
+        pending.foregroundUploadTerminalAt = foregroundUploadTerminalAt(notBefore);
+      }
     }
     delete pending.claimToken;
     delete pending.lockedUntil;
@@ -545,6 +566,14 @@ export class InMemoryObjectMetadataRepositoryV1
         }
         pending.foregroundUploadMayStillArrive = true;
         pending.cleanupNotBefore ??= input.expired_upload_cleanup_not_before;
+        if (
+          foregroundUploadTerminalAt(pending.foregroundLeaseUntil) >
+          pending.foregroundUploadTerminalAt
+        ) {
+          pending.foregroundUploadTerminalAt = foregroundUploadTerminalAt(
+            pending.foregroundLeaseUntil,
+          );
+        }
         pending.operation = "put_finalize";
         delete pending.foregroundLeaseToken;
       }
@@ -567,6 +596,12 @@ export class InMemoryObjectMetadataRepositoryV1
         ...("record" in pending && pending.cleanupNotBefore !== undefined
           ? { cleanup_not_before: pending.cleanupNotBefore.toISOString() }
           : {}),
+        ...("record" in pending && pending.foregroundUploadMayStillArrive
+          ? {
+              foreground_upload_terminal_at:
+                pending.foregroundUploadTerminalAt.toISOString(),
+            }
+          : {}),
       });
     }
     return claims;
@@ -581,7 +616,10 @@ export class InMemoryObjectMetadataRepositoryV1
         throw new Error("stale reconciliation claim");
       }
       if (put.operation === "put_cleanup") {
-        if (put.foregroundUploadMayStillArrive) {
+        if (
+          put.foregroundUploadMayStillArrive &&
+          input.late_upload_terminal_proof !== true
+        ) {
           throw new Error(
             "late-upload cleanup tombstone cannot be completed without backend cancellation proof",
           );

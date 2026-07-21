@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createServiceApp, shutdownService } from "../src/index.js";
+import {
+  createServiceApp,
+  shutdownService,
+  startService,
+  type InternalRouteAuthPolicy,
+} from "../src/index.js";
 
 const apps = [] as ReturnType<typeof createServiceApp>[];
 
@@ -28,5 +33,60 @@ describe("graceful shutdown", () => {
     close.mockRestore();
     await originalClose();
     apps.splice(apps.indexOf(app), 1);
+  });
+});
+
+describe("service startup workload verifier requirements", () => {
+  const internalPolicy = {
+    method: "POST",
+    route: "/internal/v1/example",
+    requiredCapabilities: ["example.write"],
+    allowedCallers: ["trigger_processor"],
+    requiredScope: {
+      scope_kind: "bot",
+      workspace_id: "workspace-1",
+      bot_id: "bot-1",
+      owner_agent_id: "agent-1",
+      deployment_environment: "local",
+      release_channel: "stable",
+    },
+  } as const satisfies InternalRouteAuthPolicy;
+
+  it("fails closed by default when internal routes have no workload verifier", async () => {
+    const buildApp = vi.fn(() => createServiceApp("trigger_processor"));
+    await expect(
+      startService({
+        serviceId: "trigger_processor",
+        defaultPort: 3001,
+        env: {},
+        internalRouteAuthPolicies: [internalPolicy],
+        buildApp,
+      }),
+    ).rejects.toThrow("PAI_WORKLOAD_JWKS_URL");
+    expect(buildApp).not.toHaveBeenCalled();
+  });
+
+  it("can explicitly defer verifier enforcement for local no-DB smoke paths", async () => {
+    const signalInstall = vi
+      .spyOn(process, "once")
+      .mockReturnValue(process);
+    const app = {
+      listen: vi.fn(async () => undefined),
+    };
+    try {
+      await expect(
+        startService({
+          serviceId: "trigger_processor",
+          defaultPort: 3001,
+          env: {},
+          internalRouteAuthPolicies: [internalPolicy],
+          requireWorkloadVerifier: false,
+          buildApp: vi.fn(() => app as never),
+        }),
+      ).resolves.toBeUndefined();
+      expect(app.listen).toHaveBeenCalledOnce();
+    } finally {
+      signalInstall.mockRestore();
+    }
   });
 });

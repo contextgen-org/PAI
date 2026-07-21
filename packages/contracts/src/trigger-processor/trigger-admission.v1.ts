@@ -1,5 +1,8 @@
 import { Type, type Static } from "@sinclair/typebox";
 
+import { DeploymentEnvironmentV1Schema } from "../shared/deployment-environment.v1.js";
+import { ReleaseChannelV1Schema } from "../shared/release-channel.v1.js";
+
 export const TriggerSourceV1Schema = Type.Union([
   Type.Literal("chat"),
   Type.Literal("notification"),
@@ -27,6 +30,71 @@ export const MAX_SAFE_SLOT_GENERATION_V1 = Number.MAX_SAFE_INTEGER;
 
 const canonicalTimestampPattern =
   "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$";
+const botScopeSchema = Type.Object(
+  {
+    scope_kind: Type.Literal("bot"),
+    workspace_id: Type.String({ minLength: 1 }),
+    bot_id: Type.String({ minLength: 1 }),
+    owner_agent_id: Type.String({ minLength: 1 }),
+    deployment_environment: DeploymentEnvironmentV1Schema,
+    release_channel: ReleaseChannelV1Schema,
+  },
+  { additionalProperties: false },
+);
+const admitTriggerRequestBodyProperties = {
+  trigger_id: Type.String({ minLength: 1 }),
+  process_id: Type.String({ minLength: 1 }),
+  scope: botScopeSchema,
+  payload: Type.Record(Type.String(), Type.Unknown()),
+  dedupe_key: Type.String({ minLength: 1 }),
+  request_hash: Type.String({ minLength: 1 }),
+  idempotency_key: Type.String({ minLength: 1 }),
+  is_catch_up: Type.Boolean(),
+  explicit_interrupt: Type.Boolean(),
+};
+
+export const AdmitTriggerRequestBodyV1Schema = Type.Object(
+  admitTriggerRequestBodyProperties,
+  {
+    $id: "urn:pai:trigger-processor:admit-trigger-request-body:v1",
+    additionalProperties: false,
+  },
+);
+
+export type AdmitTriggerRequestBodyV1 = Static<
+  typeof AdmitTriggerRequestBodyV1Schema
+>;
+
+export const AdmitTriggerCommandV1Schema = Type.Object(
+  {
+    ...admitTriggerRequestBodyProperties,
+    source: TriggerSourceV1Schema,
+    trace_id: Type.String({ minLength: 1 }),
+  },
+  {
+    $id: "urn:pai:trigger-processor:admit-trigger-command:v1",
+    additionalProperties: false,
+  },
+);
+
+export type AdmitTriggerCommandV1 = Static<typeof AdmitTriggerCommandV1Schema>;
+
+export const AdmitTriggerResponseV1Schema = Type.Object(
+  {
+    code: Type.String({ minLength: 1 }),
+    message: Type.String({ minLength: 1 }),
+    retryable: Type.Boolean(),
+    details: Type.Unknown(),
+    trace_id: Type.String({ minLength: 1 }),
+  },
+  {
+    $id: "urn:pai:trigger-processor:admit-trigger-response:v1",
+    additionalProperties: false,
+  },
+);
+
+export type AdmitTriggerResponseV1 = Static<typeof AdmitTriggerResponseV1Schema>;
+
 const trustedAdmissionFactsBaseProperties = {
   source: TriggerSourceV1Schema,
   actor_type: TriggerActorTypeV1Schema,

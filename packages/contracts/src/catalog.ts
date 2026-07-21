@@ -10,6 +10,9 @@ import { ServiceIdV1Schema } from "./shared/service-id.v1.js";
 import { TypedEvidenceRefV1Schema } from "./shared/typed-evidence-ref.v1.js";
 import { WorkloadCredentialClaimsV1Schema } from "./shared/workload-credential-claims.v1.js";
 import {
+  AdmitTriggerCommandV1Schema,
+  AdmitTriggerRequestBodyV1Schema,
+  AdmitTriggerResponseV1Schema,
   TriggerAdmissionDecisionV1Schema,
   TrustedAdmissionFactsV1Schema,
 } from "./trigger-processor/trigger-admission.v1.js";
@@ -184,6 +187,30 @@ export const TRIGGER_PROCESSOR_SCHEMA_CATALOG = [
     "generated/schema/trigger-processor/trigger-process-state.v1.json",
     "packages/contracts/test/trigger-processor/trigger-process-state.contract.ts",
     TriggerProcessStateV1Schema,
+  ),
+  triggerProcessorEntry(
+    "AdmitTriggerRequestBodyV1",
+    "urn:pai:trigger-processor:admit-trigger-request-body:v1",
+    "packages/contracts/src/trigger-processor/trigger-admission.v1.ts",
+    "generated/schema/trigger-processor/admit-trigger-request-body.v1.json",
+    "packages/contracts/test/trigger-processor/trigger-admission.contract.ts",
+    AdmitTriggerRequestBodyV1Schema,
+  ),
+  triggerProcessorEntry(
+    "AdmitTriggerCommandV1",
+    "urn:pai:trigger-processor:admit-trigger-command:v1",
+    "packages/contracts/src/trigger-processor/trigger-admission.v1.ts",
+    "generated/schema/trigger-processor/admit-trigger-command.v1.json",
+    "packages/contracts/test/trigger-processor/trigger-admission.contract.ts",
+    AdmitTriggerCommandV1Schema,
+  ),
+  triggerProcessorEntry(
+    "AdmitTriggerResponseV1",
+    "urn:pai:trigger-processor:admit-trigger-response:v1",
+    "packages/contracts/src/trigger-processor/trigger-admission.v1.ts",
+    "generated/schema/trigger-processor/admit-trigger-response.v1.json",
+    "packages/contracts/test/trigger-processor/trigger-admission.contract.ts",
+    AdmitTriggerResponseV1Schema,
   ),
   triggerProcessorEntry(
     "TrustedAdmissionFactsV1",

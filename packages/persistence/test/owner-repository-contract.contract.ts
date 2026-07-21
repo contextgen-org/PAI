@@ -304,10 +304,31 @@ describe("owner repository contracts", () => {
       expect(contract.foreign_keys.length).toBeGreaterThan(0);
       expect(
         contract.foreign_keys.every(
-          (foreignKey) =>
-            foreignKey.referenced_schema === contract.schema &&
-            foreignKey.validated &&
-            foreignKey.columns.length === foreignKey.referenced_columns.length,
+          (foreignKey) => {
+            const sourceColumns = new Set(
+              contract.table_permissions.find(
+                ({ table_name }) => table_name === foreignKey.table_name,
+              )?.select_columns,
+            );
+            const referencedColumns = new Set(
+              contract.table_permissions.find(
+                ({ table_name }) =>
+                  table_name === foreignKey.referenced_table,
+              )?.select_columns,
+            );
+            return (
+              foreignKey.referenced_schema === contract.schema &&
+              foreignKey.validated &&
+              foreignKey.columns.length ===
+                foreignKey.referenced_columns.length &&
+              foreignKey.columns.every((column) =>
+                sourceColumns.has(column),
+              ) &&
+              foreignKey.referenced_columns.every((column) =>
+                referencedColumns.has(column),
+              )
+            );
+          },
         ),
       ).toBe(true);
     }
@@ -339,7 +360,11 @@ describe("owner repository contracts", () => {
       function_name: "test_server_side_admission_v1",
       primary_table: "weak_trigger_queue_items",
       writer_kind: "state_transition",
-      arguments: [["p_admission_request", "jsonb"]],
+      arguments: [
+        ["p_scope", "jsonb"],
+        ["p_authenticated_context", "jsonb"],
+        ["p_admission_request", "jsonb"],
+      ],
       reads_tables: [
         "bots",
         "bot_permission_bindings",
@@ -358,13 +383,27 @@ describe("owner repository contracts", () => {
     });
     const body = (locks: string) => `
       CREATE FUNCTION trigger_processor.test_server_side_admission_v1(
+        p_scope jsonb,
+        p_authenticated_context jsonb,
         p_admission_request jsonb
       ) RETURNS jsonb LANGUAGE plpgsql AS $body$
       BEGIN
         ${locks}
-        PERFORM b.id, binding.bot_id, p_admission_request
+        PERFORM b.id, binding.bot_id,
+                p_admission_request->>'is_catch_up',
+                p_admission_request->>'explicit_interrupt',
+                p_authenticated_context->>'workload_subject',
+                p_authenticated_context->>'capability'
           FROM trigger_processor.bots b
-          JOIN trigger_processor.bot_permission_bindings binding ON true;
+          JOIN trigger_processor.bot_permission_bindings binding
+            ON binding.bot_id = b.id
+           AND binding.principal_id = p_authenticated_context->>'workload_subject'
+           AND binding.permission_scope = p_authenticated_context->>'capability'
+         WHERE b.workspace_id = p_scope->>'workspace_id'
+           AND b.id = p_scope->>'bot_id'
+           AND b.owner_agent_id = p_scope->>'owner_agent_id'
+           AND b.deployment_environment = p_scope->>'deployment_environment'
+           AND b.release_channel = p_scope->>'release_channel';
         INSERT INTO trigger_processor.weak_trigger_queue_items(id) VALUES ('id');
         RETURN '{}'::jsonb;
       END $body$`;
@@ -373,8 +412,17 @@ describe("owner repository contracts", () => {
         TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
         signature,
         body(`
-          PERFORM 1 FROM trigger_processor.bot_foreground_slots FOR UPDATE;
-          PERFORM 1 FROM trigger_processor.trigger_processes FOR UPDATE;
+          PERFORM 1
+            FROM trigger_processor.bot_foreground_slots slot
+            JOIN trigger_processor.trigger_processes process
+              ON process.id = slot.process_id
+           WHERE slot.bot_id = p_scope->>'bot_id'
+             AND process.workspace_id = p_scope->>'workspace_id'
+             AND process.bot_id = p_scope->>'bot_id'
+             AND process.owner_agent_id = p_scope->>'owner_agent_id'
+             AND process.deployment_environment = p_scope->>'deployment_environment'
+             AND process.release_channel = p_scope->>'release_channel'
+           FOR UPDATE;
         `),
       ),
     ).not.toThrow();
@@ -388,6 +436,95 @@ describe("owner repository contracts", () => {
         `),
       ),
     ).toThrow(/slot\/process fence drift/);
+  });
+
+  it("fails closed when FK columns drift outside declared table columns", () => {
+    const aliasPermissionIndex =
+      KNOWTHAT_REPOSITORY_CONTRACT_V1.table_permissions.findIndex(
+        ({ table_name }) => table_name === "semantic_key_aliases",
+      );
+    expect(aliasPermissionIndex).toBeGreaterThanOrEqual(0);
+    expect(() =>
+      defineOwnerRepositoryContractV1({
+        ...KNOWTHAT_REPOSITORY_CONTRACT_V1,
+        table_permissions:
+          KNOWTHAT_REPOSITORY_CONTRACT_V1.table_permissions.map(
+            (permission, index) =>
+              index === aliasPermissionIndex
+                ? {
+                    ...permission,
+                    select_columns: permission.select_columns.filter(
+                      (column) => column !== "target_fact_id",
+                    ),
+                  }
+                : permission,
+          ),
+      } as never),
+    ).toThrow(/invalid owner foreign key/);
+  });
+
+  it("rejects partial expected-state consumption and MERGE cross-owner reads", () => {
+    const transitionSignature = ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "test_transition_process_v1",
+      primary_table: "trigger_processes",
+      writer_kind: "state_transition",
+      arguments: [
+        ["p_process_id", "text"],
+        ["p_expected_phase", "text"],
+        ["p_expected_status", "text"],
+        ["p_next_state", "jsonb"],
+        ["p_request_hash", "text"],
+      ],
+      reads_tables: ["trigger_processes"],
+      writes_tables: ["trigger_processes"],
+      effects: [
+        {
+          table_name: "trigger_processes",
+          operation: "transition",
+          concurrency_control: "expected_state_version",
+        },
+      ],
+      returns: "jsonb",
+    });
+    const partialExpectedBody = `
+      CREATE FUNCTION trigger_processor.test_transition_process_v1(
+        p_process_id text,
+        p_expected_phase text,
+        p_expected_status text,
+        p_next_state jsonb,
+        p_request_hash text
+      ) RETURNS jsonb LANGUAGE plpgsql AS $body$
+      BEGIN
+        UPDATE trigger_processor.trigger_processes p
+           SET status = p_next_state->>'status'
+         WHERE p.id = p_process_id
+           AND p.phase = p_expected_phase;
+        RETURN '{}'::jsonb;
+      END $body$`;
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        transitionSignature,
+        partialExpectedBody,
+      ),
+    ).toThrow(/CAS fence drift/);
+
+    const mergeBody = partialExpectedBody.replace(
+      "RETURN '{}'::jsonb;",
+      `MERGE INTO trigger_processor.trigger_processes p
+         USING memory.owner_secrets s
+            ON p.id = s.process_id
+       WHEN MATCHED THEN UPDATE SET status = p_next_state->>'status';
+       RETURN '{}'::jsonb;`,
+    );
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        transitionSignature,
+        mergeBody,
+      ),
+    ).toThrow(/undeclared PostgreSQL read|CAS fence drift/);
   });
 
   it("fails closed on permission coverage, direct writes, or writer signature drift", () => {

@@ -4,12 +4,12 @@ import {
   type VerifiedWorkloadCredential,
 } from "@pai/auth";
 import {
-  TriggerSourceV1Schema,
+  AdmitTriggerCommandV1Schema,
+  type AdmitTriggerCommandV1,
   type TriggerActorTypeV1,
   type TriggerSourceV1,
 } from "@pai/contracts";
 import type { OwnerDatabaseApplicationDependenciesV1 } from "@pai/persistence";
-import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
 import { TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 } from "../db/permission-manifest.v1.js";
@@ -19,41 +19,12 @@ export type TriggerProcessorOwnerDatabaseV1 =
     typeof TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1
   >;
 
-const botScopeProperties = {
-  scope_kind: Type.Literal("bot"),
-  workspace_id: Type.String({ minLength: 1 }),
-  bot_id: Type.String({ minLength: 1 }),
-  owner_agent_id: Type.String({ minLength: 1 }),
-  deployment_environment: Type.Union([
-    Type.Literal("local"), Type.Literal("dev"), Type.Literal("staging"),
-    Type.Literal("prod"),
-  ]),
-  release_channel: Type.Union([
-    Type.Literal("stable"), Type.Literal("canary"),
-  ]),
-};
-
-export const AdmitTriggerCommandV1Schema = Type.Object(
-  {
-    trigger_id: Type.String({ minLength: 1 }),
-    process_id: Type.String({ minLength: 1 }),
-    scope: Type.Object(botScopeProperties, { additionalProperties: false }),
-    source: TriggerSourceV1Schema,
-    payload: Type.Record(Type.String(), Type.Unknown()),
-    dedupe_key: Type.String({ minLength: 1 }),
-    request_hash: Type.String({ minLength: 1 }),
-    idempotency_key: Type.String({ minLength: 1 }),
-    trace_id: Type.String({ minLength: 1 }),
-    is_catch_up: Type.Boolean(),
-    explicit_interrupt: Type.Boolean(),
-  },
-  { additionalProperties: false },
-);
-
-export type AdmitTriggerCommandV1 = Static<typeof AdmitTriggerCommandV1Schema>;
-
 export class InvalidAdmitTriggerCommandError extends Error {
-  public constructor(message: string) {
+  public constructor(
+    message: string,
+    public readonly kind: "invalid_request" | "authorization_denied" =
+      "invalid_request",
+  ) {
     super(message);
     this.name = "InvalidAdmitTriggerCommandError";
   }
@@ -74,12 +45,14 @@ function authenticatedActor(
   if (!claims.capability.includes(requiredCapability)) {
     throw new InvalidAdmitTriggerCommandError(
       `verified workload credential lacks ${requiredCapability}`,
+      "authorization_denied",
     );
   }
   if (source === "timer") {
     if (claims.sub !== "timer_trigger_app" || claims.delegated_principal !== undefined) {
       throw new InvalidAdmitTriggerCommandError(
         "timer admission requires timer_trigger_app without delegated identity",
+        "authorization_denied",
       );
     }
     return Object.freeze({ actor_type: "system", actor_id: claims.sub });
@@ -88,6 +61,7 @@ function authenticatedActor(
   if (claims.sub !== "observation_gateway" || principal === undefined) {
     throw new InvalidAdmitTriggerCommandError(
       `${source} admission requires observation_gateway and a signed delegated principal`,
+      "authorization_denied",
     );
   }
   const actorType: TriggerActorTypeV1 =
@@ -139,6 +113,7 @@ export function createTriggerAdmissionApplicationV1(
       ) {
         throw new InvalidAdmitTriggerCommandError(
           "verified workload credential does not match the complete bot scope",
+          "authorization_denied",
         );
       }
       const actor = authenticatedActor(credential, command.source);
