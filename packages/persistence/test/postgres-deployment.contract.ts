@@ -132,7 +132,7 @@ ALTER ROLE pai_timer_runtime LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NO
 REVOKE pai_timer_app FROM pai_timer_runtime;
 REVOKE pai_runtime_bridge FROM pai_timer_runtime;
 REVOKE pai_memory_app FROM pai_timer_runtime;
-GRANT pai_timer_app TO pai_timer_runtime;
+GRANT pai_timer_app TO pai_timer_runtime WITH INHERIT TRUE, SET FALSE, ADMIN FALSE;
 DROP SCHEMA IF EXISTS timer CASCADE;
 CREATE SCHEMA timer AUTHORIZATION pai_migrator;
 REVOKE ALL ON SCHEMA timer FROM PUBLIC, anon, authenticated, pai_timer_runtime, pai_runtime_bridge, pai_memory_app;
