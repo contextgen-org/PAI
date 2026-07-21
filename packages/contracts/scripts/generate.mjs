@@ -3,6 +3,7 @@ import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  PENDING_OWNER_SCHEMA_GENERATION,
   SHARED_SCHEMA_CATALOG,
   TRIGGER_PROCESSOR_SCHEMA_CATALOG,
   TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1,
@@ -10,6 +11,9 @@ import {
 import {
   TRIGGER_PROCESS_STATE_V1_DATABASE_CHECK,
 } from "../dist/trigger-processor/trigger-process-state.v1.js";
+import {
+  validateWorkloadCredentialClaimsV1,
+} from "../dist/shared/workload-credential-claims.v1.js";
 import { evaluateConflictPolicyV1 } from "../dist/policy/conflict-policy.v1.js";
 import { evaluateDirectActivePolicyV1 } from "../dist/policy/direct-active-policy.v1.js";
 import { findUnexpectedGeneratedFiles } from "./generated-output-drift.mjs";
@@ -37,6 +41,7 @@ async function emitGeneratedFile(outputPath, content) {
 
 const schemaCatalog = [
   ...SHARED_SCHEMA_CATALOG,
+  ...PENDING_OWNER_SCHEMA_GENERATION,
   ...TRIGGER_PROCESSOR_SCHEMA_CATALOG,
 ];
 
@@ -86,7 +91,7 @@ function openApiOperation(operation) {
   };
 }
 
-const openApiPaths = Object.fromEntries(
+const triggerProcessorOpenApiPaths = Object.fromEntries(
   TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1.map((operation) => [
     operation.path,
     openApiOperation(operation),
@@ -109,7 +114,31 @@ await emitGeneratedFile(
     {
       openapi: "3.1.0",
       info: { title: "PAI Shared Contracts", version: "1.0.0" },
-      paths: openApiPaths,
+      paths: {},
+      components: {
+        schemas: Object.fromEntries(
+          SHARED_SCHEMA_CATALOG.filter((entry) =>
+            entry.generated_outputs.includes("generated/openapi/shared.yaml"),
+          ).map((entry) => [entry.schema_name, entry.schema]),
+        ),
+      },
+    },
+    null,
+    2,
+  )}\n`,
+);
+
+const triggerProcessorOpenApiPath = resolve(
+  packageRoot,
+  "generated/openapi/trigger-processor-internal.yaml",
+);
+await emitGeneratedFile(
+  triggerProcessorOpenApiPath,
+  `${JSON.stringify(
+    {
+      openapi: "3.1.0",
+      info: { title: "PAI Trigger Processor Internal API", version: "1.0.0" },
+      paths: triggerProcessorOpenApiPaths,
       components: {
         securitySchemes: {
           PaiWorkloadJwt: {
@@ -119,7 +148,10 @@ await emitGeneratedFile(
           },
         },
         schemas: Object.fromEntries(
-          schemaCatalog.map((entry) => [entry.schema_name, entry.schema]),
+          TRIGGER_PROCESSOR_SCHEMA_CATALOG.map((entry) => [
+            entry.schema_name,
+            entry.schema,
+          ]),
         ),
       },
     },
@@ -128,30 +160,59 @@ await emitGeneratedFile(
   )}\n`,
 );
 
+function declarationExportsFor(output, catalog) {
+  const sources = new Set(
+    catalog
+      .filter((entry) => entry.generated_outputs.includes(output))
+      .map((entry) => entry.source_file),
+  );
+  return [
+    ...[...sources]
+      .sort()
+      .map((source) => {
+        const distModule = source
+          .replace(/^packages\/contracts\/src\//, "../../dist/")
+          .replace(/\.ts$/, ".js");
+        return `export * from "${distModule}";`;
+      }),
+    "",
+  ].join("\n");
+}
+
 const typesPath = resolve(packageRoot, "generated/types/shared.d.ts");
 await emitGeneratedFile(
   typesPath,
-  'export * from "../../dist/index.js";\n',
+  declarationExportsFor("generated/types/shared.d.ts", SHARED_SCHEMA_CATALOG),
+);
+
+const triggerProcessorTypesPath = resolve(
+  packageRoot,
+  "generated/types/trigger-processor.d.ts",
+);
+await emitGeneratedFile(
+  triggerProcessorTypesPath,
+  declarationExportsFor(
+    "generated/types/trigger-processor.d.ts",
+    TRIGGER_PROCESSOR_SCHEMA_CATALOG,
+  ),
 );
 
 const policyTypesPath = resolve(packageRoot, "generated/types/shared-policy.d.ts");
 await emitGeneratedFile(
   policyTypesPath,
-  [
-    'export * from "../../dist/policy/conflict-policy.v1.js";',
-    'export * from "../../dist/policy/direct-active-policy.v1.js";',
-    "",
-  ].join("\n"),
+  declarationExportsFor(
+    "generated/types/shared-policy.d.ts",
+    SHARED_SCHEMA_CATALOG,
+  ),
 );
 
 const authTypesPath = resolve(packageRoot, "generated/types/shared-auth.d.ts");
 await emitGeneratedFile(
   authTypesPath,
-  [
-    'export * from "../../dist/shared/workload-credential-claims.v1.js";',
-    'export * from "../../dist/shared/delegated-principal-context.v1.js";',
-    "",
-  ].join("\n"),
+  declarationExportsFor(
+    "generated/types/shared-auth.d.ts",
+    SHARED_SCHEMA_CATALOG,
+  ),
 );
 
 const triggerProcessCheckPath = resolve(
@@ -229,48 +290,92 @@ for (const [relativePath, fixtures] of policyFixtures) {
   await emitGeneratedFile(outputPath, `${JSON.stringify(fixtures, null, 2)}\n`);
 }
 
+const validWorkloadCredentialFixture = {
+  iss: "pai-workload",
+  sub: "trigger_processor",
+  aud: "action_runtime",
+  jti: "jti_fixture_01",
+  iat: 100,
+  nbf: 100,
+  exp: 400,
+  capability: ["runtime.read", "runtime.start"],
+  scope_kind: "bot",
+  workspace_id: "workspace_01",
+  bot_id: "bot_01",
+  owner_agent_id: "agent_01",
+  deployment_environment: "dev",
+  release_channel: "stable",
+};
+const validDelegatedPrincipalFixture = {
+  principal_type: "developer",
+  principal_id: "developer_01",
+  roles: ["developer"],
+  source_issuer: "supabase",
+  source_subject: "user_01",
+  auth_time: 100,
+  scope_kind: "bot",
+  workspace_id: "workspace_01",
+  bot_id: "bot_01",
+  owner_agent_id: "agent_01",
+  deployment_environment: "dev",
+  release_channel: "stable",
+};
+const workloadCredentialFixtures = {
+  valid_bot_scope: validWorkloadCredentialFixture,
+  invalid_array_audience: {
+    ...validWorkloadCredentialFixture,
+    aud: ["action_runtime"],
+  },
+  invalid_service_alias: {
+    ...validWorkloadCredentialFixture,
+    sub: "trigger-processor",
+  },
+};
+const delegatedPrincipalFixtures = {
+  valid_bot_scope: validDelegatedPrincipalFixture,
+  invalid_unsigned_sidecar: {
+    ...validDelegatedPrincipalFixture,
+    unsigned_sidecar: true,
+  },
+  invalid_scope_drift: {
+    ...validDelegatedPrincipalFixture,
+    bot_id: "bot_02",
+  },
+  invalid_principal_type: {
+    ...validDelegatedPrincipalFixture,
+    principal_type: "service",
+  },
+};
+
+if (!validateWorkloadCredentialClaimsV1(validWorkloadCredentialFixture).ok) {
+  throw new Error("generated valid workload credential fixture is invalid");
+}
+for (const [name, fixture] of Object.entries(workloadCredentialFixtures)) {
+  if (
+    name.startsWith("invalid_") &&
+    validateWorkloadCredentialClaimsV1(fixture).ok
+  ) {
+    throw new Error(`generated invalid workload credential fixture passed: ${name}`);
+  }
+}
+for (const [name, principal] of Object.entries(delegatedPrincipalFixtures)) {
+  const result = validateWorkloadCredentialClaimsV1({
+    ...validWorkloadCredentialFixture,
+    delegated_principal: principal,
+  });
+  if ((name === "valid_bot_scope") !== result.ok) {
+    throw new Error(`generated delegated principal fixture polarity drift: ${name}`);
+  }
+}
+
 const authFixtureDirectory = resolve(packageRoot, "generated/fixtures/auth");
 await emitGeneratedFile(
   resolve(authFixtureDirectory, "workload-credential-claims.v1.json"),
-  `${JSON.stringify(
-    {
-      valid_bot_scope: {
-        iss: "pai-workload",
-        sub: "trigger_processor",
-        aud: "action_runtime",
-        jti: "jti_fixture_01",
-        iat: 100,
-        nbf: 100,
-        exp: 400,
-        capability: ["runtime.read", "runtime.start"],
-        scope_kind: "bot",
-        workspace_id: "workspace_01",
-        bot_id: "bot_01",
-        owner_agent_id: "agent_01",
-        deployment_environment: "dev",
-        release_channel: "stable",
-      },
-      invalid_array_audience: ["action_runtime"],
-      invalid_service_alias: "trigger-processor",
-    },
-    null,
-    2,
-  )}\n`,
+  `${JSON.stringify(workloadCredentialFixtures, null, 2)}\n`,
 );
 await emitGeneratedFile(
   resolve(authFixtureDirectory, "delegated-principal-context.v1.json"),
-  `${JSON.stringify(
-    {
-      invalid_unsigned_sidecar: true,
-      invalid_scope_drift: {
-        workload_bot_id: "bot_01",
-        delegated_bot_id: "bot_02",
-      },
-      invalid_principal_type: "service",
-    },
-    null,
-    2,
-  )}\n`,
+  `${JSON.stringify(delegatedPrincipalFixtures, null, 2)}\n`,
 );
 
 if (checkMode) {

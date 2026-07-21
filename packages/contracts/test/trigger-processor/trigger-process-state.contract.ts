@@ -2,7 +2,12 @@ import { Value } from "@sinclair/typebox/value";
 import { describe, expect, it } from "vitest";
 
 import {
+  META_ENQUEUE_REASONS_V1,
   TERMINAL_OUTCOMES_V1,
+  TRIGGER_PROCESS_ACTIVE_STATUSES_V1,
+  TRIGGER_PROCESS_CLOSED_STATUSES_V1,
+  TRIGGER_PROCESS_STATE_V1_DATABASE_CHECK,
+  TRIGGER_PROCESS_WAIT_REASONS_V1,
   TriggerProcessStateV1Schema,
   isTriggerProcessTransitionV1Allowed,
   type TriggerProcessTransitionEvidenceV1,
@@ -18,6 +23,38 @@ const running = (phase: "admission" | "context" | "intent" | "execution") =>
   }) as const satisfies TriggerProcessStateV1;
 
 describe("TriggerProcessStateV1", () => {
+  it("derives JSON Schema and PostgreSQL enum values from the same state constants", () => {
+    const databaseCheck = TRIGGER_PROCESS_STATE_V1_DATABASE_CHECK;
+    const canonicalValues = [
+      ...Object.values(TRIGGER_PROCESS_ACTIVE_STATUSES_V1).flat(),
+      ...Object.values(TRIGGER_PROCESS_WAIT_REASONS_V1).flat(),
+      ...TRIGGER_PROCESS_CLOSED_STATUSES_V1,
+      ...META_ENQUEUE_REASONS_V1,
+    ];
+
+    for (const value of new Set(canonicalValues)) {
+      expect(databaseCheck).toContain(`'${value}'`);
+    }
+
+    for (const [phase, reasons] of Object.entries(
+      TRIGGER_PROCESS_WAIT_REASONS_V1,
+    )) {
+      for (const waitReason of reasons) {
+        expect(
+          Value.Check(TriggerProcessStateV1Schema, {
+            phase,
+            status: "waiting",
+            wait_reason: waitReason,
+            terminal_reason: null,
+            ...(phase === "meta_enqueued"
+              ? { meta_enqueue_reason: "cooldown_expired" }
+              : {}),
+          }),
+        ).toBe(true);
+      }
+    }
+  });
+
   it("enforces waiting iff wait_reason is non-null", () => {
     expect(
       Value.Check(TriggerProcessStateV1Schema, {

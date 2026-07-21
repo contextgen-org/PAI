@@ -20,20 +20,64 @@ const serviceBuilders = [
 
 const evidence = [];
 for (const [serviceId, buildApp] of serviceBuilders) {
-  const app = buildApp({ logger: false });
+  let dependencyAvailable = true;
+  const app = buildApp({
+    logger: false,
+    readinessChecks: [
+      {
+        name: "day6_dependency",
+        check: async () => {
+          if (!dependencyAvailable) throw new Error("dependency unavailable");
+        },
+      },
+    ],
+  });
   try {
     const health = await app.inject({ method: "GET", url: "/health" });
-    const ready = await app.inject({ method: "GET", url: "/ready" });
-    if (health.statusCode !== 200 || ready.statusCode !== 200) {
+    const healthyReady = await app.inject({ method: "GET", url: "/ready" });
+    if (health.statusCode !== 200 || healthyReady.statusCode !== 200) {
       throw new Error(
-        `${serviceId} probe failed: health=${health.statusCode}, ready=${ready.statusCode}`,
+        `${serviceId} healthy probe failed: health=${health.statusCode}, ready=${healthyReady.statusCode}`,
       );
     }
     const healthBody = health.json();
     if (healthBody.service_id !== serviceId) {
       throw new Error(`${serviceId} returned the wrong service_id`);
     }
-    evidence.push({ service_id: serviceId, health: 200, ready: 200 });
+
+    dependencyAvailable = false;
+    const healthWhileMissing = await app.inject({
+      method: "GET",
+      url: "/health",
+    });
+    const missingReady = await app.inject({ method: "GET", url: "/ready" });
+    if (
+      healthWhileMissing.statusCode !== 200 ||
+      missingReady.statusCode !== 503 ||
+      missingReady.json().checks?.[0]?.status !== "down"
+    ) {
+      throw new Error(
+        `${serviceId} missing-dependency probe failed: health=${healthWhileMissing.statusCode}, ready=${missingReady.statusCode}`,
+      );
+    }
+
+    dependencyAvailable = true;
+    const recoveredReady = await app.inject({ method: "GET", url: "/ready" });
+    if (
+      recoveredReady.statusCode !== 200 ||
+      recoveredReady.json().checks?.[0]?.status !== "up"
+    ) {
+      throw new Error(
+        `${serviceId} recovery probe failed: ready=${recoveredReady.statusCode}`,
+      );
+    }
+
+    evidence.push({
+      service_id: serviceId,
+      healthy: { health: 200, ready: 200 },
+      dependency_missing: { health: 200, ready: 503 },
+      dependency_recovered: { ready: 200 },
+    });
   } finally {
     await app.close();
   }

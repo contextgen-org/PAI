@@ -23,8 +23,18 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+      redis:
+        image: redis:8.8.0@sha256:234c902a2db49461a129e2d4aeff85b28cf20187ed274a67f6e50995fa713c7b
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
       PAI_TEST_DATABASE_URL: postgresql://supabase_admin:postgres@127.0.0.1:5432/pai_contract_test
+      PAI_TEST_REDIS_URL: redis://127.0.0.1:6379
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -34,4 +44,9 @@ jobs:
       - run: corepack prepare pnpm@11.13.1 --activate
       - run: pnpm verify:toolchain
       - run: pnpm install --frozen-lockfile
+      - name: Apply locked Redis effective configuration
+        run: |
+          docker exec "${{ job.services.redis.id }}" redis-cli CONFIG SET appendonly yes
+          docker exec "${{ job.services.redis.id }}" redis-cli CONFIG SET appendfsync everysec
+          docker exec "${{ job.services.redis.id }}" redis-cli CONFIG SET maxmemory-policy noeviction
       - run: pnpm check

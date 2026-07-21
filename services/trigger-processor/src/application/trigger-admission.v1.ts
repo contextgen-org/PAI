@@ -8,6 +8,7 @@ import {
 import {
   AdmitTriggerCommandV1Schema,
   AdmitTriggerWriterResponseV1Schema,
+  TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1,
   type AdmitTriggerCommandV1,
   type AdmitTriggerResponseV1,
   type TriggerActorTypeV1,
@@ -38,11 +39,14 @@ export class InvalidAdmitTriggerCommandError extends Error {
   }
 }
 
-const capabilityBySource = Object.freeze({
-  chat: "trigger.submit.chat",
-  notification: "trigger.submit.notification",
-  timer: "trigger.submit.timer",
-} satisfies Readonly<Record<TriggerSourceV1, string>>);
+const capabilityBySource = Object.freeze(
+  Object.fromEntries(
+    TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1.map((operation) => [
+      operation.source,
+      operation.required_capability,
+    ]),
+  ) as Readonly<Record<TriggerSourceV1, string>>,
+);
 
 function authenticatedActor(
   credential: VerifiedWorkloadCredential,

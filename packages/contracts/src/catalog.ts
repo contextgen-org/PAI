@@ -4,6 +4,7 @@ import { ConflictPolicyV1Schema } from "./policy/conflict-policy.v1.js";
 import { DirectActivePolicyV1Schema } from "./policy/direct-active-policy.v1.js";
 import { DelegatedPrincipalContextV1Schema } from "./shared/delegated-principal-context.v1.js";
 import { DeploymentEnvironmentV1Schema } from "./shared/deployment-environment.v1.js";
+import { DurableEventEnvelopeV1Schema } from "./shared/durable-event-envelope.v1.js";
 import { ReleaseChannelV1Schema } from "./shared/release-channel.v1.js";
 import { ResponseEnvelopeV1Schema } from "./shared/response-envelope.v1.js";
 import { ServiceIdV1Schema } from "./shared/service-id.v1.js";
@@ -162,6 +163,41 @@ export const SHARED_SCHEMA_CATALOG = [
   ),
 ] as const satisfies readonly SharedSchemaCatalogEntry[];
 
+/**
+ * Parent-architecture capabilities that already need one canonical TypeBox
+ * source, but are not registered Shared schemas until their owner document has
+ * the complete seven-column catalog row. Keeping these entries separate makes
+ * it impossible for generated Shared artifacts to grant registration by
+ * accident.
+ */
+export interface PendingOwnerSchemaGenerationEntry {
+  readonly schema_name: string;
+  readonly schema_id: string;
+  readonly version: "1.0.0";
+  readonly registration_status: "pending_owner_catalog_row";
+  readonly source_file: string;
+  readonly generated_outputs: readonly string[];
+  readonly contract_tests: readonly string[];
+  readonly schema: TSchema;
+}
+
+export const PENDING_OWNER_SCHEMA_GENERATION = [
+  {
+    schema_name: "DurableEventEnvelopeV1",
+    schema_id: "urn:pai:shared:durable-event-envelope:v1",
+    version: "1.0.0",
+    registration_status: "pending_owner_catalog_row",
+    source_file: "packages/contracts/src/shared/durable-event-envelope.v1.ts",
+    generated_outputs: [
+      "generated/schema/shared/durable-event-envelope.v1.json",
+    ],
+    contract_tests: [
+      "packages/contracts/test/shared/durable-event-envelope.contract.ts",
+    ],
+    schema: DurableEventEnvelopeV1Schema,
+  },
+] as const satisfies readonly PendingOwnerSchemaGenerationEntry[];
+
 export interface TriggerProcessorSchemaCatalogEntry
   extends Omit<SharedSchemaCatalogEntry, "owner_service"> {
   readonly owner_service: "trigger_processor";
@@ -181,7 +217,11 @@ function triggerProcessorEntry(
     version: "1.0.0",
     owner_service: "trigger_processor",
     source_file,
-    generated_outputs: [generated_file, "generated/openapi/shared.yaml"],
+    generated_outputs: [
+      generated_file,
+      "generated/openapi/trigger-processor-internal.yaml",
+      "generated/types/trigger-processor.d.ts",
+    ],
     contract_tests: [contract_test],
     schema,
   };

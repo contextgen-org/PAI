@@ -44,6 +44,80 @@ describe("createServiceApp", () => {
     });
   });
 
+  it("recovers readiness in the same process after a dependency returns", async () => {
+    let dependencyAvailable = true;
+    const app = createServiceApp("action_runtime", {
+      readinessChecks: [
+        {
+          name: "owner_postgres",
+          check: async () => {
+            if (!dependencyAvailable) throw new Error("unavailable");
+          },
+        },
+      ],
+    });
+    apps.push(app);
+
+    const healthy = await app.inject({ method: "GET", url: "/ready" });
+    dependencyAvailable = false;
+    const missing = await app.inject({ method: "GET", url: "/ready" });
+    dependencyAvailable = true;
+    const recovered = await app.inject({ method: "GET", url: "/ready" });
+
+    expect(healthy.statusCode).toBe(200);
+    expect(missing.statusCode).toBe(503);
+    expect(missing.json()).toMatchObject({
+      status: "not_ready",
+      checks: [{ name: "owner_postgres", status: "down" }],
+    });
+    expect(recovered.statusCode).toBe(200);
+    expect(recovered.json()).toMatchObject({
+      status: "ready",
+      checks: [{ name: "owner_postgres", status: "up" }],
+    });
+  });
+
+  it("aborts a timed-out readiness check so probes do not accumulate work", async () => {
+    let observedAbort = false;
+    const app = createServiceApp("memory", {
+      runtimeConfig: {
+        host: "127.0.0.1",
+        port: 3004,
+        log_level: "silent",
+        request_timeout_ms: 30_000,
+        readiness_timeout_ms: 100,
+        shutdown_grace_ms: 10_000,
+        deployment_environment: "local",
+        release_channel: "stable",
+      },
+      readinessChecks: [
+        {
+          name: "slow_dependency",
+          check: async (signal) =>
+            new Promise<void>((_resolve, reject) => {
+              signal.addEventListener(
+                "abort",
+                () => {
+                  observedAbort = true;
+                  reject(signal.reason);
+                },
+                { once: true },
+              );
+            }),
+        },
+      ],
+    });
+    apps.push(app);
+
+    const ready = await app.inject({ method: "GET", url: "/ready" });
+
+    expect(ready.statusCode).toBe(503);
+    expect(observedAbort).toBe(true);
+    expect(ready.json()).toMatchObject({
+      checks: [{ name: "slow_dependency", status: "down" }],
+    });
+  });
+
   it("inherits W3C trace ids and uses the shared error envelope", async () => {
     const app = createServiceApp("trigger_processor");
     apps.push(app);

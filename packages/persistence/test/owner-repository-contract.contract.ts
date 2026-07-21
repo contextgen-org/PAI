@@ -146,6 +146,51 @@ describe("owner repository contracts", () => {
     }
   });
 
+  it("binds every outbox to one standard lease-fenced claim and ack pair", () => {
+    const expectedArguments = {
+      claim: [
+        ["p_worker_id", "text"],
+        ["p_limit", "integer"],
+        ["p_lease_seconds", "integer"],
+        ["p_now", "timestamptz"],
+      ],
+      ack: [
+        ["p_outbox_id", "text"],
+        ["p_claim_token", "text"],
+        ["p_outcome", "text"],
+        ["p_next_retry_at", "timestamptz"],
+        ["p_error", "jsonb"],
+        ["p_now", "timestamptz"],
+      ],
+    } as const;
+    for (const contract of contracts) {
+      for (const table of contract.outbox_tables) {
+        for (const operation of ["claim", "ack"] as const) {
+          const signatures = contract.function_signatures.filter(
+            (signature) =>
+              signature.primary_table === table &&
+              signature.effects.some(
+                (effect) =>
+                  effect.table_name === table && effect.operation === operation,
+              ),
+          );
+          expect(signatures).toHaveLength(1);
+          expect(
+            signatures[0]?.arguments.map(
+              ({ argument_name, postgres_type }) => [
+                argument_name,
+                postgres_type,
+              ],
+            ),
+          ).toEqual(expectedArguments[operation]);
+          expect(signatures[0]?.returns).toBe(
+            operation === "claim" ? "setof jsonb" : "jsonb",
+          );
+        }
+      }
+    }
+  });
+
   it("uses the parent-owned timer service path and never creates an apps alias", () => {
     expect(TIMER_REPOSITORY_CONTRACT_V1.manifest_source).toBe(
       "services/timer-trigger-app/src/db/permission-manifest.v1.ts",
@@ -372,6 +417,7 @@ describe("owner repository contracts", () => {
       "unit_of_work",
     ]);
     expect(application).not.toHaveProperty("postgres");
+    expect(application).not.toHaveProperty("outbox");
     expect(application).not.toHaveProperty("close");
     expect(Object.isFrozen(application)).toBe(true);
   });

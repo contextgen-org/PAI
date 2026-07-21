@@ -3,6 +3,7 @@ export * from "./policy/conflict-policy.v1.js";
 export * from "./policy/direct-active-policy.v1.js";
 export * from "./shared/delegated-principal-context.v1.js";
 export * from "./shared/deployment-environment.v1.js";
+export * from "./shared/durable-event-envelope.v1.js";
 export * from "./shared/release-channel.v1.js";
 export * from "./shared/response-envelope.v1.js";
 export * from "./shared/service-id.v1.js";

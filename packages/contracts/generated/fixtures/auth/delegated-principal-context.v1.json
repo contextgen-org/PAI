@@ -1,8 +1,67 @@
 {
-  "invalid_unsigned_sidecar": true,
-  "invalid_scope_drift": {
-    "workload_bot_id": "bot_01",
-    "delegated_bot_id": "bot_02"
+  "valid_bot_scope": {
+    "principal_type": "developer",
+    "principal_id": "developer_01",
+    "roles": [
+      "developer"
+    ],
+    "source_issuer": "supabase",
+    "source_subject": "user_01",
+    "auth_time": 100,
+    "scope_kind": "bot",
+    "workspace_id": "workspace_01",
+    "bot_id": "bot_01",
+    "owner_agent_id": "agent_01",
+    "deployment_environment": "dev",
+    "release_channel": "stable"
   },
-  "invalid_principal_type": "service"
+  "invalid_unsigned_sidecar": {
+    "principal_type": "developer",
+    "principal_id": "developer_01",
+    "roles": [
+      "developer"
+    ],
+    "source_issuer": "supabase",
+    "source_subject": "user_01",
+    "auth_time": 100,
+    "scope_kind": "bot",
+    "workspace_id": "workspace_01",
+    "bot_id": "bot_01",
+    "owner_agent_id": "agent_01",
+    "deployment_environment": "dev",
+    "release_channel": "stable",
+    "unsigned_sidecar": true
+  },
+  "invalid_scope_drift": {
+    "principal_type": "developer",
+    "principal_id": "developer_01",
+    "roles": [
+      "developer"
+    ],
+    "source_issuer": "supabase",
+    "source_subject": "user_01",
+    "auth_time": 100,
+    "scope_kind": "bot",
+    "workspace_id": "workspace_01",
+    "bot_id": "bot_02",
+    "owner_agent_id": "agent_01",
+    "deployment_environment": "dev",
+    "release_channel": "stable"
+  },
+  "invalid_principal_type": {
+    "principal_type": "service",
+    "principal_id": "developer_01",
+    "roles": [
+      "developer"
+    ],
+    "source_issuer": "supabase",
+    "source_subject": "user_01",
+    "auth_time": 100,
+    "scope_kind": "bot",
+    "workspace_id": "workspace_01",
+    "bot_id": "bot_01",
+    "owner_agent_id": "agent_01",
+    "deployment_environment": "dev",
+    "release_channel": "stable"
+  }
 }

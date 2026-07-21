@@ -55,6 +55,38 @@ export const CLOSED_STATUS_TERMINAL_OUTCOMES_V1 = {
   Record<"completed" | "failed" | "preempted" | "cancelled", readonly TerminalOutcomeV1[]>
 >;
 
+export const TRIGGER_PROCESS_ACTIVE_STATUSES_V1 = {
+  admission: ["running"],
+  context: ["running"],
+  intent: ["running"],
+  execution: ["running", "preempt_requested", "cancelling"],
+} as const;
+
+export const TRIGGER_PROCESS_WAIT_REASONS_V1 = {
+  admission: [
+    "weak_queue",
+    "preempt_commit",
+    "deferred_strong_queue",
+    "stage_retry_wait",
+  ],
+  context: ["runtime_start_recompose", "stage_retry_wait"],
+  intent: ["external_confirmation", "stage_retry_wait"],
+  execution: [
+    "runtime_start",
+    "runtime_start_reconcile",
+    "stage_retry_wait",
+  ],
+  cooldown: ["cooldown_until"],
+  meta_enqueued: ["meta_enqueue_wait"],
+} as const;
+
+export const TRIGGER_PROCESS_CLOSED_STATUSES_V1 = [
+  "completed",
+  "failed",
+  "preempted",
+  "cancelled",
+] as const;
+
 function activeState<
   const TPhase extends "admission" | "context" | "intent" | "execution",
   const TStatus extends "running" | "preempt_requested" | "cancelling",
@@ -114,36 +146,26 @@ const metaEnqueuedStateSchema = Type.Object(
 
 export const TriggerProcessStateV1Schema = Type.Union(
   [
-    activeState("admission", "running"),
-    waitingState("admission", [
-      "weak_queue",
-      "preempt_commit",
-      "deferred_strong_queue",
-      "stage_retry_wait",
-    ]),
-    activeState("context", "running"),
-    waitingState("context", ["runtime_start_recompose", "stage_retry_wait"]),
-    activeState("intent", "running"),
-    waitingState("intent", ["external_confirmation", "stage_retry_wait"]),
-    waitingState("execution", [
-      "runtime_start",
-      "runtime_start_reconcile",
-      "stage_retry_wait",
-    ]),
-    activeState("execution", "running"),
-    activeState("execution", "preempt_requested"),
-    activeState("execution", "cancelling"),
-    waitingState("cooldown", ["cooldown_until"]),
+    activeState("admission", TRIGGER_PROCESS_ACTIVE_STATUSES_V1.admission[0]),
+    waitingState("admission", TRIGGER_PROCESS_WAIT_REASONS_V1.admission),
+    activeState("context", TRIGGER_PROCESS_ACTIVE_STATUSES_V1.context[0]),
+    waitingState("context", TRIGGER_PROCESS_WAIT_REASONS_V1.context),
+    activeState("intent", TRIGGER_PROCESS_ACTIVE_STATUSES_V1.intent[0]),
+    waitingState("intent", TRIGGER_PROCESS_WAIT_REASONS_V1.intent),
+    waitingState("execution", TRIGGER_PROCESS_WAIT_REASONS_V1.execution),
+    activeState("execution", TRIGGER_PROCESS_ACTIVE_STATUSES_V1.execution[0]),
+    activeState("execution", TRIGGER_PROCESS_ACTIVE_STATUSES_V1.execution[1]),
+    activeState("execution", TRIGGER_PROCESS_ACTIVE_STATUSES_V1.execution[2]),
+    waitingState("cooldown", TRIGGER_PROCESS_WAIT_REASONS_V1.cooldown),
     metaEnqueuedStateSchema,
     Type.Object(
       {
         phase: Type.Literal("closed"),
-        status: Type.Union([
-          Type.Literal("completed"),
-          Type.Literal("failed"),
-          Type.Literal("preempted"),
-          Type.Literal("cancelled"),
-        ]),
+        status: Type.Union(
+          TRIGGER_PROCESS_CLOSED_STATUSES_V1.map((status) =>
+            Type.Literal(status),
+          ),
+        ),
         wait_reason: Type.Null(),
         terminal_reason: Type.String({ minLength: 1 }),
       },
@@ -566,21 +588,54 @@ export function isTriggerProcessTransitionV1Allowed(
   return false;
 }
 
-export const TRIGGER_PROCESS_STATE_V1_DATABASE_CHECK = String.raw`
-CHECK ((status = 'waiting') = (wait_reason IS NOT NULL)),
-CHECK ((phase = 'closed') = (terminal_reason IS NOT NULL)),
-CHECK (meta_enqueue_reason IS NULL OR meta_enqueue_reason IN ('cooldown_expired', 'user_retracted', 'system_interrupted', 'failed_with_learnable_snapshot')),
-CHECK (phase <> 'meta_enqueued' OR meta_enqueue_reason IS NOT NULL),
-CHECK (
-  (phase = 'admission' AND status = 'running' AND wait_reason IS NULL)
-  OR (phase = 'admission' AND status = 'waiting' AND wait_reason IN ('weak_queue', 'preempt_commit', 'deferred_strong_queue', 'stage_retry_wait'))
-  OR (phase = 'context' AND status = 'running' AND wait_reason IS NULL)
-  OR (phase = 'context' AND status = 'waiting' AND wait_reason IN ('runtime_start_recompose', 'stage_retry_wait'))
-  OR (phase = 'intent' AND status = 'running' AND wait_reason IS NULL)
-  OR (phase = 'intent' AND status = 'waiting' AND wait_reason IN ('external_confirmation', 'stage_retry_wait'))
-  OR (phase = 'execution' AND status = 'waiting' AND wait_reason IN ('runtime_start', 'runtime_start_reconcile', 'stage_retry_wait'))
-  OR (phase = 'execution' AND status IN ('running', 'preempt_requested', 'cancelling') AND wait_reason IS NULL)
-  OR (phase = 'cooldown' AND status = 'waiting' AND wait_reason = 'cooldown_until')
-  OR (phase = 'meta_enqueued' AND status = 'waiting' AND wait_reason = 'meta_enqueue_wait')
-  OR (phase = 'closed' AND status IN ('completed', 'failed', 'preempted', 'cancelled') AND wait_reason IS NULL)
-)`;
+function sqlLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+function sqlList(values: readonly string[]): string {
+  return values.map(sqlLiteral).join(", ");
+}
+
+function activeStateSql(
+  phase: keyof typeof TRIGGER_PROCESS_ACTIVE_STATUSES_V1,
+): string {
+  const statuses = TRIGGER_PROCESS_ACTIVE_STATUSES_V1[phase];
+  const statusPredicate =
+    statuses.length === 1
+      ? `status = ${sqlLiteral(statuses[0])}`
+      : `status IN (${sqlList(statuses)})`;
+  return `(phase = ${sqlLiteral(phase)} AND ${statusPredicate} AND wait_reason IS NULL)`;
+}
+
+function waitingStateSql(
+  phase: keyof typeof TRIGGER_PROCESS_WAIT_REASONS_V1,
+): string {
+  const reasons = TRIGGER_PROCESS_WAIT_REASONS_V1[phase];
+  const reasonPredicate =
+    reasons.length === 1
+      ? `wait_reason = ${sqlLiteral(reasons[0])}`
+      : `wait_reason IN (${sqlList(reasons)})`;
+  return `(phase = ${sqlLiteral(phase)} AND status = 'waiting' AND ${reasonPredicate})`;
+}
+
+const triggerProcessStateRowsSql = [
+  activeStateSql("admission"),
+  waitingStateSql("admission"),
+  activeStateSql("context"),
+  waitingStateSql("context"),
+  activeStateSql("intent"),
+  waitingStateSql("intent"),
+  waitingStateSql("execution"),
+  activeStateSql("execution"),
+  waitingStateSql("cooldown"),
+  waitingStateSql("meta_enqueued"),
+  `(phase = 'closed' AND status IN (${sqlList(TRIGGER_PROCESS_CLOSED_STATUSES_V1)}) AND wait_reason IS NULL)`,
+];
+
+export const TRIGGER_PROCESS_STATE_V1_DATABASE_CHECK = [
+  "CHECK ((status = 'waiting') = (wait_reason IS NOT NULL))",
+  "CHECK ((phase = 'closed') = (terminal_reason IS NOT NULL))",
+  `CHECK (meta_enqueue_reason IS NULL OR meta_enqueue_reason IN (${sqlList(META_ENQUEUE_REASONS_V1)}))`,
+  "CHECK (phase <> 'meta_enqueued' OR meta_enqueue_reason IS NOT NULL)",
+  `CHECK (\n  ${triggerProcessStateRowsSql.join("\n  OR ")}\n)`,
+].join(",\n");

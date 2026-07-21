@@ -1,0 +1,122 @@
+{
+  "$id": "urn:pai:shared:durable-event-envelope:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "event_id",
+    "event_type",
+    "schema_version",
+    "producer",
+    "occurred_at",
+    "idempotency_key",
+    "trace_id",
+    "payload"
+  ],
+  "properties": {
+    "event_id": {
+      "minLength": 1,
+      "maxLength": 256,
+      "type": "string"
+    },
+    "event_type": {
+      "minLength": 3,
+      "maxLength": 160,
+      "pattern": "^[a-z][a-z0-9]*(?:[._][a-z0-9]+)+$",
+      "type": "string"
+    },
+    "schema_version": {
+      "minLength": 1,
+      "maxLength": 128,
+      "type": "string"
+    },
+    "producer": {
+      "$id": "urn:pai:shared:service-id:v1",
+      "anyOf": [
+        {
+          "const": "trigger_processor",
+          "type": "string"
+        },
+        {
+          "const": "action_runtime",
+          "type": "string"
+        },
+        {
+          "const": "meta_cognition",
+          "type": "string"
+        },
+        {
+          "const": "memory",
+          "type": "string"
+        },
+        {
+          "const": "knowthat",
+          "type": "string"
+        },
+        {
+          "const": "skill_registry",
+          "type": "string"
+        },
+        {
+          "const": "timer_trigger_app",
+          "type": "string"
+        },
+        {
+          "const": "observation_gateway",
+          "type": "string"
+        }
+      ]
+    },
+    "occurred_at": {
+      "minLength": 20,
+      "maxLength": 35,
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+      "type": "string"
+    },
+    "idempotency_key": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "trace_id": {
+      "minLength": 1,
+      "maxLength": 256,
+      "type": "string"
+    },
+    "payload": {
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {
+          "$id": "T0",
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "T0"
+              }
+            },
+            {
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {
+                  "$ref": "T0"
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

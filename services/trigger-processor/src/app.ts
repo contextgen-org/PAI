@@ -1,13 +1,7 @@
 import type { BotAuthorizationScopeV1 } from "@pai/auth";
 import {
-  AdmitTriggerAuthorizationFailureResponseV1Schema,
-  AdmitTriggerConflictResponseV1Schema,
-  AdmitTriggerInternalErrorResponseV1Schema,
-  AdmitTriggerInvalidRequestResponseV1Schema,
   AdmitTriggerRequestBodyV1Schema,
-  AdmitTriggerRetryableFailureResponseV1Schema,
-  AdmitTriggerSuccessResponseV1Schema,
-  AdmitTriggerUnauthenticatedResponseV1Schema,
+  TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1,
   type AdmitTriggerResponseV1,
   type TriggerSourceV1,
 } from "@pai/contracts";
@@ -25,26 +19,7 @@ import {
   type TriggerAdmissionApplicationV1,
 } from "./application/trigger-admission.v1.js";
 
-const admissionRoutes = [
-  {
-    source: "chat",
-    route: "/internal/v1/triggers/admit/chat",
-    capability: "trigger.submit.chat",
-    caller: "observation_gateway",
-  },
-  {
-    source: "notification",
-    route: "/internal/v1/triggers/admit/notification",
-    capability: "trigger.submit.notification",
-    caller: "observation_gateway",
-  },
-  {
-    source: "timer",
-    route: "/internal/v1/triggers/admit/timer",
-    capability: "trigger.submit.timer",
-    caller: "timer_trigger_app",
-  },
-] as const;
+const admissionRoutes = TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1;
 
 function requiredAdmissionScope(request: {
   readonly body?: unknown;
@@ -70,11 +45,11 @@ function requiredAdmissionScope(request: {
 
 export const TRIGGER_ADMISSION_INTERNAL_AUTH_POLICIES_V1 =
   admissionRoutes.map(
-    ({ route, capability, caller }) => ({
+    ({ path, required_capability, allowed_caller }) => ({
       method: "POST",
-      route,
-      requiredCapabilities: [capability],
-      allowedCallers: [caller],
+      route: path,
+      requiredCapabilities: [required_capability],
+      allowedCallers: [allowed_caller],
       requiredScope: requiredAdmissionScope,
     }),
   ) satisfies readonly InternalRouteAuthPolicy[];
@@ -158,7 +133,7 @@ function admissionError(error: InvalidAdmitTriggerCommandError): ServiceError {
 
 function admissionResponseStatusCode(
   response: AdmitTriggerResponseV1,
-): 200 | 409 | 500 | 503 {
+): 200 | 400 | 401 | 403 | 409 | 500 | 503 {
   switch (response.code) {
     case "trigger_accepted":
     case "trigger_rejected":
@@ -166,15 +141,18 @@ function admissionResponseStatusCode(
     case "idempotency_conflict":
     case "stale_admission_fence":
       return 409;
+    case "invalid_request":
+      return 400;
+    case "unauthenticated":
+      return 401;
+    case "authorization_denied":
+    case "capability_denied":
+    case "authorization_scope_mismatch":
+      return 403;
     case "serialization_retry_exhausted":
     case "transient_database_error":
     case "service_unavailable":
       return 503;
-    case "invalid_request":
-    case "unauthenticated":
-    case "authorization_denied":
-    case "capability_denied":
-    case "authorization_scope_mismatch":
     case "internal_error":
       return 500;
   }
@@ -214,28 +192,24 @@ export function buildTriggerProcessorApp(
   });
   if (triggerAdmission !== undefined) {
     app.decorate("triggerAdmission", triggerAdmission);
-    for (const { source, route } of admissionRoutes) {
+    for (const operation of admissionRoutes) {
       app.post(
-        route,
+        operation.path,
         {
           schema: {
             body: AdmitTriggerRequestBodyV1Schema,
-            response: {
-              200: AdmitTriggerSuccessResponseV1Schema,
-              400: AdmitTriggerInvalidRequestResponseV1Schema,
-              401: AdmitTriggerUnauthenticatedResponseV1Schema,
-              403: AdmitTriggerAuthorizationFailureResponseV1Schema,
-              409: AdmitTriggerConflictResponseV1Schema,
-              500: AdmitTriggerInternalErrorResponseV1Schema,
-              503: AdmitTriggerRetryableFailureResponseV1Schema,
-            },
+            response: operation.response_schemas_by_status,
           },
         },
         async (request, reply) => {
           try {
             const response = await triggerAdmission.admit(
               getWorkloadAuthContext(request),
-              withAuthenticatedRouteContext(request.body, source, request.id),
+              withAuthenticatedRouteContext(
+                request.body,
+                operation.source,
+                request.id,
+              ),
             );
             return reply.code(admissionResponseStatusCode(response)).send(response);
           } catch (error) {

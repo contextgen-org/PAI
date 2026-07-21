@@ -796,6 +796,54 @@ export function defineOwnerRepositoryContractV1<
       `${contract.owner_service} append/outbox tables have conflicting writer kinds`,
     );
   }
+  const standardOutboxArguments = {
+    claim: [
+      ["p_worker_id", "text"],
+      ["p_limit", "integer"],
+      ["p_lease_seconds", "integer"],
+      ["p_now", "timestamptz"],
+    ],
+    ack: [
+      ["p_outbox_id", "text"],
+      ["p_claim_token", "text"],
+      ["p_outcome", "text"],
+      ["p_next_retry_at", "timestamptz"],
+      ["p_error", "jsonb"],
+      ["p_now", "timestamptz"],
+    ],
+  } as const;
+  for (const outboxTable of contract.outbox_tables) {
+    const signatures = contract.function_signatures.filter(
+      ({ primary_table }) => primary_table === outboxTable,
+    );
+    for (const [operation, expectedArguments] of Object.entries(
+      standardOutboxArguments,
+    ) as readonly ["claim" | "ack", typeof standardOutboxArguments.claim | typeof standardOutboxArguments.ack][]) {
+      const matches = signatures.filter((signature) =>
+        signature.effects.some(
+          (effect) =>
+            effect.table_name === outboxTable && effect.operation === operation,
+        ),
+      );
+      const signature = matches[0];
+      if (
+        matches.length !== 1 ||
+        signature === undefined ||
+        signature.writer_kind !== "outbox_claim_ack" ||
+        signature.returns !== (operation === "claim" ? "setof jsonb" : "jsonb") ||
+        JSON.stringify(
+          signature.arguments.map(({ argument_name, postgres_type }) => [
+            argument_name,
+            postgres_type,
+          ]),
+        ) !== JSON.stringify(expectedArguments)
+      ) {
+        throw new Error(
+          `${contract.owner_service}.${outboxTable} must declare exactly one standard ${operation} writer`,
+        );
+      }
+    }
+  }
   for (const table of [
     ...contract.outbox_tables,
     ...contract.inbox_tables,
@@ -1383,6 +1431,13 @@ function assertFunctionEffectsInDefinition(
     const observedVerb = match[1]?.split(/\s+/u)[0];
     const observedSchema = match[2] ?? contract.schema;
     const observedTable = match[3];
+    const mutationPrefix = executable.slice(0, match.index ?? 0);
+    if (
+      observedVerb === "update" &&
+      /\b(?:for\s+(?:no\s+key\s+)?|do\s*)$/iu.test(mutationPrefix)
+    ) {
+      continue;
+    }
     const declaredEffect = signature.effects.find(
       ({ table_name }) => table_name === observedTable,
     );
@@ -2309,6 +2364,7 @@ export interface VerifiedOwnerPostgresCompositionV1<
   >;
   readonly postgres: PostgresQueryPortV1;
   readonly repository: OwnerRepositoryPortV1<TContract>;
+  readonly outbox: OwnerOutboxStorePortV1<TContract["owner_service"]>;
   readonly unit_of_work: OwnerUnitOfWorkPortV1<
     TContract["owner_service"],
     Readonly<{ owner: OwnerRepositoryPortV1<TContract> }>
@@ -2387,6 +2443,7 @@ export async function openVerifiedOwnerPostgresCompositionV1<
       deployment,
       postgres,
       repository: ownerRepository.repository,
+      outbox: ownerRepository.outbox,
       unit_of_work: ownerRepository.unit_of_work,
       async checkReadiness(): Promise<void> {
         await postgres.query("SELECT 1 AS owner_postgres_ready");
@@ -2460,6 +2517,41 @@ export interface OwnerUnitOfWorkRequestV1 {
   readonly retry: "none" | "serialization_failures";
 }
 
+export interface OwnerOutboxClaimRequestV1 {
+  readonly outbox_table: string;
+  readonly worker_id: string;
+  readonly limit: number;
+  readonly lease_seconds: number;
+  readonly now: string;
+}
+
+export interface OwnerOutboxAcknowledgeRequestV1 {
+  readonly outbox_table: string;
+  readonly outbox_id: string;
+  readonly claim_token: string;
+  readonly outcome: "sent" | "retry_wait" | "failed";
+  readonly next_retry_at: string | null;
+  readonly error: Readonly<Record<string, unknown>> | null;
+  readonly now: string;
+}
+
+/**
+ * Runtime dispatcher access to the standard claim/ack generated writers.
+ * The port deliberately exposes neither raw SQL nor generic table mutation.
+ */
+export interface OwnerOutboxStorePortV1<
+  TService extends OwnerDatabaseServiceIdV1 = OwnerDatabaseServiceIdV1,
+> {
+  readonly owner_service: TService;
+  readonly outbox_tables: readonly string[];
+  claim<TResult extends Readonly<Record<string, unknown>>>(
+    request: OwnerOutboxClaimRequestV1,
+  ): Promise<readonly TResult[]>;
+  acknowledge<TResult extends Readonly<Record<string, unknown>>>(
+    request: OwnerOutboxAcknowledgeRequestV1,
+  ): Promise<TResult>;
+}
+
 /**
  * State, audit and outbox mutations for one business operation must be invoked
  * through the repositories supplied to this single callback.
@@ -2519,6 +2611,7 @@ export function createVerifiedOwnerPostgresRepositoryV1<
   pool: Pool,
 ): Readonly<{
   repository: OwnerRepositoryPortV1<TContract>;
+  outbox: OwnerOutboxStorePortV1<TContract["owner_service"]>;
   unit_of_work: OwnerUnitOfWorkPortV1<
     TContract["owner_service"],
     Readonly<{ owner: OwnerRepositoryPortV1<TContract> }>
@@ -2534,6 +2627,62 @@ export function createVerifiedOwnerPostgresRepositoryV1<
     );
   }
   const clients = new WeakMap<object, PoolClient>();
+
+  function outboxSignature(
+    table: string,
+    operation: "claim" | "ack",
+  ): OwnerFunctionSignatureV1 {
+    if (!contract.outbox_tables.includes(table)) {
+      throw new Error(
+        `outbox table is outside ${contract.owner_service} contract: ${table}`,
+      );
+    }
+    const matches = contract.function_signatures.filter(
+      (signature) =>
+        signature.primary_table === table &&
+        signature.effects.some(
+          (effect) =>
+            effect.table_name === table && effect.operation === operation,
+        ),
+    );
+    if (matches.length !== 1 || matches[0] === undefined) {
+      throw new Error(
+        `missing verified ${operation} writer for ${contract.schema}.${table}`,
+      );
+    }
+    return matches[0];
+  }
+
+  async function invokeSignature<TResult>(
+    client: PoolClient,
+    signature: OwnerFunctionSignatureV1,
+    values: readonly unknown[],
+  ): Promise<TResult | readonly TResult[]> {
+    const placeholders = signature.arguments
+      .map(
+        ({ postgres_type }, index) =>
+          `$${index + 1}::${postgresArgumentCast(postgres_type)}`,
+      )
+      .join(", ");
+    const invocation = `${contract.schema}.${signature.function_name}(${placeholders})`;
+    if (signature.returns === "setof jsonb") {
+      const result = await client.query<{ result: TResult }>(
+        `SELECT value AS result FROM ${invocation} AS value`,
+        [...values],
+      );
+      return result.rows.map(({ result: value }) => value);
+    }
+    const result = await client.query<{ result: TResult }>(
+      `SELECT ${invocation} AS result`,
+      [...values],
+    );
+    if (result.rows.length !== 1 || result.rows[0] === undefined) {
+      throw new Error(
+        `owner writer row-count drift: ${contract.schema}.${signature.function_name}`,
+      );
+    }
+    return result.rows[0].result;
+  }
   const repository: OwnerRepositoryPortV1<TContract> = Object.freeze({
     contract,
     deployment,
@@ -2573,36 +2722,123 @@ export function createVerifiedOwnerPostgresRepositoryV1<
           `owner writer argument drift: ${contract.schema}.${signature.function_name}`,
         );
       }
-      const placeholders = signature.arguments
-        .map(
-          ({ postgres_type }, index) =>
-            `$${index + 1}::${postgresArgumentCast(postgres_type)}`,
-        )
-        .join(", ");
-      const invocation = `${contract.schema}.${signature.function_name}(${placeholders})`;
-      const result =
-        signature.returns === "setof jsonb"
-          ? await client.query<{ result: TResult }>(
-              `SELECT value AS result FROM ${invocation} AS value`,
-              values,
-            )
-          : await client.query<{ result: TResult }>(
-              `SELECT ${invocation} AS result`,
-              values,
-            );
-      if (
-        (request.expected_rows === 1 && result.rows.length !== 1) ||
-        (request.expected_rows === "one_or_more" && result.rows.length === 0)
-      ) {
-        throw new Error(
-          `owner writer row-count drift: ${contract.schema}.${signature.function_name}`,
-        );
+      const result = await invokeSignature<TResult>(client, signature, values);
+      if (signature.returns === "setof jsonb") {
+        if (
+          !Array.isArray(result) ||
+          (request.expected_rows === 1
+            ? result.length !== 1
+            : result.length === 0)
+        ) {
+          throw new Error(
+            `owner writer row-count drift: ${contract.schema}.${signature.function_name}`,
+          );
+        }
       }
-      return (signature.returns === "setof jsonb"
-        ? result.rows.map(({ result: value }) => value)
-        : result.rows[0]?.result) as TResult;
+      return result as TResult;
     },
   });
+
+  function assertOutboxRequest(
+    request: OwnerOutboxClaimRequestV1 | OwnerOutboxAcknowledgeRequestV1,
+  ): void {
+    if (
+      typeof request.outbox_table !== "string" ||
+      !contract.outbox_tables.includes(request.outbox_table) ||
+      typeof request.now !== "string" ||
+      !Number.isFinite(Date.parse(request.now))
+    ) {
+      throw new Error("invalid owner outbox request");
+    }
+  }
+
+  const outbox: OwnerOutboxStorePortV1<TContract["owner_service"]> =
+    Object.freeze({
+      owner_service: contract.owner_service,
+      outbox_tables: Object.freeze([...contract.outbox_tables]),
+      async claim<TResult extends Readonly<Record<string, unknown>>>(
+        request: OwnerOutboxClaimRequestV1,
+      ): Promise<readonly TResult[]> {
+        assertOutboxRequest(request);
+        if (
+          request.worker_id.trim().length === 0 ||
+          !Number.isSafeInteger(request.limit) ||
+          request.limit < 1 ||
+          request.limit > 1_000 ||
+          !Number.isSafeInteger(request.lease_seconds) ||
+          request.lease_seconds < 1 ||
+          request.lease_seconds > 3_600
+        ) {
+          throw new Error("invalid owner outbox claim request");
+        }
+        const signature = outboxSignature(request.outbox_table, "claim");
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+          const result = await invokeSignature<TResult>(client, signature, [
+            request.worker_id,
+            request.limit,
+            request.lease_seconds,
+            request.now,
+          ]);
+          if (!Array.isArray(result)) {
+            throw new Error(
+              `outbox claim writer did not return rows: ${contract.schema}.${signature.function_name}`,
+            );
+          }
+          await client.query("COMMIT");
+          return result as readonly TResult[];
+        } catch (error) {
+          await client.query("ROLLBACK").catch(() => undefined);
+          throw error;
+        } finally {
+          client.release();
+        }
+      },
+      async acknowledge<TResult extends Readonly<Record<string, unknown>>>(
+        request: OwnerOutboxAcknowledgeRequestV1,
+      ): Promise<TResult> {
+        assertOutboxRequest(request);
+        const retryWait = request.outcome === "retry_wait";
+        if (
+          !(["sent", "retry_wait", "failed"] as const).includes(
+            request.outcome,
+          ) ||
+          request.outbox_id.trim().length === 0 ||
+          request.claim_token.trim().length === 0 ||
+          (retryWait !== (request.next_retry_at !== null)) ||
+          (request.next_retry_at !== null &&
+            !Number.isFinite(Date.parse(request.next_retry_at))) ||
+          (request.outcome === "sent" && request.error !== null) ||
+          (request.outcome !== "sent" &&
+            (typeof request.error !== "object" ||
+              request.error === null ||
+              Array.isArray(request.error)))
+        ) {
+          throw new Error("invalid owner outbox acknowledge request");
+        }
+        const signature = outboxSignature(request.outbox_table, "ack");
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+          const result = await invokeSignature<TResult>(client, signature, [
+            request.outbox_id,
+            request.claim_token,
+            request.outcome,
+            request.next_retry_at,
+            request.error,
+            request.now,
+          ]);
+          await client.query("COMMIT");
+          return result as TResult;
+        } catch (error) {
+          await client.query("ROLLBACK").catch(() => undefined);
+          throw error;
+        } finally {
+          client.release();
+        }
+      },
+    });
   const isolationSql = {
     read_committed: "READ COMMITTED",
     repeatable_read: "REPEATABLE READ",
@@ -2658,7 +2894,7 @@ export function createVerifiedOwnerPostgresRepositoryV1<
       throw new Error("owner unit of work exhausted serialization retries");
     },
   });
-  return Object.freeze({ repository, unit_of_work: unitOfWork });
+  return Object.freeze({ repository, outbox, unit_of_work: unitOfWork });
 }
 
 export type AssertOwnerServiceV1<T extends ServiceIdV1> =

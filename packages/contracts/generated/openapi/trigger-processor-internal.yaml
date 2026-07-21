@@ -1,0 +1,5950 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "PAI Trigger Processor Internal API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/internal/v1/triggers/admit/chat": {
+      "post": {
+        "operationId": "admitTriggerFromChatV1",
+        "tags": [
+          "trigger_processor"
+        ],
+        "summary": "Admit a chat trigger",
+        "description": "Route injects source=chat; callers must be observation_gateway with trigger.submit.chat.",
+        "security": [
+          {
+            "PaiWorkloadJwt": [
+              "trigger.submit.chat"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$id": "urn:pai:trigger-processor:admit-trigger-request-body:v1",
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "trigger_id",
+                  "process_id",
+                  "scope",
+                  "payload",
+                  "dedupe_key",
+                  "idempotency_key",
+                  "is_catch_up",
+                  "explicit_interrupt"
+                ],
+                "properties": {
+                  "trigger_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "process_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "scope": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "scope_kind",
+                      "workspace_id",
+                      "bot_id",
+                      "owner_agent_id",
+                      "deployment_environment",
+                      "release_channel"
+                    ],
+                    "properties": {
+                      "scope_kind": {
+                        "const": "bot",
+                        "type": "string"
+                      },
+                      "workspace_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "bot_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "owner_agent_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "deployment_environment": {
+                        "$id": "urn:pai:shared:deployment-environment:v1",
+                        "anyOf": [
+                          {
+                            "const": "local",
+                            "type": "string"
+                          },
+                          {
+                            "const": "dev",
+                            "type": "string"
+                          },
+                          {
+                            "const": "staging",
+                            "type": "string"
+                          },
+                          {
+                            "const": "prod",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "release_channel": {
+                        "$id": "urn:pai:shared:release-channel:v1",
+                        "anyOf": [
+                          {
+                            "const": "stable",
+                            "type": "string"
+                          },
+                          {
+                            "const": "canary",
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "payload": {
+                    "type": "object",
+                    "patternProperties": {
+                      "^(.*)$": {}
+                    }
+                  },
+                  "dedupe_key": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "is_catch_up": {
+                    "type": "boolean"
+                  },
+                  "explicit_interrupt": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Admission decision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-success-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "const": "invalid_request",
+                      "type": "string"
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "const": false,
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "const": "unauthenticated",
+                      "type": "string"
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "const": false,
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-authorization-failure-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-conflict-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "const": "internal_error",
+                      "type": "string"
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "const": false,
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-retryable-failure-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/triggers/admit/notification": {
+      "post": {
+        "operationId": "admitTriggerFromNotificationV1",
+        "tags": [
+          "trigger_processor"
+        ],
+        "summary": "Admit a notification trigger",
+        "description": "Route injects source=notification; callers must be observation_gateway with trigger.submit.notification.",
+        "security": [
+          {
+            "PaiWorkloadJwt": [
+              "trigger.submit.notification"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$id": "urn:pai:trigger-processor:admit-trigger-request-body:v1",
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "trigger_id",
+                  "process_id",
+                  "scope",
+                  "payload",
+                  "dedupe_key",
+                  "idempotency_key",
+                  "is_catch_up",
+                  "explicit_interrupt"
+                ],
+                "properties": {
+                  "trigger_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "process_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "scope": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "scope_kind",
+                      "workspace_id",
+                      "bot_id",
+                      "owner_agent_id",
+                      "deployment_environment",
+                      "release_channel"
+                    ],
+                    "properties": {
+                      "scope_kind": {
+                        "const": "bot",
+                        "type": "string"
+                      },
+                      "workspace_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "bot_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "owner_agent_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "deployment_environment": {
+                        "$id": "urn:pai:shared:deployment-environment:v1",
+                        "anyOf": [
+                          {
+                            "const": "local",
+                            "type": "string"
+                          },
+                          {
+                            "const": "dev",
+                            "type": "string"
+                          },
+                          {
+                            "const": "staging",
+                            "type": "string"
+                          },
+                          {
+                            "const": "prod",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "release_channel": {
+                        "$id": "urn:pai:shared:release-channel:v1",
+                        "anyOf": [
+                          {
+                            "const": "stable",
+                            "type": "string"
+                          },
+                          {
+                            "const": "canary",
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "payload": {
+                    "type": "object",
+                    "patternProperties": {
+                      "^(.*)$": {}
+                    }
+                  },
+                  "dedupe_key": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "is_catch_up": {
+                    "type": "boolean"
+                  },
+                  "explicit_interrupt": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Admission decision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-success-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "const": "invalid_request",
+                      "type": "string"
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "const": false,
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "const": "unauthenticated",
+                      "type": "string"
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "const": false,
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-authorization-failure-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-conflict-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "const": "internal_error",
+                      "type": "string"
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "const": false,
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-retryable-failure-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/triggers/admit/timer": {
+      "post": {
+        "operationId": "admitTriggerFromTimerV1",
+        "tags": [
+          "trigger_processor"
+        ],
+        "summary": "Admit a timer trigger",
+        "description": "Route injects source=timer; callers must be timer_trigger_app with trigger.submit.timer.",
+        "security": [
+          {
+            "PaiWorkloadJwt": [
+              "trigger.submit.timer"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$id": "urn:pai:trigger-processor:admit-trigger-request-body:v1",
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "trigger_id",
+                  "process_id",
+                  "scope",
+                  "payload",
+                  "dedupe_key",
+                  "idempotency_key",
+                  "is_catch_up",
+                  "explicit_interrupt"
+                ],
+                "properties": {
+                  "trigger_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "process_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "scope": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "scope_kind",
+                      "workspace_id",
+                      "bot_id",
+                      "owner_agent_id",
+                      "deployment_environment",
+                      "release_channel"
+                    ],
+                    "properties": {
+                      "scope_kind": {
+                        "const": "bot",
+                        "type": "string"
+                      },
+                      "workspace_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "bot_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "owner_agent_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "deployment_environment": {
+                        "$id": "urn:pai:shared:deployment-environment:v1",
+                        "anyOf": [
+                          {
+                            "const": "local",
+                            "type": "string"
+                          },
+                          {
+                            "const": "dev",
+                            "type": "string"
+                          },
+                          {
+                            "const": "staging",
+                            "type": "string"
+                          },
+                          {
+                            "const": "prod",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "release_channel": {
+                        "$id": "urn:pai:shared:release-channel:v1",
+                        "anyOf": [
+                          {
+                            "const": "stable",
+                            "type": "string"
+                          },
+                          {
+                            "const": "canary",
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "payload": {
+                    "type": "object",
+                    "patternProperties": {
+                      "^(.*)$": {}
+                    }
+                  },
+                  "dedupe_key": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "is_catch_up": {
+                    "type": "boolean"
+                  },
+                  "explicit_interrupt": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Admission decision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-success-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "trigger_accepted",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "trigger_rejected",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "const": "invalid_request",
+                      "type": "string"
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "const": false,
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "const": "unauthenticated",
+                      "type": "string"
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "const": false,
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-authorization-failure-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "authorization_denied",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "capability_denied",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "authorization_scope_mismatch",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-conflict-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "idempotency_conflict",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "stale_admission_fence",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "details",
+                    "trace_id"
+                  ],
+                  "properties": {
+                    "code": {
+                      "const": "internal_error",
+                      "type": "string"
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "const": false,
+                      "type": "boolean"
+                    },
+                    "details": {},
+                    "trace_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Canonical error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-retryable-failure-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "serialization_retry_exhausted",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "transient_database_error",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
+                          "const": "service_unavailable",
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "PaiWorkloadJwt": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "TriggerProcessStateV1": {
+        "$id": "urn:pai:trigger-processor:trigger-process-state:v1",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "phase",
+              "status",
+              "wait_reason",
+              "terminal_reason"
+            ],
+            "properties": {
+              "phase": {
+                "const": "admission",
+                "type": "string"
+              },
+              "status": {
+                "const": "running",
+                "type": "string"
+              },
+              "wait_reason": {
+                "type": "null"
+              },
+              "terminal_reason": {
+                "type": "null"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "phase",
+              "status",
+              "wait_reason",
+              "terminal_reason"
+            ],
+            "properties": {
+              "phase": {
+                "const": "admission",
+                "type": "string"
+              },
+              "status": {
+                "const": "waiting",
+                "type": "string"
+              },
+              "wait_reason": {
+                "anyOf": [
+                  {
+                    "const": "weak_queue",
+                    "type": "string"
+                  },
+                  {
+                    "const": "preempt_commit",
+                    "type": "string"
+                  },
+                  {
+                    "const": "deferred_strong_queue",
+                    "type": "string"
+                  },
+                  {
+                    "const": "stage_retry_wait",
+                    "type": "string"
+                  }
+                ]
+              },
+              "terminal_reason": {
+                "type": "null"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "phase",
+              "status",
+              "wait_reason",
+              "terminal_reason"
+            ],
+            "properties": {
+              "phase": {
+                "const": "context",
+                "type": "string"
+              },
+              "status": {
+                "const": "running",
+                "type": "string"
+              },
+              "wait_reason": {
+                "type": "null"
+              },
+              "terminal_reason": {
+                "type": "null"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "phase",
+              "status",
+              "wait_reason",
+              "terminal_reason"
+            ],
+            "properties": {
+              "phase": {
+                "const": "context",
+                "type": "string"
+              },
+              "status": {
+                "const": "waiting",
+                "type": "string"
+              },
+              "wait_reason": {
+                "anyOf": [
+                  {
+                    "const": "runtime_start_recompose",
+                    "type": "string"
+                  },
+                  {
+                    "const": "stage_retry_wait",
+                    "type": "string"
+                  }
+                ]
+              },
+              "terminal_reason": {
+                "type": "null"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "phase",
+              "status",
+              "wait_reason",
+              "terminal_reason"
+            ],
+            "properties": {
+              "phase": {
+                "const": "intent",
+                "type": "string"
+              },
+              "status": {
+                "const": "running",
+                "type": "string"
+              },
+              "wait_reason": {
+                "type": "null"
+              },
+              "terminal_reason": {
+                "type": "null"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "phase",
+              "status",
+              "wait_reason",
+              "terminal_reason"
+            ],
+            "properties": {
+              "phase": {
+                "const": "intent",
+                "type": "string"
+              },
+              "status": {
+                "const": "waiting",
+                "type": "string"
+              },
+              "wait_reason": {
+                "anyOf": [
+                  {
+                    "const": "external_confirmation",
+                    "type": "string"
+                  },
+                  {
+                    "const": "stage_retry_wait",
+                    "type": "string"
+                  }
+                ]
+              },
+              "terminal_reason": {
+                "type": "null"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "phase",
+              "status",
+              "wait_reason",
+              "terminal_reason"
+            ],
+            "properties": {
+              "phase": {
+                "const": "execution",
+                "type": "string"
+              },
+              "status": {
+                "const": "waiting",
+                "type": "string"
+              },
+              "wait_reason": {
+                "anyOf": [
+                  {
+                    "const": "runtime_start",
+                    "type": "string"
+                  },
+                  {
+                    "const": "runtime_start_reconcile",
+                    "type": "string"
+                  },
+                  {
+                    "const": "stage_retry_wait",
+                    "type": "string"
+                  }
+                ]
+              },
+              "terminal_reason": {
+                "type": "null"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "phase",
+              "status",
+              "wait_reason",
+              "terminal_reason"
+            ],
+            "properties": {
+              "phase": {
+                "const": "execution",
+                "type": "string"
+              },
+              "status": {
+                "const": "running",
+                "type": "string"
+              },
+              "wait_reason": {
+                "type": "null"
+              },
+              "terminal_reason": {
+                "type": "null"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "phase",
+              "status",
+              "wait_reason",
+              "terminal_reason"
+            ],
+            "properties": {
+              "phase": {
+                "const": "execution",
+                "type": "string"
+              },
+              "status": {
+                "const": "preempt_requested",
+                "type": "string"
+              },
+              "wait_reason": {
+                "type": "null"
+              },
+              "terminal_reason": {
+                "type": "null"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "phase",
+              "status",
+              "wait_reason",
+              "terminal_reason"
+            ],
+            "properties": {
+              "phase": {
+                "const": "execution",
+                "type": "string"
+              },
+              "status": {
+                "const": "cancelling",
+                "type": "string"
+              },
+              "wait_reason": {
+                "type": "null"
+              },
+              "terminal_reason": {
+                "type": "null"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "phase",
+              "status",
+              "wait_reason",
+              "terminal_reason"
+            ],
+            "properties": {
+              "phase": {
+                "const": "cooldown",
+                "type": "string"
+              },
+              "status": {
+                "const": "waiting",
+                "type": "string"
+              },
+              "wait_reason": {
+                "const": "cooldown_until",
+                "type": "string"
+              },
+              "terminal_reason": {
+                "type": "null"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "phase",
+              "status",
+              "wait_reason",
+              "terminal_reason",
+              "meta_enqueue_reason"
+            ],
+            "properties": {
+              "phase": {
+                "const": "meta_enqueued",
+                "type": "string"
+              },
+              "status": {
+                "const": "waiting",
+                "type": "string"
+              },
+              "wait_reason": {
+                "const": "meta_enqueue_wait",
+                "type": "string"
+              },
+              "terminal_reason": {
+                "type": "null"
+              },
+              "meta_enqueue_reason": {
+                "anyOf": [
+                  {
+                    "const": "cooldown_expired",
+                    "type": "string"
+                  },
+                  {
+                    "const": "user_retracted",
+                    "type": "string"
+                  },
+                  {
+                    "const": "system_interrupted",
+                    "type": "string"
+                  },
+                  {
+                    "const": "failed_with_learnable_snapshot",
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "phase",
+              "status",
+              "wait_reason",
+              "terminal_reason"
+            ],
+            "properties": {
+              "phase": {
+                "const": "closed",
+                "type": "string"
+              },
+              "status": {
+                "anyOf": [
+                  {
+                    "const": "completed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "failed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "preempted",
+                    "type": "string"
+                  },
+                  {
+                    "const": "cancelled",
+                    "type": "string"
+                  }
+                ]
+              },
+              "wait_reason": {
+                "type": "null"
+              },
+              "terminal_reason": {
+                "minLength": 1,
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "AdmitTriggerRequestBodyV1": {
+        "$id": "urn:pai:trigger-processor:admit-trigger-request-body:v1",
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "trigger_id",
+          "process_id",
+          "scope",
+          "payload",
+          "dedupe_key",
+          "idempotency_key",
+          "is_catch_up",
+          "explicit_interrupt"
+        ],
+        "properties": {
+          "trigger_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "process_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "scope": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "scope_kind",
+              "workspace_id",
+              "bot_id",
+              "owner_agent_id",
+              "deployment_environment",
+              "release_channel"
+            ],
+            "properties": {
+              "scope_kind": {
+                "const": "bot",
+                "type": "string"
+              },
+              "workspace_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "bot_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "owner_agent_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "deployment_environment": {
+                "$id": "urn:pai:shared:deployment-environment:v1",
+                "anyOf": [
+                  {
+                    "const": "local",
+                    "type": "string"
+                  },
+                  {
+                    "const": "dev",
+                    "type": "string"
+                  },
+                  {
+                    "const": "staging",
+                    "type": "string"
+                  },
+                  {
+                    "const": "prod",
+                    "type": "string"
+                  }
+                ]
+              },
+              "release_channel": {
+                "$id": "urn:pai:shared:release-channel:v1",
+                "anyOf": [
+                  {
+                    "const": "stable",
+                    "type": "string"
+                  },
+                  {
+                    "const": "canary",
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          },
+          "payload": {
+            "type": "object",
+            "patternProperties": {
+              "^(.*)$": {}
+            }
+          },
+          "dedupe_key": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "idempotency_key": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "is_catch_up": {
+            "type": "boolean"
+          },
+          "explicit_interrupt": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AdmitTriggerCommandV1": {
+        "$id": "urn:pai:trigger-processor:admit-trigger-command:v1",
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "trigger_id",
+          "process_id",
+          "scope",
+          "payload",
+          "dedupe_key",
+          "idempotency_key",
+          "is_catch_up",
+          "explicit_interrupt",
+          "source",
+          "trace_id"
+        ],
+        "properties": {
+          "trigger_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "process_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "scope": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "scope_kind",
+              "workspace_id",
+              "bot_id",
+              "owner_agent_id",
+              "deployment_environment",
+              "release_channel"
+            ],
+            "properties": {
+              "scope_kind": {
+                "const": "bot",
+                "type": "string"
+              },
+              "workspace_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "bot_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "owner_agent_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "deployment_environment": {
+                "$id": "urn:pai:shared:deployment-environment:v1",
+                "anyOf": [
+                  {
+                    "const": "local",
+                    "type": "string"
+                  },
+                  {
+                    "const": "dev",
+                    "type": "string"
+                  },
+                  {
+                    "const": "staging",
+                    "type": "string"
+                  },
+                  {
+                    "const": "prod",
+                    "type": "string"
+                  }
+                ]
+              },
+              "release_channel": {
+                "$id": "urn:pai:shared:release-channel:v1",
+                "anyOf": [
+                  {
+                    "const": "stable",
+                    "type": "string"
+                  },
+                  {
+                    "const": "canary",
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          },
+          "payload": {
+            "type": "object",
+            "patternProperties": {
+              "^(.*)$": {}
+            }
+          },
+          "dedupe_key": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "idempotency_key": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "is_catch_up": {
+            "type": "boolean"
+          },
+          "explicit_interrupt": {
+            "type": "boolean"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "const": "chat",
+                "type": "string"
+              },
+              {
+                "const": "notification",
+                "type": "string"
+              },
+              {
+                "const": "timer",
+                "type": "string"
+              }
+            ]
+          },
+          "trace_id": {
+            "minLength": 1,
+            "type": "string"
+          }
+        }
+      },
+      "AdmitTriggerResponseV1": {
+        "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
+        "anyOf": [
+          {
+            "$id": "urn:pai:trigger-processor:admit-trigger-success-response:v1",
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "code",
+                  "message",
+                  "retryable",
+                  "details",
+                  "trace_id"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "trigger_accepted",
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "const": false,
+                    "type": "boolean"
+                  },
+                  "details": {},
+                  "trace_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "code",
+                  "message",
+                  "retryable",
+                  "details",
+                  "trace_id"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "trigger_rejected",
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "const": false,
+                    "type": "boolean"
+                  },
+                  "details": {},
+                  "trace_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "code",
+              "message",
+              "retryable",
+              "details",
+              "trace_id"
+            ],
+            "properties": {
+              "code": {
+                "const": "invalid_request",
+                "type": "string"
+              },
+              "message": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "retryable": {
+                "const": false,
+                "type": "boolean"
+              },
+              "details": {},
+              "trace_id": {
+                "minLength": 1,
+                "type": "string"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "code",
+              "message",
+              "retryable",
+              "details",
+              "trace_id"
+            ],
+            "properties": {
+              "code": {
+                "const": "unauthenticated",
+                "type": "string"
+              },
+              "message": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "retryable": {
+                "const": false,
+                "type": "boolean"
+              },
+              "details": {},
+              "trace_id": {
+                "minLength": 1,
+                "type": "string"
+              }
+            }
+          },
+          {
+            "$id": "urn:pai:trigger-processor:admit-trigger-authorization-failure-response:v1",
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "code",
+                  "message",
+                  "retryable",
+                  "details",
+                  "trace_id"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "authorization_denied",
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "const": false,
+                    "type": "boolean"
+                  },
+                  "details": {},
+                  "trace_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "code",
+                  "message",
+                  "retryable",
+                  "details",
+                  "trace_id"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "capability_denied",
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "const": false,
+                    "type": "boolean"
+                  },
+                  "details": {},
+                  "trace_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "code",
+                  "message",
+                  "retryable",
+                  "details",
+                  "trace_id"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "authorization_scope_mismatch",
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "const": false,
+                    "type": "boolean"
+                  },
+                  "details": {},
+                  "trace_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "$id": "urn:pai:trigger-processor:admit-trigger-conflict-response:v1",
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "code",
+                  "message",
+                  "retryable",
+                  "details",
+                  "trace_id"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "idempotency_conflict",
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "const": false,
+                    "type": "boolean"
+                  },
+                  "details": {},
+                  "trace_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "code",
+                  "message",
+                  "retryable",
+                  "details",
+                  "trace_id"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "stale_admission_fence",
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "const": false,
+                    "type": "boolean"
+                  },
+                  "details": {},
+                  "trace_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "code",
+              "message",
+              "retryable",
+              "details",
+              "trace_id"
+            ],
+            "properties": {
+              "code": {
+                "const": "internal_error",
+                "type": "string"
+              },
+              "message": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "retryable": {
+                "const": false,
+                "type": "boolean"
+              },
+              "details": {},
+              "trace_id": {
+                "minLength": 1,
+                "type": "string"
+              }
+            }
+          },
+          {
+            "$id": "urn:pai:trigger-processor:admit-trigger-retryable-failure-response:v1",
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "code",
+                  "message",
+                  "retryable",
+                  "details",
+                  "trace_id"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "serialization_retry_exhausted",
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "const": true,
+                    "type": "boolean"
+                  },
+                  "details": {},
+                  "trace_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "code",
+                  "message",
+                  "retryable",
+                  "details",
+                  "trace_id"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "transient_database_error",
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "const": true,
+                    "type": "boolean"
+                  },
+                  "details": {},
+                  "trace_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "code",
+                  "message",
+                  "retryable",
+                  "details",
+                  "trace_id"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "service_unavailable",
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "const": true,
+                    "type": "boolean"
+                  },
+                  "details": {},
+                  "trace_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "TrustedAdmissionFactsV1": {
+        "$id": "urn:pai:trigger-processor:trusted-admission-facts:v1",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "source",
+              "actor_type",
+              "bot_state",
+              "safety_blocked",
+              "trusted_strong_hint",
+              "explicit_interrupt",
+              "is_catch_up",
+              "foreground_slot_generation",
+              "active_process",
+              "active_process_id",
+              "active_process_slot_generation",
+              "active_process_updated_at",
+              "foreground_slot_process_id"
+            ],
+            "properties": {
+              "source": {
+                "anyOf": [
+                  {
+                    "const": "chat",
+                    "type": "string"
+                  },
+                  {
+                    "const": "notification",
+                    "type": "string"
+                  },
+                  {
+                    "const": "timer",
+                    "type": "string"
+                  }
+                ]
+              },
+              "actor_type": {
+                "anyOf": [
+                  {
+                    "const": "super_user",
+                    "type": "string"
+                  },
+                  {
+                    "const": "user",
+                    "type": "string"
+                  },
+                  {
+                    "const": "agent",
+                    "type": "string"
+                  },
+                  {
+                    "const": "developer",
+                    "type": "string"
+                  },
+                  {
+                    "const": "system",
+                    "type": "string"
+                  }
+                ]
+              },
+              "bot_state": {
+                "anyOf": [
+                  {
+                    "const": "active",
+                    "type": "string"
+                  },
+                  {
+                    "const": "disabled",
+                    "type": "string"
+                  },
+                  {
+                    "const": "archived",
+                    "type": "string"
+                  }
+                ]
+              },
+              "safety_blocked": {
+                "type": "boolean"
+              },
+              "trusted_strong_hint": {
+                "type": "boolean"
+              },
+              "explicit_interrupt": {
+                "type": "boolean"
+              },
+              "is_catch_up": {
+                "type": "boolean"
+              },
+              "foreground_slot_generation": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "active_process": {
+                "const": "none",
+                "type": "string"
+              },
+              "active_process_id": {
+                "type": "null"
+              },
+              "active_process_slot_generation": {
+                "type": "null"
+              },
+              "active_process_updated_at": {
+                "type": "null"
+              },
+              "foreground_slot_process_id": {
+                "type": "null"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "source",
+              "actor_type",
+              "bot_state",
+              "safety_blocked",
+              "trusted_strong_hint",
+              "explicit_interrupt",
+              "is_catch_up",
+              "foreground_slot_generation",
+              "active_process",
+              "active_process_id",
+              "active_process_slot_generation",
+              "active_process_updated_at",
+              "foreground_slot_process_id"
+            ],
+            "properties": {
+              "source": {
+                "anyOf": [
+                  {
+                    "const": "chat",
+                    "type": "string"
+                  },
+                  {
+                    "const": "notification",
+                    "type": "string"
+                  },
+                  {
+                    "const": "timer",
+                    "type": "string"
+                  }
+                ]
+              },
+              "actor_type": {
+                "anyOf": [
+                  {
+                    "const": "super_user",
+                    "type": "string"
+                  },
+                  {
+                    "const": "user",
+                    "type": "string"
+                  },
+                  {
+                    "const": "agent",
+                    "type": "string"
+                  },
+                  {
+                    "const": "developer",
+                    "type": "string"
+                  },
+                  {
+                    "const": "system",
+                    "type": "string"
+                  }
+                ]
+              },
+              "bot_state": {
+                "anyOf": [
+                  {
+                    "const": "active",
+                    "type": "string"
+                  },
+                  {
+                    "const": "disabled",
+                    "type": "string"
+                  },
+                  {
+                    "const": "archived",
+                    "type": "string"
+                  }
+                ]
+              },
+              "safety_blocked": {
+                "type": "boolean"
+              },
+              "trusted_strong_hint": {
+                "type": "boolean"
+              },
+              "explicit_interrupt": {
+                "type": "boolean"
+              },
+              "is_catch_up": {
+                "type": "boolean"
+              },
+              "foreground_slot_generation": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "active_process": {
+                "const": "execution_running",
+                "type": "string"
+              },
+              "active_process_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "active_process_slot_generation": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "active_process_updated_at": {
+                "minLength": 1,
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                "type": "string"
+              },
+              "foreground_slot_process_id": {
+                "minLength": 1,
+                "type": "string"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "source",
+              "actor_type",
+              "bot_state",
+              "safety_blocked",
+              "trusted_strong_hint",
+              "explicit_interrupt",
+              "is_catch_up",
+              "foreground_slot_generation",
+              "active_process",
+              "active_process_id",
+              "active_process_slot_generation",
+              "active_process_updated_at",
+              "foreground_slot_process_id"
+            ],
+            "properties": {
+              "source": {
+                "anyOf": [
+                  {
+                    "const": "chat",
+                    "type": "string"
+                  },
+                  {
+                    "const": "notification",
+                    "type": "string"
+                  },
+                  {
+                    "const": "timer",
+                    "type": "string"
+                  }
+                ]
+              },
+              "actor_type": {
+                "anyOf": [
+                  {
+                    "const": "super_user",
+                    "type": "string"
+                  },
+                  {
+                    "const": "user",
+                    "type": "string"
+                  },
+                  {
+                    "const": "agent",
+                    "type": "string"
+                  },
+                  {
+                    "const": "developer",
+                    "type": "string"
+                  },
+                  {
+                    "const": "system",
+                    "type": "string"
+                  }
+                ]
+              },
+              "bot_state": {
+                "anyOf": [
+                  {
+                    "const": "active",
+                    "type": "string"
+                  },
+                  {
+                    "const": "disabled",
+                    "type": "string"
+                  },
+                  {
+                    "const": "archived",
+                    "type": "string"
+                  }
+                ]
+              },
+              "safety_blocked": {
+                "type": "boolean"
+              },
+              "trusted_strong_hint": {
+                "type": "boolean"
+              },
+              "explicit_interrupt": {
+                "type": "boolean"
+              },
+              "is_catch_up": {
+                "type": "boolean"
+              },
+              "foreground_slot_generation": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "active_process": {
+                "const": "cooldown_waiting",
+                "type": "string"
+              },
+              "active_process_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "active_process_slot_generation": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "active_process_updated_at": {
+                "minLength": 1,
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                "type": "string"
+              },
+              "foreground_slot_process_id": {
+                "minLength": 1,
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "TriggerAdmissionDecisionV1": {
+        "$id": "urn:pai:trigger-processor:trigger-admission-decision:v1",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "trigger_status",
+              "priority",
+              "action",
+              "reason_code",
+              "initial_process_state",
+              "admission_precondition"
+            ],
+            "properties": {
+              "trigger_status": {
+                "const": "accepted",
+                "type": "string"
+              },
+              "priority": {
+                "const": "strong",
+                "type": "string"
+              },
+              "action": {
+                "const": "enqueue_strong_fifo",
+                "type": "string"
+              },
+              "reason_code": {
+                "const": "catch_up_foreground_busy",
+                "type": "string"
+              },
+              "initial_process_state": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "phase",
+                  "status",
+                  "wait_reason",
+                  "terminal_reason"
+                ],
+                "properties": {
+                  "phase": {
+                    "const": "admission",
+                    "type": "string"
+                  },
+                  "status": {
+                    "const": "waiting",
+                    "type": "string"
+                  },
+                  "wait_reason": {
+                    "const": "deferred_strong_queue",
+                    "type": "string"
+                  },
+                  "terminal_reason": {
+                    "type": "null"
+                  }
+                }
+              },
+              "admission_precondition": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "idle",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "type": "null"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "execution",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "running",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "cooldown",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "waiting",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "trigger_status",
+              "priority",
+              "action",
+              "reason_code",
+              "initial_process_state",
+              "admission_precondition"
+            ],
+            "properties": {
+              "trigger_status": {
+                "const": "accepted",
+                "type": "string"
+              },
+              "priority": {
+                "const": "strong",
+                "type": "string"
+              },
+              "action": {
+                "const": "dispatch_catch_up_serial",
+                "type": "string"
+              },
+              "reason_code": {
+                "const": "timer_catch_up",
+                "type": "string"
+              },
+              "initial_process_state": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "phase",
+                  "status",
+                  "wait_reason",
+                  "terminal_reason"
+                ],
+                "properties": {
+                  "phase": {
+                    "const": "admission",
+                    "type": "string"
+                  },
+                  "status": {
+                    "const": "running",
+                    "type": "string"
+                  },
+                  "wait_reason": {
+                    "type": "null"
+                  },
+                  "terminal_reason": {
+                    "type": "null"
+                  }
+                }
+              },
+              "admission_precondition": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "idle",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "type": "null"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "execution",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "running",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "cooldown",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "waiting",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "trigger_status",
+              "priority",
+              "action",
+              "reason_code",
+              "initial_process_state",
+              "admission_precondition"
+            ],
+            "properties": {
+              "trigger_status": {
+                "const": "accepted",
+                "type": "string"
+              },
+              "priority": {
+                "const": "strong",
+                "type": "string"
+              },
+              "action": {
+                "const": "dispatch",
+                "type": "string"
+              },
+              "reason_code": {
+                "const": "timer_due",
+                "type": "string"
+              },
+              "initial_process_state": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "phase",
+                  "status",
+                  "wait_reason",
+                  "terminal_reason"
+                ],
+                "properties": {
+                  "phase": {
+                    "const": "admission",
+                    "type": "string"
+                  },
+                  "status": {
+                    "const": "running",
+                    "type": "string"
+                  },
+                  "wait_reason": {
+                    "type": "null"
+                  },
+                  "terminal_reason": {
+                    "type": "null"
+                  }
+                }
+              },
+              "admission_precondition": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "idle",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "type": "null"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "execution",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "running",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "cooldown",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "waiting",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "trigger_status",
+              "priority",
+              "action",
+              "reason_code",
+              "initial_process_state",
+              "admission_precondition"
+            ],
+            "properties": {
+              "trigger_status": {
+                "const": "accepted",
+                "type": "string"
+              },
+              "priority": {
+                "const": "strong",
+                "type": "string"
+              },
+              "action": {
+                "const": "dispatch_or_preempt",
+                "type": "string"
+              },
+              "reason_code": {
+                "const": "timer_due_preempt_active",
+                "type": "string"
+              },
+              "initial_process_state": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "phase",
+                  "status",
+                  "wait_reason",
+                  "terminal_reason"
+                ],
+                "properties": {
+                  "phase": {
+                    "const": "admission",
+                    "type": "string"
+                  },
+                  "status": {
+                    "const": "waiting",
+                    "type": "string"
+                  },
+                  "wait_reason": {
+                    "const": "preempt_commit",
+                    "type": "string"
+                  },
+                  "terminal_reason": {
+                    "type": "null"
+                  }
+                }
+              },
+              "admission_precondition": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "idle",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "type": "null"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "execution",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "running",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "cooldown",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "waiting",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "trigger_status",
+              "priority",
+              "action",
+              "reason_code",
+              "initial_process_state",
+              "admission_precondition"
+            ],
+            "properties": {
+              "trigger_status": {
+                "const": "accepted",
+                "type": "string"
+              },
+              "priority": {
+                "const": "strong",
+                "type": "string"
+              },
+              "action": {
+                "const": "dispatch",
+                "type": "string"
+              },
+              "reason_code": {
+                "const": "explicit_interrupt",
+                "type": "string"
+              },
+              "initial_process_state": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "phase",
+                  "status",
+                  "wait_reason",
+                  "terminal_reason"
+                ],
+                "properties": {
+                  "phase": {
+                    "const": "admission",
+                    "type": "string"
+                  },
+                  "status": {
+                    "const": "running",
+                    "type": "string"
+                  },
+                  "wait_reason": {
+                    "type": "null"
+                  },
+                  "terminal_reason": {
+                    "type": "null"
+                  }
+                }
+              },
+              "admission_precondition": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "idle",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "type": "null"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "execution",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "running",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "cooldown",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "waiting",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "trigger_status",
+              "priority",
+              "action",
+              "reason_code",
+              "initial_process_state",
+              "admission_precondition"
+            ],
+            "properties": {
+              "trigger_status": {
+                "const": "accepted",
+                "type": "string"
+              },
+              "priority": {
+                "const": "strong",
+                "type": "string"
+              },
+              "action": {
+                "const": "dispatch_or_preempt",
+                "type": "string"
+              },
+              "reason_code": {
+                "const": "explicit_interrupt",
+                "type": "string"
+              },
+              "initial_process_state": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "phase",
+                  "status",
+                  "wait_reason",
+                  "terminal_reason"
+                ],
+                "properties": {
+                  "phase": {
+                    "const": "admission",
+                    "type": "string"
+                  },
+                  "status": {
+                    "const": "waiting",
+                    "type": "string"
+                  },
+                  "wait_reason": {
+                    "const": "preempt_commit",
+                    "type": "string"
+                  },
+                  "terminal_reason": {
+                    "type": "null"
+                  }
+                }
+              },
+              "admission_precondition": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "idle",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "type": "null"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "execution",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "running",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "cooldown",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "waiting",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "trigger_status",
+              "priority",
+              "action",
+              "reason_code",
+              "initial_process_state",
+              "admission_precondition"
+            ],
+            "properties": {
+              "trigger_status": {
+                "const": "accepted",
+                "type": "string"
+              },
+              "priority": {
+                "const": "strong",
+                "type": "string"
+              },
+              "action": {
+                "const": "dispatch",
+                "type": "string"
+              },
+              "reason_code": {
+                "const": "strong_no_active_dispatch",
+                "type": "string"
+              },
+              "initial_process_state": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "phase",
+                  "status",
+                  "wait_reason",
+                  "terminal_reason"
+                ],
+                "properties": {
+                  "phase": {
+                    "const": "admission",
+                    "type": "string"
+                  },
+                  "status": {
+                    "const": "running",
+                    "type": "string"
+                  },
+                  "wait_reason": {
+                    "type": "null"
+                  },
+                  "terminal_reason": {
+                    "type": "null"
+                  }
+                }
+              },
+              "admission_precondition": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "idle",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "type": "null"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "execution",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "running",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "cooldown",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "waiting",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "trigger_status",
+              "priority",
+              "action",
+              "reason_code",
+              "initial_process_state",
+              "admission_precondition"
+            ],
+            "properties": {
+              "trigger_status": {
+                "const": "accepted",
+                "type": "string"
+              },
+              "priority": {
+                "const": "strong",
+                "type": "string"
+              },
+              "action": {
+                "const": "dispatch_or_preempt",
+                "type": "string"
+              },
+              "reason_code": {
+                "const": "strong_preempt_active",
+                "type": "string"
+              },
+              "initial_process_state": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "phase",
+                  "status",
+                  "wait_reason",
+                  "terminal_reason"
+                ],
+                "properties": {
+                  "phase": {
+                    "const": "admission",
+                    "type": "string"
+                  },
+                  "status": {
+                    "const": "waiting",
+                    "type": "string"
+                  },
+                  "wait_reason": {
+                    "const": "preempt_commit",
+                    "type": "string"
+                  },
+                  "terminal_reason": {
+                    "type": "null"
+                  }
+                }
+              },
+              "admission_precondition": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "idle",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "type": "null"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "execution",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "running",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "cooldown",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "waiting",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "trigger_status",
+              "priority",
+              "action",
+              "reason_code",
+              "initial_process_state",
+              "admission_precondition"
+            ],
+            "properties": {
+              "trigger_status": {
+                "const": "accepted",
+                "type": "string"
+              },
+              "priority": {
+                "const": "weak",
+                "type": "string"
+              },
+              "action": {
+                "const": "dispatch",
+                "type": "string"
+              },
+              "reason_code": {
+                "const": "weak_no_active_dispatch",
+                "type": "string"
+              },
+              "initial_process_state": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "phase",
+                  "status",
+                  "wait_reason",
+                  "terminal_reason"
+                ],
+                "properties": {
+                  "phase": {
+                    "const": "admission",
+                    "type": "string"
+                  },
+                  "status": {
+                    "const": "running",
+                    "type": "string"
+                  },
+                  "wait_reason": {
+                    "type": "null"
+                  },
+                  "terminal_reason": {
+                    "type": "null"
+                  }
+                }
+              },
+              "admission_precondition": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "idle",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "type": "null"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "execution",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "running",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "cooldown",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "waiting",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "trigger_status",
+              "priority",
+              "action",
+              "reason_code",
+              "initial_process_state",
+              "admission_precondition"
+            ],
+            "properties": {
+              "trigger_status": {
+                "const": "accepted",
+                "type": "string"
+              },
+              "priority": {
+                "const": "weak",
+                "type": "string"
+              },
+              "action": {
+                "const": "merge_or_enqueue_weak",
+                "type": "string"
+              },
+              "reason_code": {
+                "const": "cooldown_merge_candidate",
+                "type": "string"
+              },
+              "initial_process_state": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "phase",
+                  "status",
+                  "wait_reason",
+                  "terminal_reason"
+                ],
+                "properties": {
+                  "phase": {
+                    "const": "admission",
+                    "type": "string"
+                  },
+                  "status": {
+                    "const": "waiting",
+                    "type": "string"
+                  },
+                  "wait_reason": {
+                    "const": "weak_queue",
+                    "type": "string"
+                  },
+                  "terminal_reason": {
+                    "type": "null"
+                  }
+                }
+              },
+              "admission_precondition": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "idle",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "type": "null"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "execution",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "running",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "cooldown",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "waiting",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "trigger_status",
+              "priority",
+              "action",
+              "reason_code",
+              "initial_process_state",
+              "admission_precondition"
+            ],
+            "properties": {
+              "trigger_status": {
+                "const": "accepted",
+                "type": "string"
+              },
+              "priority": {
+                "const": "weak",
+                "type": "string"
+              },
+              "action": {
+                "const": "enqueue_weak",
+                "type": "string"
+              },
+              "reason_code": {
+                "const": "active_process_running",
+                "type": "string"
+              },
+              "initial_process_state": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "phase",
+                  "status",
+                  "wait_reason",
+                  "terminal_reason"
+                ],
+                "properties": {
+                  "phase": {
+                    "const": "admission",
+                    "type": "string"
+                  },
+                  "status": {
+                    "const": "waiting",
+                    "type": "string"
+                  },
+                  "wait_reason": {
+                    "const": "weak_queue",
+                    "type": "string"
+                  },
+                  "terminal_reason": {
+                    "type": "null"
+                  }
+                }
+              },
+              "admission_precondition": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "idle",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "type": "null"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "execution",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "running",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "process_id",
+                      "slot_generation",
+                      "phase",
+                      "status",
+                      "process_updated_at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "occupied",
+                        "type": "string"
+                      },
+                      "process_id": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "slot_generation": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "phase": {
+                        "const": "cooldown",
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "waiting",
+                        "type": "string"
+                      },
+                      "process_updated_at": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "trigger_status",
+              "priority",
+              "action",
+              "reason_code"
+            ],
+            "properties": {
+              "trigger_status": {
+                "const": "rejected",
+                "type": "string"
+              },
+              "priority": {
+                "anyOf": [
+                  {
+                    "const": "strong",
+                    "type": "string"
+                  },
+                  {
+                    "const": "weak",
+                    "type": "string"
+                  }
+                ]
+              },
+              "action": {
+                "const": "reject",
+                "type": "string"
+              },
+              "reason_code": {
+                "anyOf": [
+                  {
+                    "const": "bot_disabled",
+                    "type": "string"
+                  },
+                  {
+                    "const": "bot_archived",
+                    "type": "string"
+                  },
+                  {
+                    "const": "safety_blocked",
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "TriggerProcessTransitionEvidenceV1": {
+        "$id": "urn:pai:trigger-processor:trigger-process-transition-evidence:v1",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "kind",
+              "runtime_terminal_outcome",
+              "runtime_terminal_event_ref",
+              "snapshot_append_ref",
+              "cooldown_until",
+              "completion_won_preempt_race",
+              "preempt_race_proof_ref",
+              "transition_audit_ref",
+              "outbox_event_ref"
+            ],
+            "properties": {
+              "kind": {
+                "const": "execution_completed",
+                "type": "string"
+              },
+              "runtime_terminal_outcome": {
+                "const": "completed",
+                "type": "string"
+              },
+              "runtime_terminal_event_ref": {
+                "pattern": "^trigger_event:[^\\r\\n]+$",
+                "type": "string"
+              },
+              "snapshot_append_ref": {
+                "minLength": 1,
+                "pattern": "^[^\\r\\n]+$",
+                "type": "string"
+              },
+              "cooldown_until": {
+                "minLength": 1,
+                "format": "date-time",
+                "type": "string"
+              },
+              "completion_won_preempt_race": {
+                "type": "boolean"
+              },
+              "preempt_race_proof_ref": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "transition_audit_ref": {
+                "minLength": 1,
+                "pattern": "^[^\\r\\n]+$",
+                "type": "string"
+              },
+              "outbox_event_ref": {
+                "minLength": 1,
+                "pattern": "^[^\\r\\n]+$",
+                "type": "string"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "kind",
+              "enqueue_reason",
+              "trigger_process_id",
+              "meta_enqueue_idempotency_key",
+              "process_lock_ref",
+              "cooldown_expired_at",
+              "snapshot_retention_until",
+              "preempted_by_process_id",
+              "existing_meta_enqueue_intent_ref",
+              "transition_audit_ref",
+              "meta_enqueue_outbox_ref"
+            ],
+            "properties": {
+              "kind": {
+                "const": "cooldown_expired_meta_enqueue",
+                "type": "string"
+              },
+              "enqueue_reason": {
+                "const": "cooldown_expired",
+                "type": "string"
+              },
+              "trigger_process_id": {
+                "minLength": 1,
+                "pattern": "^[^\\r\\n]+$",
+                "type": "string"
+              },
+              "meta_enqueue_idempotency_key": {
+                "minLength": 1,
+                "pattern": "^[^\\r\\n]+$",
+                "type": "string"
+              },
+              "process_lock_ref": {
+                "minLength": 1,
+                "pattern": "^[^\\r\\n]+$",
+                "type": "string"
+              },
+              "cooldown_expired_at": {
+                "minLength": 1,
+                "format": "date-time",
+                "type": "string"
+              },
+              "snapshot_retention_until": {
+                "minLength": 1,
+                "format": "date-time",
+                "type": "string"
+              },
+              "preempted_by_process_id": {
+                "type": "null"
+              },
+              "existing_meta_enqueue_intent_ref": {
+                "type": "null"
+              },
+              "transition_audit_ref": {
+                "minLength": 1,
+                "pattern": "^[^\\r\\n]+$",
+                "type": "string"
+              },
+              "meta_enqueue_outbox_ref": {
+                "minLength": 1,
+                "pattern": "^[^\\r\\n]+$",
+                "type": "string"
+              }
+            }
+          },
+          {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "kind",
+                  "enqueue_reason",
+                  "boundary_system_event_ref",
+                  "snapshot_ref",
+                  "snapshot_freeze_ref",
+                  "learnable_snapshot_ready",
+                  "transition_audit_ref",
+                  "meta_enqueue_outbox_ref",
+                  "runtime_state"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "meta_enqueue",
+                    "type": "string"
+                  },
+                  "enqueue_reason": {
+                    "anyOf": [
+                      {
+                        "const": "user_retracted",
+                        "type": "string"
+                      },
+                      {
+                        "const": "system_interrupted",
+                        "type": "string"
+                      },
+                      {
+                        "const": "failed_with_learnable_snapshot",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "boundary_system_event_ref": {
+                    "pattern": "^system_event:[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "snapshot_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "snapshot_freeze_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "learnable_snapshot_ready": {
+                    "const": true,
+                    "type": "boolean"
+                  },
+                  "transition_audit_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "meta_enqueue_outbox_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "runtime_state": {
+                    "const": "not_running",
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "kind",
+                  "enqueue_reason",
+                  "boundary_system_event_ref",
+                  "snapshot_ref",
+                  "snapshot_freeze_ref",
+                  "learnable_snapshot_ready",
+                  "transition_audit_ref",
+                  "meta_enqueue_outbox_ref",
+                  "runtime_state",
+                  "runtime_stop_or_isolation_proof_ref"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "meta_enqueue",
+                    "type": "string"
+                  },
+                  "enqueue_reason": {
+                    "anyOf": [
+                      {
+                        "const": "user_retracted",
+                        "type": "string"
+                      },
+                      {
+                        "const": "system_interrupted",
+                        "type": "string"
+                      },
+                      {
+                        "const": "failed_with_learnable_snapshot",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "boundary_system_event_ref": {
+                    "pattern": "^system_event:[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "snapshot_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "snapshot_freeze_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "learnable_snapshot_ready": {
+                    "const": true,
+                    "type": "boolean"
+                  },
+                  "transition_audit_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "meta_enqueue_outbox_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "runtime_state": {
+                    "const": "stopped_or_isolated",
+                    "type": "string"
+                  },
+                  "runtime_stop_or_isolation_proof_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "kind",
+                  "terminal_outcome",
+                  "terminal_outcome_finalized_at",
+                  "canonical_reason_code",
+                  "transition_audit_ref",
+                  "outbox_event_ref",
+                  "runtime_state"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "explicit_cancel",
+                    "type": "string"
+                  },
+                  "terminal_outcome": {
+                    "const": "cancelled_with_reason",
+                    "type": "string"
+                  },
+                  "terminal_outcome_finalized_at": {
+                    "minLength": 1,
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "canonical_reason_code": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "transition_audit_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "outbox_event_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "runtime_state": {
+                    "const": "not_running",
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "kind",
+                  "terminal_outcome",
+                  "terminal_outcome_finalized_at",
+                  "canonical_reason_code",
+                  "transition_audit_ref",
+                  "outbox_event_ref",
+                  "runtime_state",
+                  "runtime_stop_or_isolation_proof_ref"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "explicit_cancel",
+                    "type": "string"
+                  },
+                  "terminal_outcome": {
+                    "const": "cancelled_with_reason",
+                    "type": "string"
+                  },
+                  "terminal_outcome_finalized_at": {
+                    "minLength": 1,
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "canonical_reason_code": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "transition_audit_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "outbox_event_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "runtime_state": {
+                    "const": "stopped_or_isolated",
+                    "type": "string"
+                  },
+                  "runtime_stop_or_isolation_proof_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "kind",
+                  "terminal_outcome",
+                  "superseded_by_process_id",
+                  "terminal_outcome_finalized_at",
+                  "canonical_reason_code",
+                  "transition_audit_ref",
+                  "outbox_event_ref",
+                  "runtime_state"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "explicit_cancel",
+                    "type": "string"
+                  },
+                  "terminal_outcome": {
+                    "const": "superseded_by_later_trigger",
+                    "type": "string"
+                  },
+                  "superseded_by_process_id": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "terminal_outcome_finalized_at": {
+                    "minLength": 1,
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "canonical_reason_code": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "transition_audit_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "outbox_event_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "runtime_state": {
+                    "const": "not_running",
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "kind",
+                  "terminal_outcome",
+                  "superseded_by_process_id",
+                  "terminal_outcome_finalized_at",
+                  "canonical_reason_code",
+                  "transition_audit_ref",
+                  "outbox_event_ref",
+                  "runtime_state",
+                  "runtime_stop_or_isolation_proof_ref"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "explicit_cancel",
+                    "type": "string"
+                  },
+                  "terminal_outcome": {
+                    "const": "superseded_by_later_trigger",
+                    "type": "string"
+                  },
+                  "superseded_by_process_id": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "terminal_outcome_finalized_at": {
+                    "minLength": 1,
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "canonical_reason_code": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "transition_audit_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "outbox_event_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "runtime_state": {
+                    "const": "stopped_or_isolated",
+                    "type": "string"
+                  },
+                  "runtime_stop_or_isolation_proof_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "kind",
+                  "terminal_outcome",
+                  "terminal_outcome_finalized_at",
+                  "canonical_reason_code",
+                  "transition_audit_ref",
+                  "outbox_event_ref",
+                  "runtime_state"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "unrecoverable_failure",
+                    "type": "string"
+                  },
+                  "terminal_outcome": {
+                    "const": "failed_with_reason",
+                    "type": "string"
+                  },
+                  "terminal_outcome_finalized_at": {
+                    "minLength": 1,
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "canonical_reason_code": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "transition_audit_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "outbox_event_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "runtime_state": {
+                    "const": "not_running",
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "kind",
+                  "terminal_outcome",
+                  "terminal_outcome_finalized_at",
+                  "canonical_reason_code",
+                  "transition_audit_ref",
+                  "outbox_event_ref",
+                  "runtime_state",
+                  "runtime_stop_or_isolation_proof_ref"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "unrecoverable_failure",
+                    "type": "string"
+                  },
+                  "terminal_outcome": {
+                    "const": "failed_with_reason",
+                    "type": "string"
+                  },
+                  "terminal_outcome_finalized_at": {
+                    "minLength": 1,
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "canonical_reason_code": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "transition_audit_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "outbox_event_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "runtime_state": {
+                    "const": "stopped_or_isolated",
+                    "type": "string"
+                  },
+                  "runtime_stop_or_isolation_proof_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "kind",
+                  "terminal_outcome",
+                  "snapshot_freeze_ref",
+                  "successor_process_id",
+                  "snapshot_transfer_ref",
+                  "foreground_slot_transfer_ref",
+                  "terminal_outcome_finalized_at",
+                  "canonical_reason_code",
+                  "transition_audit_ref",
+                  "outbox_event_ref",
+                  "runtime_state"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "preempt_handoff",
+                    "type": "string"
+                  },
+                  "terminal_outcome": {
+                    "const": "preempted_and_handed_off",
+                    "type": "string"
+                  },
+                  "snapshot_freeze_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "successor_process_id": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "snapshot_transfer_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "foreground_slot_transfer_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "terminal_outcome_finalized_at": {
+                    "minLength": 1,
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "canonical_reason_code": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "transition_audit_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "outbox_event_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "runtime_state": {
+                    "const": "not_running",
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "kind",
+                  "terminal_outcome",
+                  "snapshot_freeze_ref",
+                  "successor_process_id",
+                  "snapshot_transfer_ref",
+                  "foreground_slot_transfer_ref",
+                  "terminal_outcome_finalized_at",
+                  "canonical_reason_code",
+                  "transition_audit_ref",
+                  "outbox_event_ref",
+                  "runtime_state",
+                  "runtime_stop_or_isolation_proof_ref"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "preempt_handoff",
+                    "type": "string"
+                  },
+                  "terminal_outcome": {
+                    "const": "preempted_and_handed_off",
+                    "type": "string"
+                  },
+                  "snapshot_freeze_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "successor_process_id": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "snapshot_transfer_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "foreground_slot_transfer_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "terminal_outcome_finalized_at": {
+                    "minLength": 1,
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "canonical_reason_code": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "transition_audit_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "outbox_event_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "runtime_state": {
+                    "const": "stopped_or_isolated",
+                    "type": "string"
+                  },
+                  "runtime_stop_or_isolation_proof_ref": {
+                    "minLength": 1,
+                    "pattern": "^[^\\r\\n]+$",
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "kind",
+              "terminal_outcome",
+              "terminal_outcome_finalized_at",
+              "canonical_process_id",
+              "merged_into_process_id",
+              "transition_audit_ref",
+              "outbox_event_ref"
+            ],
+            "properties": {
+              "kind": {
+                "const": "weak_merge",
+                "type": "string"
+              },
+              "terminal_outcome": {
+                "type": "null"
+              },
+              "terminal_outcome_finalized_at": {
+                "type": "null"
+              },
+              "canonical_process_id": {
+                "minLength": 1,
+                "pattern": "^[^\\r\\n]+$",
+                "type": "string"
+              },
+              "merged_into_process_id": {
+                "minLength": 1,
+                "pattern": "^[^\\r\\n]+$",
+                "type": "string"
+              },
+              "transition_audit_ref": {
+                "minLength": 1,
+                "pattern": "^[^\\r\\n]+$",
+                "type": "string"
+              },
+              "outbox_event_ref": {
+                "minLength": 1,
+                "pattern": "^[^\\r\\n]+$",
+                "type": "string"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "kind",
+              "terminal_outcome",
+              "terminal_outcome_finalized_at",
+              "canonical_reason_code",
+              "transition_audit_ref",
+              "outbox_event_ref"
+            ],
+            "properties": {
+              "kind": {
+                "const": "meta_finalization",
+                "type": "string"
+              },
+              "terminal_outcome": {
+                "$id": "urn:pai:trigger-processor:terminal-outcome:v1",
+                "anyOf": [
+                  {
+                    "const": "executed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "merged_and_executed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "superseded_by_later_trigger",
+                    "type": "string"
+                  },
+                  {
+                    "const": "deferred_then_executed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "expired_with_audit_record",
+                    "type": "string"
+                  },
+                  {
+                    "const": "cancelled_with_reason",
+                    "type": "string"
+                  },
+                  {
+                    "const": "failed_with_reason",
+                    "type": "string"
+                  },
+                  {
+                    "const": "preempted_and_handed_off",
+                    "type": "string"
+                  },
+                  {
+                    "const": "interrupted_with_reason",
+                    "type": "string"
+                  }
+                ]
+              },
+              "terminal_outcome_finalized_at": {
+                "minLength": 1,
+                "format": "date-time",
+                "type": "string"
+              },
+              "canonical_reason_code": {
+                "minLength": 1,
+                "pattern": "^[^\\r\\n]+$",
+                "type": "string"
+              },
+              "transition_audit_ref": {
+                "minLength": 1,
+                "pattern": "^[^\\r\\n]+$",
+                "type": "string"
+              },
+              "outbox_event_ref": {
+                "minLength": 1,
+                "pattern": "^[^\\r\\n]+$",
+                "type": "string"
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
