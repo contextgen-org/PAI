@@ -586,12 +586,41 @@ describePostgres("PostgreSQL owner deployment verification", () => {
       }),
     ],
     [
+      "expected-version direct coalesce comparison",
+      replacementWriterSql({
+        expectedVersionCheck:
+          "p_expected_parent_version = coalesce(p_expected_parent_version, 0)",
+      }),
+    ],
+    [
       "proof hidden behind a constant-false branch",
       replacementWriterSql({
         beforeExpectedVersionCheck: `
           IF 1 = 0 THEN
             INSERT INTO timer.contract_audits(audit_id, child_id, created_at)
             VALUES ('unreachable-' || p_child_id, p_child_id, clock_timestamp());
+          END IF;
+        `,
+      }),
+    ],
+    [
+      "proof hidden behind a NULL branch",
+      replacementWriterSql({
+        beforeExpectedVersionCheck: `
+          IF NULL THEN
+            INSERT INTO timer.contract_audits(audit_id, child_id, created_at)
+            VALUES ('unreachable-null-' || p_child_id, p_child_id, clock_timestamp());
+          END IF;
+        `,
+      }),
+    ],
+    [
+      "proof hidden behind a string constant-false branch",
+      replacementWriterSql({
+        beforeExpectedVersionCheck: `
+          IF 'a' = 'b' THEN
+            INSERT INTO timer.contract_audits(audit_id, child_id, created_at)
+            VALUES ('unreachable-string-' || p_child_id, p_child_id, clock_timestamp());
           END IF;
         `,
       }),

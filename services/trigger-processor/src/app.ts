@@ -1,7 +1,13 @@
 import type { BotAuthorizationScopeV1 } from "@pai/auth";
 import {
+  AdmitTriggerAuthorizationFailureResponseV1Schema,
+  AdmitTriggerConflictResponseV1Schema,
+  AdmitTriggerInternalErrorResponseV1Schema,
+  AdmitTriggerInvalidRequestResponseV1Schema,
   AdmitTriggerRequestBodyV1Schema,
-  AdmitTriggerResponseV1Schema,
+  AdmitTriggerRetryableFailureResponseV1Schema,
+  AdmitTriggerSuccessResponseV1Schema,
+  AdmitTriggerUnauthenticatedResponseV1Schema,
   type AdmitTriggerResponseV1,
   type TriggerSourceV1,
 } from "@pai/contracts";
@@ -98,11 +104,49 @@ function admissionError(error: InvalidAdmitTriggerCommandError): ServiceError {
       cause: error,
     });
   }
-  const denied = error.kind === "authorization_denied";
+  if (error.kind === "capability_denied") {
+    return new ServiceError({
+      code: "capability_denied",
+      message: "workload capability check failed",
+      statusCode: 403,
+      retryable: false,
+      details: {
+        schema_version: "admit_trigger_command.v1",
+        reason: error.message,
+      },
+      cause: error,
+    });
+  }
+  if (error.kind === "authorization_denied") {
+    return new ServiceError({
+      code: "authorization_denied",
+      message: "workload authorization failed",
+      statusCode: 403,
+      retryable: false,
+      details: {
+        schema_version: "admit_trigger_command.v1",
+        reason: error.message,
+      },
+      cause: error,
+    });
+  }
+  if (error.kind === "authorization_scope_mismatch") {
+    return new ServiceError({
+      code: "authorization_scope_mismatch",
+      message: "workload authorization scope mismatch",
+      statusCode: 403,
+      retryable: false,
+      details: {
+        schema_version: "admit_trigger_command.v1",
+        reason: error.message,
+      },
+      cause: error,
+    });
+  }
   return new ServiceError({
-    code: denied ? "authorization_scope_mismatch" : "invalid_request",
-    message: denied ? "workload authorization failed" : "request validation failed",
-    statusCode: denied ? 403 : 400,
+    code: "invalid_request",
+    message: "request validation failed",
+    statusCode: 400,
     retryable: false,
     details: {
       schema_version: "admit_trigger_command.v1",
@@ -177,13 +221,13 @@ export function buildTriggerProcessorApp(
           schema: {
             body: AdmitTriggerRequestBodyV1Schema,
             response: {
-              200: AdmitTriggerResponseV1Schema,
-              400: AdmitTriggerResponseV1Schema,
-              401: AdmitTriggerResponseV1Schema,
-              403: AdmitTriggerResponseV1Schema,
-              409: AdmitTriggerResponseV1Schema,
-              500: AdmitTriggerResponseV1Schema,
-              503: AdmitTriggerResponseV1Schema,
+              200: AdmitTriggerSuccessResponseV1Schema,
+              400: AdmitTriggerInvalidRequestResponseV1Schema,
+              401: AdmitTriggerUnauthenticatedResponseV1Schema,
+              403: AdmitTriggerAuthorizationFailureResponseV1Schema,
+              409: AdmitTriggerConflictResponseV1Schema,
+              500: AdmitTriggerInternalErrorResponseV1Schema,
+              503: AdmitTriggerRetryableFailureResponseV1Schema,
             },
           },
         },

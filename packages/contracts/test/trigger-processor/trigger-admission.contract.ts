@@ -3,8 +3,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   AdmitTriggerCommandV1Schema,
+  AdmitTriggerConflictResponseV1Schema,
   AdmitTriggerRequestBodyV1Schema,
   AdmitTriggerResponseV1Schema,
+  AdmitTriggerRetryableFailureResponseV1Schema,
+  AdmitTriggerSuccessResponseV1Schema,
   TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1,
   TriggerAdmissionDecisionV1Schema,
   TrustedAdmissionFactsV1Schema,
@@ -91,6 +94,42 @@ describe("TriggerAdmissionDecisionV1", () => {
         trace_id: "route-trace",
       }),
     ).toBe(false);
+    expect(
+      Value.Check(AdmitTriggerResponseV1Schema, {
+        code: "trigger_accepted",
+        message: "accepted",
+        retryable: true,
+        details: {},
+        trace_id: "route-trace",
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(AdmitTriggerRetryableFailureResponseV1Schema, {
+        code: "serialization_retry_exhausted",
+        message: "retry",
+        retryable: false,
+        details: {},
+        trace_id: "route-trace",
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(AdmitTriggerConflictResponseV1Schema, {
+        code: "trigger_accepted",
+        message: "accepted",
+        retryable: false,
+        details: {},
+        trace_id: "route-trace",
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(AdmitTriggerSuccessResponseV1Schema, {
+        code: "trigger_accepted",
+        message: "accepted",
+        retryable: false,
+        details: {},
+        trace_id: "route-trace",
+      }),
+    ).toBe(true);
   });
 
   it("declares the canonical HTTP operations for all route-injected sources", () => {

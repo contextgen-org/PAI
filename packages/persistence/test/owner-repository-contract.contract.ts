@@ -458,6 +458,38 @@ describe("owner repository contracts", () => {
         `),
       ),
     ).toThrow(/slot\/process fence drift/);
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        signature,
+        body(`
+          PERFORM 1
+            FROM trigger_processor.bot_foreground_slots slot
+            JOIN trigger_processor.trigger_processes process
+              ON process.id = slot.process_id
+           WHERE false
+           FOR UPDATE;
+        `),
+      ),
+    ).toThrow(/unreachable relational proof|slot\/process fence drift/);
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        signature,
+        body(`
+          PERFORM 1
+            FROM trigger_processor.bot_foreground_slots slot
+            JOIN trigger_processor.trigger_processes process
+              ON process.id = slot.process_id
+           WHERE slot.bot_id = p_scope->>'bot_id'
+           FOR UPDATE;
+          PERFORM 1
+            FROM trigger_processor.bots b
+            JOIN trigger_processor.bot_permission_bindings binding ON 1 = 1
+           WHERE false;
+        `),
+      ),
+    ).toThrow(/unreachable relational proof|slot\/process fence drift/);
   });
 
   it("fails closed when FK columns drift outside declared table columns", () => {
@@ -588,6 +620,43 @@ describe("owner repository contracts", () => {
         constantFalseProofBody,
       ),
     ).toThrow(/unreachable proof block/);
+
+    const nullProofBody = constantFalseProofBody.replace(
+      "IF 2 = 3 THEN",
+      "IF NULL THEN",
+    );
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        transitionSignature,
+        nullProofBody,
+      ),
+    ).toThrow(/unreachable proof block/);
+
+    const stringFalseProofBody = constantFalseProofBody.replace(
+      "IF 2 = 3 THEN",
+      "IF 'a' = 'b' THEN",
+    );
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        transitionSignature,
+        stringFalseProofBody,
+      ),
+    ).toThrow(/unreachable proof block/);
+
+    const coalesceOnlyProofBody = partialExpectedBody.replace(
+      "RETURN '{}'::jsonb;",
+      `PERFORM p_expected_status = coalesce(p_expected_status, 'running');
+       RETURN '{}'::jsonb;`,
+    );
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        transitionSignature,
+        coalesceOnlyProofBody,
+      ),
+    ).toThrow(/CAS fence drift/);
 
     const dollarQuotedProofBody = partialExpectedBody.replace(
       `UPDATE trigger_processor.trigger_processes p

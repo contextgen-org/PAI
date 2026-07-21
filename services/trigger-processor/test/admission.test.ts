@@ -469,7 +469,7 @@ describe("Trigger admission", () => {
         ...command,
         explicit_interrupt: true,
       }),
-    ).rejects.toThrow("explicit interrupt");
+    ).rejects.toMatchObject({ kind: "capability_denied" });
     const developerCredential = {
       ...credential,
       claims: {
@@ -481,6 +481,7 @@ describe("Trigger admission", () => {
           roles: ["developer"],
           source_subject: "developer-1",
         },
+        capability: ["trigger.submit.chat", "trigger.interrupt"],
       },
     } as const satisfies VerifiedWorkloadCredential;
     await expect(
@@ -488,7 +489,7 @@ describe("Trigger admission", () => {
         ...command,
         explicit_interrupt: true,
       }),
-    ).rejects.toThrow("explicit interrupt");
+    ).rejects.toMatchObject({ kind: "authorization_denied" });
     const notificationCommandWithoutHash = {
       ...command,
       source: "notification",
@@ -505,7 +506,7 @@ describe("Trigger admission", () => {
         ...notificationCommandWithoutHash,
         explicit_interrupt: true,
       }),
-    ).rejects.toThrow("explicit interrupt");
+    ).rejects.toMatchObject({ kind: "capability_denied" });
 
     const superUserCredential = {
       ...credential,
@@ -533,6 +534,26 @@ describe("Trigger admission", () => {
         },
       }),
     });
+    const firstUnicodeCommand = {
+      ...command,
+      trigger_id: "trigger-unicode",
+      process_id: "process-unicode",
+      idempotency_key: "submit-unicode",
+      payload: { "é": 1, a: 2, "😀": 3 },
+    } as const;
+    const secondUnicodeCommand = {
+      ...firstUnicodeCommand,
+      payload: { "😀": 3, a: 2, "é": 1 },
+    } as const;
+    await application.admit(credential, firstUnicodeCommand);
+    const firstUnicodeHash = (
+      calls.at(-1)?.writer as { readonly arguments?: Record<string, unknown> }
+    )?.arguments?.p_request_hash;
+    await application.admit(credential, secondUnicodeCommand);
+    const secondUnicodeHash = (
+      calls.at(-1)?.writer as { readonly arguments?: Record<string, unknown> }
+    )?.arguments?.p_request_hash;
+    expect(firstUnicodeHash).toBe(secondUnicodeHash);
 
     const app = buildTriggerProcessorApp({ logger: false }, application);
     expect(app.hasDecorator("ownerDatabase")).toBe(false);
@@ -588,6 +609,49 @@ describe("Trigger admission", () => {
       },
     });
     expect(deniedScope.statusCode).toBe(403);
+    expect(JSON.parse(deniedScope.payload)).toMatchObject({
+      code: "authorization_scope_mismatch",
+    });
+    const interruptWithoutCapability = await routedApp.inject({
+      method: "POST",
+      url: "/internal/v1/triggers/admit/chat",
+      headers: { authorization: "Bearer aaa.bbb.ccc" },
+      payload: {
+        ...routeBody,
+        explicit_interrupt: true,
+      },
+    });
+    expect(interruptWithoutCapability.statusCode).toBe(403);
+    expect(JSON.parse(interruptWithoutCapability.payload)).toMatchObject({
+      code: "capability_denied",
+    });
+    const deniedRoleApp = buildTriggerProcessorApp(
+      {
+        logger: false,
+        auth: {
+          verifier: {
+            async verify() {
+              return developerCredential;
+            },
+          },
+        },
+      },
+      application,
+    );
+    const interruptWithoutRole = await deniedRoleApp.inject({
+      method: "POST",
+      url: "/internal/v1/triggers/admit/chat",
+      headers: { authorization: "Bearer aaa.bbb.ccc" },
+      payload: {
+        ...routeBody,
+        explicit_interrupt: true,
+      },
+    });
+    expect(interruptWithoutRole.statusCode).toBe(403);
+    expect(JSON.parse(interruptWithoutRole.payload)).toMatchObject({
+      code: "authorization_denied",
+    });
+    await deniedRoleApp.close();
     const invalidBody = await routedApp.inject({
       method: "POST",
       url: "/internal/v1/triggers/admit/chat",
@@ -732,5 +796,61 @@ describe("Trigger admission", () => {
       retryable: false,
     });
     await invariantApp.close();
+
+    for (const invalidWriterResponse of [
+      {
+        code: "trigger_accepted",
+        message: "accepted",
+        retryable: true,
+        details: {},
+        trace_id: "trace-invalid",
+      },
+      {
+        code: "authorization_denied",
+        message: "writer must not make route authorization decisions",
+        retryable: false,
+        details: {},
+        trace_id: "trace-invalid",
+      },
+      {
+        code: "serialization_retry_exhausted",
+        message: "retryable failures must be marked retryable",
+        retryable: false,
+        details: {},
+        trace_id: "trace-invalid",
+      },
+    ]) {
+      const invalidResponseDatabase = {
+        repository: {},
+        deployment: {},
+        unit_of_work: {
+          owner_service: "trigger_processor",
+          async withTransaction(
+            _request: Record<string, unknown>,
+            work: Function,
+          ) {
+            return work(
+              {
+                owner_service: "trigger_processor",
+                transaction_id: "tx-invalid-response",
+              },
+              {
+                owner: {
+                  async executeWriter() {
+                    return invalidWriterResponse;
+                  },
+                },
+              },
+            );
+          },
+        },
+      } as unknown as TriggerProcessorOwnerDatabaseV1;
+      await expect(
+        createTriggerAdmissionApplicationV1(invalidResponseDatabase).admit(
+          credential,
+          command,
+        ),
+      ).rejects.toMatchObject({ kind: "server_invariant" });
+    }
   });
 });

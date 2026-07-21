@@ -7,7 +7,7 @@ import {
 } from "@pai/auth";
 import {
   AdmitTriggerCommandV1Schema,
-  AdmitTriggerResponseV1Schema,
+  AdmitTriggerWriterResponseV1Schema,
   type AdmitTriggerCommandV1,
   type AdmitTriggerResponseV1,
   type TriggerActorTypeV1,
@@ -29,6 +29,8 @@ export class InvalidAdmitTriggerCommandError extends Error {
     public readonly kind:
       | "invalid_request"
       | "authorization_denied"
+      | "authorization_scope_mismatch"
+      | "capability_denied"
       | "server_invariant" = "invalid_request",
   ) {
     super(message);
@@ -51,7 +53,7 @@ function authenticatedActor(
   if (!claims.capability.includes(requiredCapability)) {
     throw new InvalidAdmitTriggerCommandError(
       `verified workload credential lacks ${requiredCapability}`,
-      "authorization_denied",
+      "capability_denied",
     );
   }
   if (source === "timer") {
@@ -94,8 +96,19 @@ function canonicalJson(value: unknown): string {
     return `[${value.map(canonicalJson).join(",")}]`;
   }
   if (value !== null && typeof value === "object") {
+    const encoder = new TextEncoder();
+    const compareUtf8Bytes = (left: string, right: string): number => {
+      const leftBytes = encoder.encode(left);
+      const rightBytes = encoder.encode(right);
+      const length = Math.min(leftBytes.byteLength, rightBytes.byteLength);
+      for (let index = 0; index < length; index += 1) {
+        const diff = (leftBytes[index] ?? 0) - (rightBytes[index] ?? 0);
+        if (diff !== 0) return diff;
+      }
+      return leftBytes.byteLength - rightBytes.byteLength;
+    };
     return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => compareUtf8Bytes(left, right))
       .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
       .join(",")}}`;
   }
@@ -132,8 +145,14 @@ function trustedExplicitInterrupt(
   ) {
     return true;
   }
+  if (!credential.claims.capability.includes("trigger.interrupt")) {
+    throw new InvalidAdmitTriggerCommandError(
+      "explicit interrupt requires trigger.interrupt",
+      "capability_denied",
+    );
+  }
   throw new InvalidAdmitTriggerCommandError(
-    "explicit interrupt requires trigger.interrupt and super_user delegation",
+    "explicit interrupt requires super_user delegation",
     "authorization_denied",
   );
 }
@@ -168,7 +187,7 @@ export function createTriggerAdmissionApplicationV1(
       ) {
         throw new InvalidAdmitTriggerCommandError(
           "verified workload credential does not match the complete bot scope",
-          "authorization_denied",
+          "authorization_scope_mismatch",
         );
       }
       const actor = authenticatedActor(credential, command.source);
@@ -220,7 +239,7 @@ export function createTriggerAdmissionApplicationV1(
             },
             expected_rows: 1,
           });
-          if (!Value.Check(AdmitTriggerResponseV1Schema, result)) {
+          if (!Value.Check(AdmitTriggerWriterResponseV1Schema, result)) {
             throw new InvalidAdmitTriggerCommandError(
               "admit_trigger_v1 returned a non-canonical response",
               "server_invariant",

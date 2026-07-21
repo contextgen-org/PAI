@@ -37,6 +37,10 @@ import {
 import {
   InMemoryObjectStorageBackendV1,
   ObjectStorageBackendErrorV1,
+  type BackendObjectHeadV1,
+  type BackendObjectRangeV1,
+  type BackendObjectStreamV1,
+  type ObjectStorageBackendV1,
   type PutBackendObjectV1,
 } from "../src/object-storage-backend.v1.js";
 import { objectScopeFingerprintV1 } from "../src/object-store-adapter-core.v1.js";
@@ -480,6 +484,14 @@ for (const kind of ["memory", "supabase"] as const) {
             error.details.reconciliation_required === true &&
             error.details.reconciliation_operation === "put_cleanup",
         );
+        harness.setNow("2026-07-20T00:18:00.000Z");
+        await expect(
+          store.reconcilePending({
+            worker_id: "integrity-cleanup-worker",
+            limit: 1,
+            lease_seconds: 30,
+          }),
+        ).resolves.toEqual({ claimed: 1, completed: 1, retry_scheduled: 0 });
         await expect(store.putImmutable(putRequest(expected))).resolves.toMatchObject({
           replayed: false,
         });
@@ -1145,6 +1157,100 @@ class PausedPutBackend extends InMemoryObjectStorageBackendV1 {
   }
 }
 
+class UnknownTerminalLatePublishBackend implements ObjectStorageBackendV1 {
+  #request: PutBackendObjectV1 | undefined;
+  #body: Uint8Array | undefined;
+  #published = false;
+
+  public async putIfAbsent(
+    request: PutBackendObjectV1,
+  ): Promise<BackendObjectHeadV1> {
+    this.#request = request;
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      for await (const chunk of request.body) {
+        chunks.push(chunk.slice());
+        size += chunk.byteLength;
+      }
+    } catch (error) {
+      const body = new Uint8Array(size);
+      let offset = 0;
+      for (const chunk of chunks) {
+        body.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      this.#body = body;
+      throw error;
+    }
+    throw new ObjectStorageBackendErrorV1(
+      "unavailable",
+      "expected source failure after declared prefix",
+    );
+  }
+
+  public publishLate(): void {
+    if (this.#request === undefined || this.#body === undefined) {
+      throw new Error("late upload was not captured");
+    }
+    this.#published = true;
+  }
+
+  public async head(
+    bucket: Parameters<ObjectStorageBackendV1["head"]>[0],
+    key: string,
+  ): Promise<BackendObjectHeadV1> {
+    if (
+      !this.#published ||
+      this.#request === undefined ||
+      this.#body === undefined ||
+      this.#request.bucket !== bucket ||
+      this.#request.key !== key
+    ) {
+      throw new ObjectStorageBackendErrorV1("not_found", "object not found");
+    }
+    return {
+      version: "late-version",
+      size_bytes: this.#body.byteLength,
+      media_type: this.#request.media_type,
+      sha256: this.#request.sha256,
+    };
+  }
+
+  public async get(
+    bucket: Parameters<ObjectStorageBackendV1["get"]>[0],
+    key: string,
+    _range?: BackendObjectRangeV1,
+  ): Promise<BackendObjectStreamV1> {
+    await this.head(bucket, key);
+    const body = this.#body;
+    if (body === undefined) throw new Error("late body missing");
+    return {
+      body: bytes(body),
+      offset: 0,
+      length: body.byteLength,
+      total_size_bytes: body.byteLength,
+    };
+  }
+
+  public async issueReadGrant(
+    bucket: Parameters<ObjectStorageBackendV1["issueReadGrant"]>[0],
+    key: string,
+    _ttlSeconds: number,
+  ): Promise<string> {
+    await this.head(bucket, key);
+    return `late-grant://${bucket}/${key}`;
+  }
+
+  public async delete(
+    bucket: Parameters<ObjectStorageBackendV1["delete"]>[0],
+    key: string,
+  ): Promise<void> {
+    await this.head(bucket, key);
+    this.#published = false;
+  }
+}
+
 describe("ObjectStore ambiguous finalization recovery", () => {
   it("recovers a put when finalize, lookup, and handoff all fail", async () => {
     const harness = createHarness("memory", new PutMetadataOutageRepository());
@@ -1424,6 +1530,56 @@ describe("ObjectStore ambiguous finalization recovery", () => {
       replayed: false,
       sha256: digest(body),
     });
+  });
+
+  it("treats source failure after the declared prefix as an unknown PUT outcome", async () => {
+    const metadata = new InMemoryObjectMetadataRepositoryV1();
+    const backend = new UnknownTerminalLatePublishBackend();
+    let now = new Date("2026-07-20T00:00:00.000Z");
+    const store = new InMemoryObjectStoreAdapterV1({
+      metadataRepository: metadata,
+      backend,
+      accessPolicyVerifier: new TestObjectAccessPolicyVerifierV1(),
+      policies: [policy],
+      now: () => now,
+    });
+    const declared = new TextEncoder().encode("declared-prefix");
+    const extra = new TextEncoder().encode("-extra");
+    async function* declaredThenExtra(): AsyncIterable<Uint8Array> {
+      yield declared;
+      yield extra;
+    }
+    await expect(
+      store.putImmutable(
+        putRequest(declared, {
+          body: declaredThenExtra(),
+          expected_sha256: digest(declared),
+          size_bytes: declared.byteLength,
+        }),
+      ),
+    ).rejects.toSatisfy(expectCode("storage_unavailable"));
+
+    now = new Date("2026-07-20T00:12:00.000Z");
+    await expect(
+      store.reconcilePending({
+        worker_id: "unknown-terminal-cleaner",
+        limit: 1,
+        lease_seconds: 30,
+      }),
+    ).resolves.toEqual({ claimed: 1, completed: 0, retry_scheduled: 1 });
+    await expect(store.putImmutable(putRequest(declared))).rejects.toSatisfy(
+      expectCode("precondition_failed"),
+    );
+
+    backend.publishLate();
+    now = new Date("2026-07-20T00:18:00.000Z");
+    await expect(
+      store.reconcilePending({
+        worker_id: "still-unknown-cleaner",
+        limit: 1,
+        lease_seconds: 30,
+      }),
+    ).resolves.toEqual({ claimed: 1, completed: 0, retry_scheduled: 1 });
   });
 
   it("uses trusted read-back after an expired upload lease when delete and cleanup handoff both fail", async () => {

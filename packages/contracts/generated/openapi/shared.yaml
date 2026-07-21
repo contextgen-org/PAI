@@ -142,86 +142,69 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
-                  "additionalProperties": false,
-                  "type": "object",
-                  "required": [
-                    "code",
-                    "message",
-                    "retryable",
-                    "details",
-                    "trace_id"
-                  ],
-                  "properties": {
-                    "code": {
-                      "anyOf": [
-                        {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-success-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "trigger_accepted",
                           "type": "string"
                         },
-                        {
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "trigger_rejected",
                           "type": "string"
                         },
-                        {
-                          "const": "invalid_request",
+                        "message": {
+                          "minLength": 1,
                           "type": "string"
                         },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
                         },
-                        {
-                          "const": "authorization_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "capability_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_scope_mismatch",
-                          "type": "string"
-                        },
-                        {
-                          "const": "idempotency_conflict",
-                          "type": "string"
-                        },
-                        {
-                          "const": "stale_admission_fence",
-                          "type": "string"
-                        },
-                        {
-                          "const": "serialization_retry_exhausted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "transient_database_error",
-                          "type": "string"
-                        },
-                        {
-                          "const": "service_unavailable",
-                          "type": "string"
-                        },
-                        {
-                          "const": "internal_error",
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
                           "type": "string"
                         }
-                      ]
-                    },
-                    "message": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "details": {},
-                    "trace_id": {
-                      "minLength": 1,
-                      "type": "string"
+                      }
                     }
-                  }
+                  ]
                 }
               }
             }
@@ -231,7 +214,6 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
                   "additionalProperties": false,
                   "type": "object",
                   "required": [
@@ -243,66 +225,15 @@
                   ],
                   "properties": {
                     "code": {
-                      "anyOf": [
-                        {
-                          "const": "trigger_accepted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "trigger_rejected",
-                          "type": "string"
-                        },
-                        {
-                          "const": "invalid_request",
-                          "type": "string"
-                        },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "capability_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_scope_mismatch",
-                          "type": "string"
-                        },
-                        {
-                          "const": "idempotency_conflict",
-                          "type": "string"
-                        },
-                        {
-                          "const": "stale_admission_fence",
-                          "type": "string"
-                        },
-                        {
-                          "const": "serialization_retry_exhausted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "transient_database_error",
-                          "type": "string"
-                        },
-                        {
-                          "const": "service_unavailable",
-                          "type": "string"
-                        },
-                        {
-                          "const": "internal_error",
-                          "type": "string"
-                        }
-                      ]
+                      "const": "invalid_request",
+                      "type": "string"
                     },
                     "message": {
                       "minLength": 1,
                       "type": "string"
                     },
                     "retryable": {
+                      "const": false,
                       "type": "boolean"
                     },
                     "details": {},
@@ -320,7 +251,6 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
                   "additionalProperties": false,
                   "type": "object",
                   "required": [
@@ -332,66 +262,15 @@
                   ],
                   "properties": {
                     "code": {
-                      "anyOf": [
-                        {
-                          "const": "trigger_accepted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "trigger_rejected",
-                          "type": "string"
-                        },
-                        {
-                          "const": "invalid_request",
-                          "type": "string"
-                        },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "capability_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_scope_mismatch",
-                          "type": "string"
-                        },
-                        {
-                          "const": "idempotency_conflict",
-                          "type": "string"
-                        },
-                        {
-                          "const": "stale_admission_fence",
-                          "type": "string"
-                        },
-                        {
-                          "const": "serialization_retry_exhausted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "transient_database_error",
-                          "type": "string"
-                        },
-                        {
-                          "const": "service_unavailable",
-                          "type": "string"
-                        },
-                        {
-                          "const": "internal_error",
-                          "type": "string"
-                        }
-                      ]
+                      "const": "unauthenticated",
+                      "type": "string"
                     },
                     "message": {
                       "minLength": 1,
                       "type": "string"
                     },
                     "retryable": {
+                      "const": false,
                       "type": "boolean"
                     },
                     "details": {},
@@ -409,86 +288,99 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
-                  "additionalProperties": false,
-                  "type": "object",
-                  "required": [
-                    "code",
-                    "message",
-                    "retryable",
-                    "details",
-                    "trace_id"
-                  ],
-                  "properties": {
-                    "code": {
-                      "anyOf": [
-                        {
-                          "const": "trigger_accepted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "trigger_rejected",
-                          "type": "string"
-                        },
-                        {
-                          "const": "invalid_request",
-                          "type": "string"
-                        },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
-                        },
-                        {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-authorization-failure-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "authorization_denied",
                           "type": "string"
                         },
-                        {
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "capability_denied",
                           "type": "string"
                         },
-                        {
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "authorization_scope_mismatch",
                           "type": "string"
                         },
-                        {
-                          "const": "idempotency_conflict",
+                        "message": {
+                          "minLength": 1,
                           "type": "string"
                         },
-                        {
-                          "const": "stale_admission_fence",
-                          "type": "string"
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
                         },
-                        {
-                          "const": "serialization_retry_exhausted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "transient_database_error",
-                          "type": "string"
-                        },
-                        {
-                          "const": "service_unavailable",
-                          "type": "string"
-                        },
-                        {
-                          "const": "internal_error",
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
                           "type": "string"
                         }
-                      ]
-                    },
-                    "message": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "details": {},
-                    "trace_id": {
-                      "minLength": 1,
-                      "type": "string"
+                      }
                     }
-                  }
+                  ]
                 }
               }
             }
@@ -498,86 +390,69 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
-                  "additionalProperties": false,
-                  "type": "object",
-                  "required": [
-                    "code",
-                    "message",
-                    "retryable",
-                    "details",
-                    "trace_id"
-                  ],
-                  "properties": {
-                    "code": {
-                      "anyOf": [
-                        {
-                          "const": "trigger_accepted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "trigger_rejected",
-                          "type": "string"
-                        },
-                        {
-                          "const": "invalid_request",
-                          "type": "string"
-                        },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "capability_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_scope_mismatch",
-                          "type": "string"
-                        },
-                        {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-conflict-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "idempotency_conflict",
                           "type": "string"
                         },
-                        {
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "stale_admission_fence",
                           "type": "string"
                         },
-                        {
-                          "const": "serialization_retry_exhausted",
+                        "message": {
+                          "minLength": 1,
                           "type": "string"
                         },
-                        {
-                          "const": "transient_database_error",
-                          "type": "string"
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
                         },
-                        {
-                          "const": "service_unavailable",
-                          "type": "string"
-                        },
-                        {
-                          "const": "internal_error",
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
                           "type": "string"
                         }
-                      ]
-                    },
-                    "message": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "details": {},
-                    "trace_id": {
-                      "minLength": 1,
-                      "type": "string"
+                      }
                     }
-                  }
+                  ]
                 }
               }
             }
@@ -587,7 +462,6 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
                   "additionalProperties": false,
                   "type": "object",
                   "required": [
@@ -599,66 +473,15 @@
                   ],
                   "properties": {
                     "code": {
-                      "anyOf": [
-                        {
-                          "const": "trigger_accepted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "trigger_rejected",
-                          "type": "string"
-                        },
-                        {
-                          "const": "invalid_request",
-                          "type": "string"
-                        },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "capability_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_scope_mismatch",
-                          "type": "string"
-                        },
-                        {
-                          "const": "idempotency_conflict",
-                          "type": "string"
-                        },
-                        {
-                          "const": "stale_admission_fence",
-                          "type": "string"
-                        },
-                        {
-                          "const": "serialization_retry_exhausted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "transient_database_error",
-                          "type": "string"
-                        },
-                        {
-                          "const": "service_unavailable",
-                          "type": "string"
-                        },
-                        {
-                          "const": "internal_error",
-                          "type": "string"
-                        }
-                      ]
+                      "const": "internal_error",
+                      "type": "string"
                     },
                     "message": {
                       "minLength": 1,
                       "type": "string"
                     },
                     "retryable": {
+                      "const": false,
                       "type": "boolean"
                     },
                     "details": {},
@@ -676,86 +499,99 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
-                  "additionalProperties": false,
-                  "type": "object",
-                  "required": [
-                    "code",
-                    "message",
-                    "retryable",
-                    "details",
-                    "trace_id"
-                  ],
-                  "properties": {
-                    "code": {
-                      "anyOf": [
-                        {
-                          "const": "trigger_accepted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "trigger_rejected",
-                          "type": "string"
-                        },
-                        {
-                          "const": "invalid_request",
-                          "type": "string"
-                        },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "capability_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_scope_mismatch",
-                          "type": "string"
-                        },
-                        {
-                          "const": "idempotency_conflict",
-                          "type": "string"
-                        },
-                        {
-                          "const": "stale_admission_fence",
-                          "type": "string"
-                        },
-                        {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-retryable-failure-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "serialization_retry_exhausted",
                           "type": "string"
                         },
-                        {
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "transient_database_error",
                           "type": "string"
                         },
-                        {
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "service_unavailable",
                           "type": "string"
                         },
-                        {
-                          "const": "internal_error",
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
                           "type": "string"
                         }
-                      ]
-                    },
-                    "message": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "details": {},
-                    "trace_id": {
-                      "minLength": 1,
-                      "type": "string"
+                      }
                     }
-                  }
+                  ]
                 }
               }
             }
@@ -900,86 +736,69 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
-                  "additionalProperties": false,
-                  "type": "object",
-                  "required": [
-                    "code",
-                    "message",
-                    "retryable",
-                    "details",
-                    "trace_id"
-                  ],
-                  "properties": {
-                    "code": {
-                      "anyOf": [
-                        {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-success-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "trigger_accepted",
                           "type": "string"
                         },
-                        {
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "trigger_rejected",
                           "type": "string"
                         },
-                        {
-                          "const": "invalid_request",
+                        "message": {
+                          "minLength": 1,
                           "type": "string"
                         },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
                         },
-                        {
-                          "const": "authorization_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "capability_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_scope_mismatch",
-                          "type": "string"
-                        },
-                        {
-                          "const": "idempotency_conflict",
-                          "type": "string"
-                        },
-                        {
-                          "const": "stale_admission_fence",
-                          "type": "string"
-                        },
-                        {
-                          "const": "serialization_retry_exhausted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "transient_database_error",
-                          "type": "string"
-                        },
-                        {
-                          "const": "service_unavailable",
-                          "type": "string"
-                        },
-                        {
-                          "const": "internal_error",
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
                           "type": "string"
                         }
-                      ]
-                    },
-                    "message": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "details": {},
-                    "trace_id": {
-                      "minLength": 1,
-                      "type": "string"
+                      }
                     }
-                  }
+                  ]
                 }
               }
             }
@@ -989,7 +808,6 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
                   "additionalProperties": false,
                   "type": "object",
                   "required": [
@@ -1001,66 +819,15 @@
                   ],
                   "properties": {
                     "code": {
-                      "anyOf": [
-                        {
-                          "const": "trigger_accepted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "trigger_rejected",
-                          "type": "string"
-                        },
-                        {
-                          "const": "invalid_request",
-                          "type": "string"
-                        },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "capability_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_scope_mismatch",
-                          "type": "string"
-                        },
-                        {
-                          "const": "idempotency_conflict",
-                          "type": "string"
-                        },
-                        {
-                          "const": "stale_admission_fence",
-                          "type": "string"
-                        },
-                        {
-                          "const": "serialization_retry_exhausted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "transient_database_error",
-                          "type": "string"
-                        },
-                        {
-                          "const": "service_unavailable",
-                          "type": "string"
-                        },
-                        {
-                          "const": "internal_error",
-                          "type": "string"
-                        }
-                      ]
+                      "const": "invalid_request",
+                      "type": "string"
                     },
                     "message": {
                       "minLength": 1,
                       "type": "string"
                     },
                     "retryable": {
+                      "const": false,
                       "type": "boolean"
                     },
                     "details": {},
@@ -1078,7 +845,6 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
                   "additionalProperties": false,
                   "type": "object",
                   "required": [
@@ -1090,66 +856,15 @@
                   ],
                   "properties": {
                     "code": {
-                      "anyOf": [
-                        {
-                          "const": "trigger_accepted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "trigger_rejected",
-                          "type": "string"
-                        },
-                        {
-                          "const": "invalid_request",
-                          "type": "string"
-                        },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "capability_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_scope_mismatch",
-                          "type": "string"
-                        },
-                        {
-                          "const": "idempotency_conflict",
-                          "type": "string"
-                        },
-                        {
-                          "const": "stale_admission_fence",
-                          "type": "string"
-                        },
-                        {
-                          "const": "serialization_retry_exhausted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "transient_database_error",
-                          "type": "string"
-                        },
-                        {
-                          "const": "service_unavailable",
-                          "type": "string"
-                        },
-                        {
-                          "const": "internal_error",
-                          "type": "string"
-                        }
-                      ]
+                      "const": "unauthenticated",
+                      "type": "string"
                     },
                     "message": {
                       "minLength": 1,
                       "type": "string"
                     },
                     "retryable": {
+                      "const": false,
                       "type": "boolean"
                     },
                     "details": {},
@@ -1167,86 +882,99 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
-                  "additionalProperties": false,
-                  "type": "object",
-                  "required": [
-                    "code",
-                    "message",
-                    "retryable",
-                    "details",
-                    "trace_id"
-                  ],
-                  "properties": {
-                    "code": {
-                      "anyOf": [
-                        {
-                          "const": "trigger_accepted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "trigger_rejected",
-                          "type": "string"
-                        },
-                        {
-                          "const": "invalid_request",
-                          "type": "string"
-                        },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
-                        },
-                        {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-authorization-failure-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "authorization_denied",
                           "type": "string"
                         },
-                        {
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "capability_denied",
                           "type": "string"
                         },
-                        {
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "authorization_scope_mismatch",
                           "type": "string"
                         },
-                        {
-                          "const": "idempotency_conflict",
+                        "message": {
+                          "minLength": 1,
                           "type": "string"
                         },
-                        {
-                          "const": "stale_admission_fence",
-                          "type": "string"
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
                         },
-                        {
-                          "const": "serialization_retry_exhausted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "transient_database_error",
-                          "type": "string"
-                        },
-                        {
-                          "const": "service_unavailable",
-                          "type": "string"
-                        },
-                        {
-                          "const": "internal_error",
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
                           "type": "string"
                         }
-                      ]
-                    },
-                    "message": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "details": {},
-                    "trace_id": {
-                      "minLength": 1,
-                      "type": "string"
+                      }
                     }
-                  }
+                  ]
                 }
               }
             }
@@ -1256,86 +984,69 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
-                  "additionalProperties": false,
-                  "type": "object",
-                  "required": [
-                    "code",
-                    "message",
-                    "retryable",
-                    "details",
-                    "trace_id"
-                  ],
-                  "properties": {
-                    "code": {
-                      "anyOf": [
-                        {
-                          "const": "trigger_accepted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "trigger_rejected",
-                          "type": "string"
-                        },
-                        {
-                          "const": "invalid_request",
-                          "type": "string"
-                        },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "capability_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_scope_mismatch",
-                          "type": "string"
-                        },
-                        {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-conflict-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "idempotency_conflict",
                           "type": "string"
                         },
-                        {
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "stale_admission_fence",
                           "type": "string"
                         },
-                        {
-                          "const": "serialization_retry_exhausted",
+                        "message": {
+                          "minLength": 1,
                           "type": "string"
                         },
-                        {
-                          "const": "transient_database_error",
-                          "type": "string"
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
                         },
-                        {
-                          "const": "service_unavailable",
-                          "type": "string"
-                        },
-                        {
-                          "const": "internal_error",
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
                           "type": "string"
                         }
-                      ]
-                    },
-                    "message": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "details": {},
-                    "trace_id": {
-                      "minLength": 1,
-                      "type": "string"
+                      }
                     }
-                  }
+                  ]
                 }
               }
             }
@@ -1345,7 +1056,6 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
                   "additionalProperties": false,
                   "type": "object",
                   "required": [
@@ -1357,66 +1067,15 @@
                   ],
                   "properties": {
                     "code": {
-                      "anyOf": [
-                        {
-                          "const": "trigger_accepted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "trigger_rejected",
-                          "type": "string"
-                        },
-                        {
-                          "const": "invalid_request",
-                          "type": "string"
-                        },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "capability_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_scope_mismatch",
-                          "type": "string"
-                        },
-                        {
-                          "const": "idempotency_conflict",
-                          "type": "string"
-                        },
-                        {
-                          "const": "stale_admission_fence",
-                          "type": "string"
-                        },
-                        {
-                          "const": "serialization_retry_exhausted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "transient_database_error",
-                          "type": "string"
-                        },
-                        {
-                          "const": "service_unavailable",
-                          "type": "string"
-                        },
-                        {
-                          "const": "internal_error",
-                          "type": "string"
-                        }
-                      ]
+                      "const": "internal_error",
+                      "type": "string"
                     },
                     "message": {
                       "minLength": 1,
                       "type": "string"
                     },
                     "retryable": {
+                      "const": false,
                       "type": "boolean"
                     },
                     "details": {},
@@ -1434,86 +1093,99 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
-                  "additionalProperties": false,
-                  "type": "object",
-                  "required": [
-                    "code",
-                    "message",
-                    "retryable",
-                    "details",
-                    "trace_id"
-                  ],
-                  "properties": {
-                    "code": {
-                      "anyOf": [
-                        {
-                          "const": "trigger_accepted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "trigger_rejected",
-                          "type": "string"
-                        },
-                        {
-                          "const": "invalid_request",
-                          "type": "string"
-                        },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "capability_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_scope_mismatch",
-                          "type": "string"
-                        },
-                        {
-                          "const": "idempotency_conflict",
-                          "type": "string"
-                        },
-                        {
-                          "const": "stale_admission_fence",
-                          "type": "string"
-                        },
-                        {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-retryable-failure-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "serialization_retry_exhausted",
                           "type": "string"
                         },
-                        {
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "transient_database_error",
                           "type": "string"
                         },
-                        {
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "service_unavailable",
                           "type": "string"
                         },
-                        {
-                          "const": "internal_error",
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
                           "type": "string"
                         }
-                      ]
-                    },
-                    "message": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "details": {},
-                    "trace_id": {
-                      "minLength": 1,
-                      "type": "string"
+                      }
                     }
-                  }
+                  ]
                 }
               }
             }
@@ -1658,86 +1330,69 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
-                  "additionalProperties": false,
-                  "type": "object",
-                  "required": [
-                    "code",
-                    "message",
-                    "retryable",
-                    "details",
-                    "trace_id"
-                  ],
-                  "properties": {
-                    "code": {
-                      "anyOf": [
-                        {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-success-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "trigger_accepted",
                           "type": "string"
                         },
-                        {
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "trigger_rejected",
                           "type": "string"
                         },
-                        {
-                          "const": "invalid_request",
+                        "message": {
+                          "minLength": 1,
                           "type": "string"
                         },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
                         },
-                        {
-                          "const": "authorization_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "capability_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_scope_mismatch",
-                          "type": "string"
-                        },
-                        {
-                          "const": "idempotency_conflict",
-                          "type": "string"
-                        },
-                        {
-                          "const": "stale_admission_fence",
-                          "type": "string"
-                        },
-                        {
-                          "const": "serialization_retry_exhausted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "transient_database_error",
-                          "type": "string"
-                        },
-                        {
-                          "const": "service_unavailable",
-                          "type": "string"
-                        },
-                        {
-                          "const": "internal_error",
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
                           "type": "string"
                         }
-                      ]
-                    },
-                    "message": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "details": {},
-                    "trace_id": {
-                      "minLength": 1,
-                      "type": "string"
+                      }
                     }
-                  }
+                  ]
                 }
               }
             }
@@ -1747,7 +1402,6 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
                   "additionalProperties": false,
                   "type": "object",
                   "required": [
@@ -1759,66 +1413,15 @@
                   ],
                   "properties": {
                     "code": {
-                      "anyOf": [
-                        {
-                          "const": "trigger_accepted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "trigger_rejected",
-                          "type": "string"
-                        },
-                        {
-                          "const": "invalid_request",
-                          "type": "string"
-                        },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "capability_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_scope_mismatch",
-                          "type": "string"
-                        },
-                        {
-                          "const": "idempotency_conflict",
-                          "type": "string"
-                        },
-                        {
-                          "const": "stale_admission_fence",
-                          "type": "string"
-                        },
-                        {
-                          "const": "serialization_retry_exhausted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "transient_database_error",
-                          "type": "string"
-                        },
-                        {
-                          "const": "service_unavailable",
-                          "type": "string"
-                        },
-                        {
-                          "const": "internal_error",
-                          "type": "string"
-                        }
-                      ]
+                      "const": "invalid_request",
+                      "type": "string"
                     },
                     "message": {
                       "minLength": 1,
                       "type": "string"
                     },
                     "retryable": {
+                      "const": false,
                       "type": "boolean"
                     },
                     "details": {},
@@ -1836,7 +1439,6 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
                   "additionalProperties": false,
                   "type": "object",
                   "required": [
@@ -1848,66 +1450,15 @@
                   ],
                   "properties": {
                     "code": {
-                      "anyOf": [
-                        {
-                          "const": "trigger_accepted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "trigger_rejected",
-                          "type": "string"
-                        },
-                        {
-                          "const": "invalid_request",
-                          "type": "string"
-                        },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "capability_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_scope_mismatch",
-                          "type": "string"
-                        },
-                        {
-                          "const": "idempotency_conflict",
-                          "type": "string"
-                        },
-                        {
-                          "const": "stale_admission_fence",
-                          "type": "string"
-                        },
-                        {
-                          "const": "serialization_retry_exhausted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "transient_database_error",
-                          "type": "string"
-                        },
-                        {
-                          "const": "service_unavailable",
-                          "type": "string"
-                        },
-                        {
-                          "const": "internal_error",
-                          "type": "string"
-                        }
-                      ]
+                      "const": "unauthenticated",
+                      "type": "string"
                     },
                     "message": {
                       "minLength": 1,
                       "type": "string"
                     },
                     "retryable": {
+                      "const": false,
                       "type": "boolean"
                     },
                     "details": {},
@@ -1925,86 +1476,99 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
-                  "additionalProperties": false,
-                  "type": "object",
-                  "required": [
-                    "code",
-                    "message",
-                    "retryable",
-                    "details",
-                    "trace_id"
-                  ],
-                  "properties": {
-                    "code": {
-                      "anyOf": [
-                        {
-                          "const": "trigger_accepted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "trigger_rejected",
-                          "type": "string"
-                        },
-                        {
-                          "const": "invalid_request",
-                          "type": "string"
-                        },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
-                        },
-                        {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-authorization-failure-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "authorization_denied",
                           "type": "string"
                         },
-                        {
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "capability_denied",
                           "type": "string"
                         },
-                        {
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "authorization_scope_mismatch",
                           "type": "string"
                         },
-                        {
-                          "const": "idempotency_conflict",
+                        "message": {
+                          "minLength": 1,
                           "type": "string"
                         },
-                        {
-                          "const": "stale_admission_fence",
-                          "type": "string"
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
                         },
-                        {
-                          "const": "serialization_retry_exhausted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "transient_database_error",
-                          "type": "string"
-                        },
-                        {
-                          "const": "service_unavailable",
-                          "type": "string"
-                        },
-                        {
-                          "const": "internal_error",
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
                           "type": "string"
                         }
-                      ]
-                    },
-                    "message": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "details": {},
-                    "trace_id": {
-                      "minLength": 1,
-                      "type": "string"
+                      }
                     }
-                  }
+                  ]
                 }
               }
             }
@@ -2014,86 +1578,69 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
-                  "additionalProperties": false,
-                  "type": "object",
-                  "required": [
-                    "code",
-                    "message",
-                    "retryable",
-                    "details",
-                    "trace_id"
-                  ],
-                  "properties": {
-                    "code": {
-                      "anyOf": [
-                        {
-                          "const": "trigger_accepted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "trigger_rejected",
-                          "type": "string"
-                        },
-                        {
-                          "const": "invalid_request",
-                          "type": "string"
-                        },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "capability_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_scope_mismatch",
-                          "type": "string"
-                        },
-                        {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-conflict-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "idempotency_conflict",
                           "type": "string"
                         },
-                        {
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "stale_admission_fence",
                           "type": "string"
                         },
-                        {
-                          "const": "serialization_retry_exhausted",
+                        "message": {
+                          "minLength": 1,
                           "type": "string"
                         },
-                        {
-                          "const": "transient_database_error",
-                          "type": "string"
+                        "retryable": {
+                          "const": false,
+                          "type": "boolean"
                         },
-                        {
-                          "const": "service_unavailable",
-                          "type": "string"
-                        },
-                        {
-                          "const": "internal_error",
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
                           "type": "string"
                         }
-                      ]
-                    },
-                    "message": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "details": {},
-                    "trace_id": {
-                      "minLength": 1,
-                      "type": "string"
+                      }
                     }
-                  }
+                  ]
                 }
               }
             }
@@ -2103,7 +1650,6 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
                   "additionalProperties": false,
                   "type": "object",
                   "required": [
@@ -2115,66 +1661,15 @@
                   ],
                   "properties": {
                     "code": {
-                      "anyOf": [
-                        {
-                          "const": "trigger_accepted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "trigger_rejected",
-                          "type": "string"
-                        },
-                        {
-                          "const": "invalid_request",
-                          "type": "string"
-                        },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "capability_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_scope_mismatch",
-                          "type": "string"
-                        },
-                        {
-                          "const": "idempotency_conflict",
-                          "type": "string"
-                        },
-                        {
-                          "const": "stale_admission_fence",
-                          "type": "string"
-                        },
-                        {
-                          "const": "serialization_retry_exhausted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "transient_database_error",
-                          "type": "string"
-                        },
-                        {
-                          "const": "service_unavailable",
-                          "type": "string"
-                        },
-                        {
-                          "const": "internal_error",
-                          "type": "string"
-                        }
-                      ]
+                      "const": "internal_error",
+                      "type": "string"
                     },
                     "message": {
                       "minLength": 1,
                       "type": "string"
                     },
                     "retryable": {
+                      "const": false,
                       "type": "boolean"
                     },
                     "details": {},
@@ -2192,86 +1687,99 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
-                  "additionalProperties": false,
-                  "type": "object",
-                  "required": [
-                    "code",
-                    "message",
-                    "retryable",
-                    "details",
-                    "trace_id"
-                  ],
-                  "properties": {
-                    "code": {
-                      "anyOf": [
-                        {
-                          "const": "trigger_accepted",
-                          "type": "string"
-                        },
-                        {
-                          "const": "trigger_rejected",
-                          "type": "string"
-                        },
-                        {
-                          "const": "invalid_request",
-                          "type": "string"
-                        },
-                        {
-                          "const": "unauthenticated",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "capability_denied",
-                          "type": "string"
-                        },
-                        {
-                          "const": "authorization_scope_mismatch",
-                          "type": "string"
-                        },
-                        {
-                          "const": "idempotency_conflict",
-                          "type": "string"
-                        },
-                        {
-                          "const": "stale_admission_fence",
-                          "type": "string"
-                        },
-                        {
+                  "$id": "urn:pai:trigger-processor:admit-trigger-retryable-failure-response:v1",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "serialization_retry_exhausted",
                           "type": "string"
                         },
-                        {
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "transient_database_error",
                           "type": "string"
                         },
-                        {
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "details",
+                        "trace_id"
+                      ],
+                      "properties": {
+                        "code": {
                           "const": "service_unavailable",
                           "type": "string"
                         },
-                        {
-                          "const": "internal_error",
+                        "message": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "details": {},
+                        "trace_id": {
+                          "minLength": 1,
                           "type": "string"
                         }
-                      ]
-                    },
-                    "message": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "retryable": {
-                      "type": "boolean"
-                    },
-                    "details": {},
-                    "trace_id": {
-                      "minLength": 1,
-                      "type": "string"
+                      }
                     }
-                  }
+                  ]
                 }
               }
             }
@@ -3544,85 +3052,418 @@
       },
       "AdmitTriggerResponseV1": {
         "$id": "urn:pai:trigger-processor:admit-trigger-response:v1",
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "code",
-          "message",
-          "retryable",
-          "details",
-          "trace_id"
-        ],
-        "properties": {
-          "code": {
+        "anyOf": [
+          {
+            "$id": "urn:pai:trigger-processor:admit-trigger-success-response:v1",
             "anyOf": [
               {
-                "const": "trigger_accepted",
-                "type": "string"
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "code",
+                  "message",
+                  "retryable",
+                  "details",
+                  "trace_id"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "trigger_accepted",
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "const": false,
+                    "type": "boolean"
+                  },
+                  "details": {},
+                  "trace_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
               },
               {
-                "const": "trigger_rejected",
-                "type": "string"
-              },
-              {
-                "const": "invalid_request",
-                "type": "string"
-              },
-              {
-                "const": "unauthenticated",
-                "type": "string"
-              },
-              {
-                "const": "authorization_denied",
-                "type": "string"
-              },
-              {
-                "const": "capability_denied",
-                "type": "string"
-              },
-              {
-                "const": "authorization_scope_mismatch",
-                "type": "string"
-              },
-              {
-                "const": "idempotency_conflict",
-                "type": "string"
-              },
-              {
-                "const": "stale_admission_fence",
-                "type": "string"
-              },
-              {
-                "const": "serialization_retry_exhausted",
-                "type": "string"
-              },
-              {
-                "const": "transient_database_error",
-                "type": "string"
-              },
-              {
-                "const": "service_unavailable",
-                "type": "string"
-              },
-              {
-                "const": "internal_error",
-                "type": "string"
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "code",
+                  "message",
+                  "retryable",
+                  "details",
+                  "trace_id"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "trigger_rejected",
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "const": false,
+                    "type": "boolean"
+                  },
+                  "details": {},
+                  "trace_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
               }
             ]
           },
-          "message": {
-            "minLength": 1,
-            "type": "string"
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "code",
+              "message",
+              "retryable",
+              "details",
+              "trace_id"
+            ],
+            "properties": {
+              "code": {
+                "const": "invalid_request",
+                "type": "string"
+              },
+              "message": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "retryable": {
+                "const": false,
+                "type": "boolean"
+              },
+              "details": {},
+              "trace_id": {
+                "minLength": 1,
+                "type": "string"
+              }
+            }
           },
-          "retryable": {
-            "type": "boolean"
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "code",
+              "message",
+              "retryable",
+              "details",
+              "trace_id"
+            ],
+            "properties": {
+              "code": {
+                "const": "unauthenticated",
+                "type": "string"
+              },
+              "message": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "retryable": {
+                "const": false,
+                "type": "boolean"
+              },
+              "details": {},
+              "trace_id": {
+                "minLength": 1,
+                "type": "string"
+              }
+            }
           },
-          "details": {},
-          "trace_id": {
-            "minLength": 1,
-            "type": "string"
+          {
+            "$id": "urn:pai:trigger-processor:admit-trigger-authorization-failure-response:v1",
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "code",
+                  "message",
+                  "retryable",
+                  "details",
+                  "trace_id"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "authorization_denied",
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "const": false,
+                    "type": "boolean"
+                  },
+                  "details": {},
+                  "trace_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "code",
+                  "message",
+                  "retryable",
+                  "details",
+                  "trace_id"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "capability_denied",
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "const": false,
+                    "type": "boolean"
+                  },
+                  "details": {},
+                  "trace_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "code",
+                  "message",
+                  "retryable",
+                  "details",
+                  "trace_id"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "authorization_scope_mismatch",
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "const": false,
+                    "type": "boolean"
+                  },
+                  "details": {},
+                  "trace_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "$id": "urn:pai:trigger-processor:admit-trigger-conflict-response:v1",
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "code",
+                  "message",
+                  "retryable",
+                  "details",
+                  "trace_id"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "idempotency_conflict",
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "const": false,
+                    "type": "boolean"
+                  },
+                  "details": {},
+                  "trace_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "code",
+                  "message",
+                  "retryable",
+                  "details",
+                  "trace_id"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "stale_admission_fence",
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "const": false,
+                    "type": "boolean"
+                  },
+                  "details": {},
+                  "trace_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "code",
+              "message",
+              "retryable",
+              "details",
+              "trace_id"
+            ],
+            "properties": {
+              "code": {
+                "const": "internal_error",
+                "type": "string"
+              },
+              "message": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "retryable": {
+                "const": false,
+                "type": "boolean"
+              },
+              "details": {},
+              "trace_id": {
+                "minLength": 1,
+                "type": "string"
+              }
+            }
+          },
+          {
+            "$id": "urn:pai:trigger-processor:admit-trigger-retryable-failure-response:v1",
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "code",
+                  "message",
+                  "retryable",
+                  "details",
+                  "trace_id"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "serialization_retry_exhausted",
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "const": true,
+                    "type": "boolean"
+                  },
+                  "details": {},
+                  "trace_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "code",
+                  "message",
+                  "retryable",
+                  "details",
+                  "trace_id"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "transient_database_error",
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "const": true,
+                    "type": "boolean"
+                  },
+                  "details": {},
+                  "trace_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "code",
+                  "message",
+                  "retryable",
+                  "details",
+                  "trace_id"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "service_unavailable",
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "const": true,
+                    "type": "boolean"
+                  },
+                  "details": {},
+                  "trace_id": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                }
+              }
+            ]
           }
-        }
+        ]
       },
       "TrustedAdmissionFactsV1": {
         "$id": "urn:pai:trigger-processor:trusted-admission-facts:v1",

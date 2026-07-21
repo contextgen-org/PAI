@@ -217,7 +217,11 @@ export interface SupabaseStorageAdapterOptionsV1 {
   readonly allowVolatileMetadataRepositoryForTests?: boolean;
 }
 
-/** The only production ObjectStore adapter allowed by the parent contract. */
+/**
+ * Supabase storage adapter shell. Production construction is intentionally
+ * fail-closed until this backend has an attempt-specific terminal receipt
+ * protocol and a transactional Postgres metadata repository/worker wiring.
+ */
 export class SupabaseStorageAdapter extends ObjectStoreAdapterCoreV1 {
   public constructor(options: SupabaseStorageAdapterOptionsV1) {
     if (
@@ -228,6 +232,11 @@ export class SupabaseStorageAdapter extends ObjectStoreAdapterCoreV1 {
     ) {
       throw new Error(
         "SupabaseStorageAdapter requires a transactional Postgres metadata repository",
+      );
+    }
+    if (options.allowVolatileMetadataRepositoryForTests !== true) {
+      throw new Error(
+        "SupabaseStorageAdapter production ObjectStore reconciliation is fail-closed until Supabase upload-attempt terminal proof and worker wiring are implemented",
       );
     }
     const client = createClient(options.url, options.secretKey, {

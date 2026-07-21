@@ -76,7 +76,7 @@ function openApiOperation(operation) {
                 : "Canonical error envelope",
             content: {
               "application/json": {
-                schema: responseSchema,
+                schema: operation.response_schemas_by_status[status] ?? responseSchema,
               },
             },
           },

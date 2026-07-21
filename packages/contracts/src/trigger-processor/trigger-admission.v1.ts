@@ -78,35 +78,95 @@ export const AdmitTriggerCommandV1Schema = Type.Object(
 
 export type AdmitTriggerCommandV1 = Static<typeof AdmitTriggerCommandV1Schema>;
 
-export const AdmitTriggerResponseV1Schema = Type.Object(
+function admitTriggerResponseV1Schema<
+  const TCode extends string,
+  const TRetryable extends boolean,
+>(code: TCode, retryable: TRetryable) {
+  return Type.Object(
+    {
+      code: Type.Literal(code),
+      message: Type.String({ minLength: 1 }),
+      retryable: Type.Literal(retryable),
+      details: Type.Unknown(),
+      trace_id: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  );
+}
+
+export const AdmitTriggerSuccessResponseV1Schema = Type.Union(
+  [
+    admitTriggerResponseV1Schema("trigger_accepted", false),
+    admitTriggerResponseV1Schema("trigger_rejected", false),
+  ],
+  { $id: "urn:pai:trigger-processor:admit-trigger-success-response:v1" },
+);
+
+export const AdmitTriggerInvalidRequestResponseV1Schema =
+  admitTriggerResponseV1Schema("invalid_request", false);
+
+export const AdmitTriggerUnauthenticatedResponseV1Schema =
+  admitTriggerResponseV1Schema("unauthenticated", false);
+
+export const AdmitTriggerAuthorizationFailureResponseV1Schema = Type.Union(
+  [
+    admitTriggerResponseV1Schema("authorization_denied", false),
+    admitTriggerResponseV1Schema("capability_denied", false),
+    admitTriggerResponseV1Schema("authorization_scope_mismatch", false),
+  ],
   {
-    code: Type.Union([
-      Type.Literal("trigger_accepted"),
-      Type.Literal("trigger_rejected"),
-      Type.Literal("invalid_request"),
-      Type.Literal("unauthenticated"),
-      Type.Literal("authorization_denied"),
-      Type.Literal("capability_denied"),
-      Type.Literal("authorization_scope_mismatch"),
-      Type.Literal("idempotency_conflict"),
-      Type.Literal("stale_admission_fence"),
-      Type.Literal("serialization_retry_exhausted"),
-      Type.Literal("transient_database_error"),
-      Type.Literal("service_unavailable"),
-      Type.Literal("internal_error"),
-    ]),
-    message: Type.String({ minLength: 1 }),
-    retryable: Type.Boolean(),
-    details: Type.Unknown(),
-    trace_id: Type.String({ minLength: 1 }),
-  },
-  {
-    $id: "urn:pai:trigger-processor:admit-trigger-response:v1",
-    additionalProperties: false,
+    $id: "urn:pai:trigger-processor:admit-trigger-authorization-failure-response:v1",
   },
 );
 
+export const AdmitTriggerConflictResponseV1Schema = Type.Union(
+  [
+    admitTriggerResponseV1Schema("idempotency_conflict", false),
+    admitTriggerResponseV1Schema("stale_admission_fence", false),
+  ],
+  { $id: "urn:pai:trigger-processor:admit-trigger-conflict-response:v1" },
+);
+
+export const AdmitTriggerInternalErrorResponseV1Schema =
+  admitTriggerResponseV1Schema("internal_error", false);
+
+export const AdmitTriggerRetryableFailureResponseV1Schema = Type.Union(
+  [
+    admitTriggerResponseV1Schema("serialization_retry_exhausted", true),
+    admitTriggerResponseV1Schema("transient_database_error", true),
+    admitTriggerResponseV1Schema("service_unavailable", true),
+  ],
+  {
+    $id: "urn:pai:trigger-processor:admit-trigger-retryable-failure-response:v1",
+  },
+);
+
+export const AdmitTriggerWriterResponseV1Schema = Type.Union(
+  [
+    AdmitTriggerSuccessResponseV1Schema,
+    AdmitTriggerConflictResponseV1Schema,
+    AdmitTriggerRetryableFailureResponseV1Schema,
+  ],
+  { $id: "urn:pai:trigger-processor:admit-trigger-writer-response:v1" },
+);
+
+export const AdmitTriggerResponseV1Schema = Type.Union(
+  [
+    AdmitTriggerSuccessResponseV1Schema,
+    AdmitTriggerInvalidRequestResponseV1Schema,
+    AdmitTriggerUnauthenticatedResponseV1Schema,
+    AdmitTriggerAuthorizationFailureResponseV1Schema,
+    AdmitTriggerConflictResponseV1Schema,
+    AdmitTriggerInternalErrorResponseV1Schema,
+    AdmitTriggerRetryableFailureResponseV1Schema,
+  ],
+  { $id: "urn:pai:trigger-processor:admit-trigger-response:v1" },
+);
+
 export type AdmitTriggerResponseV1 = Static<typeof AdmitTriggerResponseV1Schema>;
+export type AdmitTriggerWriterResponseV1 = Static<
+  typeof AdmitTriggerWriterResponseV1Schema
+>;
 
 const trustedAdmissionFactsBaseProperties = {
   source: TriggerSourceV1Schema,

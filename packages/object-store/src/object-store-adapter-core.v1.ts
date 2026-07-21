@@ -847,8 +847,7 @@ export class ObjectStoreAdapterCoreV1
           );
           throw integrityFailure;
         } else {
-          const foregroundUploadMayStillArrive =
-            !backendPutCompleted && upload.failure() === undefined;
+          const foregroundUploadMayStillArrive = !backendPutCompleted;
           await this.#metadata
             .handoffPutReconciliation(
               reservation.reservation_id,

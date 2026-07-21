@@ -912,6 +912,7 @@ function evaluateConstantBooleanCondition(condition: string): boolean | undefine
   while (/^\([^()]*\)$/.test(normalized)) {
     normalized = normalized.slice(1, -1).trim();
   }
+  if (/^(?:null|unknown)$/i.test(normalized)) return false;
   if (/^false$/i.test(normalized)) return false;
   if (/^true$/i.test(normalized)) return true;
   const notMatch = /^not\s+(.+)$/i.exec(normalized);
@@ -970,6 +971,23 @@ function evaluateConstantBooleanCondition(condition: string): boolean | undefine
   return undefined;
 }
 
+function constantFalseWherePredicate(statement: string): boolean {
+  const whereMatch =
+    /\bwhere\s+([\s\S]*?)(?=\b(?:for\s+(?:no\s+key\s+)?update|group\s+by|order\s+by|having|limit|offset|returning|union|intersect|except)\b|$)/i
+      .exec(statement);
+  if (whereMatch?.[1] === undefined) return false;
+  const predicate = whereMatch[1].trim();
+  if (evaluateConstantBooleanCondition(predicate) === false) return true;
+  return predicate
+    .split(/\band\b/i)
+    .some((clause) => evaluateConstantBooleanCondition(clause) === false);
+}
+
+function hasUnboundConstantJoin(statement: string): boolean {
+  return /\bjoin\s+(?:"?[a-z][a-z0-9_]*"?\s*\.\s*)?"?[a-z][a-z0-9_]*"?(?:\s+(?:as\s+)?[a-z][a-z0-9_]*)?\s+on\s+(?:true|1\s*=\s*1)\b/i
+    .test(statement);
+}
+
 function rejectExpectedValueLocalCopy(
   signature: OwnerFunctionSignatureV1,
   localName: string | undefined,
@@ -990,12 +1008,24 @@ function rejectExpectedValueLocalCopy(
 
 function assertNoUnreachableProofScaffolding(
   signature: OwnerFunctionSignatureV1,
+  semantic: string,
   executable: string,
 ): void {
-  for (const match of executable.matchAll(/\bif\s+([\s\S]{1,240}?)\s+then\b/gi)) {
+  for (const match of semantic.matchAll(/\bif\s+([\s\S]{1,240}?)\s+then\b/gi)) {
     if (evaluateConstantBooleanCondition(match[1] ?? "") === false) {
       throw new Error(
         `unreachable proof block is forbidden in owner writer: ${signature.schema}.${signature.function_name}`,
+      );
+    }
+  }
+  for (const statement of semantic.split(";")) {
+    if (
+      /\b(?:from|join)\b/i.test(statement) &&
+      (constantFalseWherePredicate(statement) ||
+        hasUnboundConstantJoin(statement))
+    ) {
+      throw new Error(
+        `unreachable relational proof is forbidden in owner writer: ${signature.schema}.${signature.function_name}`,
       );
     }
   }
@@ -1126,7 +1156,9 @@ function assertConcurrencyFenceIsConsumed(
         !referencesTable(statement, "bot_foreground_slots") ||
         !referencesTable(statement, "trigger_processes") ||
         !/\bfor\s+(?:no\s+key\s+)?update\b/i.test(statement) ||
-        !/\bwhere\b/i.test(statement)
+        !/\bwhere\b/i.test(statement) ||
+        constantFalseWherePredicate(statement) ||
+        hasUnboundConstantJoin(statement)
       ) {
         return false;
       }
@@ -1218,7 +1250,7 @@ function assertConcurrencyFenceIsConsumed(
           "i",
         ).test(semantic),
       ) &&
-      !/\bjoin\s+(?:"?[a-z][a-z0-9_]*"?\s*\.\s*)?"?bot_permission_bindings"?\s+(?:as\s+)?[a-z][a-z0-9_]*\s+on\s+true\b/i
+      !/\bjoin\s+(?:"?[a-z][a-z0-9_]*"?\s*\.\s*)?"?bot_permission_bindings"?\s+(?:as\s+)?[a-z][a-z0-9_]*\s+on\s+(?:true|1\s*=\s*1)\b/i
         .test(semantic);
     if (
       !lockedSlotAndProcess ||
@@ -1256,11 +1288,21 @@ function assertConcurrencyFenceIsConsumed(
       ];
       return matches.some((match) => {
         const identifier = match[1]?.toLowerCase();
+        if (identifier === undefined) return false;
         const column = identifier?.split(".").at(-1);
+        const matchText = match[0].toLowerCase();
+        const identifierOffset = matchText.lastIndexOf(identifier);
+        const identifierEnd =
+          identifierOffset < 0 || match.index === undefined
+            ? -1
+            : match.index + identifierOffset + identifier.length;
+        const identifierIsFunctionCall =
+          identifierEnd >= 0 && /^\s*\(/u.test(executable.slice(identifierEnd));
         return (
           identifier !== undefined &&
           column !== undefined &&
           identifier !== name &&
+          !identifierIsFunctionCall &&
           !argumentNames.has(identifier) &&
           !argumentNames.has(column) &&
           !column.startsWith("p_")
@@ -1297,7 +1339,11 @@ function assertFunctionEffectsInDefinition(
   const executable = semantic.replace(/'(?:''|[^'])*'/g, "''");
   const reachableSemantic = beforeFirstUnconditionalReturn(semantic);
   const reachableExecutable = beforeFirstUnconditionalReturn(executable);
-  assertNoUnreachableProofScaffolding(signature, executable);
+  assertNoUnreachableProofScaffolding(
+    signature,
+    reachableSemantic,
+    reachableExecutable,
+  );
   if (/\bexecute\b/i.test(executable)) {
     throw new Error(
       `dynamic SQL is forbidden in owner writer: ${signature.schema}.${signature.function_name}`,

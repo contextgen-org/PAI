@@ -11,8 +11,15 @@ import { TypedEvidenceRefV1Schema } from "./shared/typed-evidence-ref.v1.js";
 import { WorkloadCredentialClaimsV1Schema } from "./shared/workload-credential-claims.v1.js";
 import {
   AdmitTriggerCommandV1Schema,
+  AdmitTriggerAuthorizationFailureResponseV1Schema,
+  AdmitTriggerConflictResponseV1Schema,
+  AdmitTriggerInternalErrorResponseV1Schema,
+  AdmitTriggerInvalidRequestResponseV1Schema,
+  AdmitTriggerRetryableFailureResponseV1Schema,
   AdmitTriggerRequestBodyV1Schema,
   AdmitTriggerResponseV1Schema,
+  AdmitTriggerSuccessResponseV1Schema,
+  AdmitTriggerUnauthenticatedResponseV1Schema,
   type TriggerSourceV1,
   TriggerAdmissionDecisionV1Schema,
   TrustedAdmissionFactsV1Schema,
@@ -249,7 +256,26 @@ export interface TriggerProcessorHttpOperationV1 {
   readonly request_schema_name: "AdmitTriggerRequestBodyV1";
   readonly response_schema_name: "AdmitTriggerResponseV1";
   readonly responses: readonly [200, 400, 401, 403, 409, 500, 503];
+  readonly response_schemas_by_status: Readonly<{
+    readonly 200: TSchema;
+    readonly 400: TSchema;
+    readonly 401: TSchema;
+    readonly 403: TSchema;
+    readonly 409: TSchema;
+    readonly 500: TSchema;
+    readonly 503: TSchema;
+  }>;
 }
+
+const admitTriggerResponseSchemasByStatus = Object.freeze({
+  200: AdmitTriggerSuccessResponseV1Schema,
+  400: AdmitTriggerInvalidRequestResponseV1Schema,
+  401: AdmitTriggerUnauthenticatedResponseV1Schema,
+  403: AdmitTriggerAuthorizationFailureResponseV1Schema,
+  409: AdmitTriggerConflictResponseV1Schema,
+  500: AdmitTriggerInternalErrorResponseV1Schema,
+  503: AdmitTriggerRetryableFailureResponseV1Schema,
+});
 
 export const TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1 = [
   {
@@ -262,6 +288,7 @@ export const TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1 = [
     request_schema_name: "AdmitTriggerRequestBodyV1",
     response_schema_name: "AdmitTriggerResponseV1",
     responses: [200, 400, 401, 403, 409, 500, 503],
+    response_schemas_by_status: admitTriggerResponseSchemasByStatus,
   },
   {
     operation_id: "admitTriggerFromNotificationV1",
@@ -273,6 +300,7 @@ export const TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1 = [
     request_schema_name: "AdmitTriggerRequestBodyV1",
     response_schema_name: "AdmitTriggerResponseV1",
     responses: [200, 400, 401, 403, 409, 500, 503],
+    response_schemas_by_status: admitTriggerResponseSchemasByStatus,
   },
   {
     operation_id: "admitTriggerFromTimerV1",
@@ -284,5 +312,6 @@ export const TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1 = [
     request_schema_name: "AdmitTriggerRequestBodyV1",
     response_schema_name: "AdmitTriggerResponseV1",
     responses: [200, 400, 401, 403, 409, 500, 503],
+    response_schemas_by_status: admitTriggerResponseSchemasByStatus,
   },
 ] as const satisfies readonly TriggerProcessorHttpOperationV1[];
