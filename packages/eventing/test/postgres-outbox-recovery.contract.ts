@@ -8,7 +8,9 @@ import {
 } from "@pai/persistence";
 
 import {
+  canonicalDurableEventEnvelopeSemanticHashV1,
   canonicalPayloadHashV1,
+  durableEventScopeFingerprintV1,
   createDurableOutboxDispatcherV1,
   createPostgresOwnerOutboxStoreV1,
   type DurableEventTransportPortV1,
@@ -44,7 +46,13 @@ const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
   generated_permission_sql: [
     "pai-infra/supabase/generated/permissions/0450_skill_registry.sql",
   ],
-  tables: ["eventing_outbox", "eventing_inbox", "eventing_dlq"],
+  tables: [
+    "eventing_outbox",
+    "eventing_inbox",
+    "eventing_projection",
+    "eventing_audit",
+    "eventing_dlq",
+  ],
   table_permissions: [
     {
       table_name: "eventing_outbox",
@@ -80,8 +88,10 @@ const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
         "id",
         "source",
         "event_id",
+        "scope_fingerprint",
         "idempotency_key",
         "payload_hash",
+        "semantic_hash",
         "processed_at",
         "created_at",
       ],
@@ -100,6 +110,36 @@ const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
         "last_error",
         "failed_at",
         "resolved_at",
+      ],
+      insert_columns: [],
+      update_columns: [],
+      delete_allowed: false,
+      writer_kind: "immutable_append",
+    },
+    {
+      table_name: "eventing_projection",
+      select_columns: [
+        "id",
+        "source",
+        "scope_fingerprint",
+        "idempotency_key",
+        "semantic_hash",
+        "applied_count",
+        "updated_at",
+      ],
+      insert_columns: [],
+      update_columns: [],
+      delete_allowed: false,
+      writer_kind: "projection_upsert",
+    },
+    {
+      table_name: "eventing_audit",
+      select_columns: [
+        "id",
+        "inbox_id",
+        "event_id",
+        "semantic_hash",
+        "created_at",
       ],
       insert_columns: [],
       update_columns: [],
@@ -195,12 +235,24 @@ const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
         ["p_event", "jsonb"],
         ["p_idempotency_key", "text"],
         ["p_payload_hash", "text"],
+        ["p_semantic_hash", "text"],
+        ["p_scope_fingerprint", "text"],
       ],
-      reads_tables: ["eventing_inbox"],
-      writes_tables: ["eventing_inbox"],
+      reads_tables: ["eventing_inbox", "eventing_projection"],
+      writes_tables: ["eventing_inbox", "eventing_projection", "eventing_audit"],
       effects: [
         {
           table_name: "eventing_inbox",
+          operation: "append",
+          concurrency_control: "idempotency_key",
+        },
+        {
+          table_name: "eventing_projection",
+          operation: "upsert",
+          concurrency_control: "idempotency_key",
+        },
+        {
+          table_name: "eventing_audit",
           operation: "append",
           concurrency_control: "idempotency_key",
         },
@@ -230,8 +282,10 @@ const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
     eventingColumn("eventing_inbox", "id", "text"),
     eventingColumn("eventing_inbox", "source", "text"),
     eventingColumn("eventing_inbox", "event_id", "text"),
+    eventingColumn("eventing_inbox", "scope_fingerprint", "text"),
     eventingColumn("eventing_inbox", "idempotency_key", "text"),
     eventingColumn("eventing_inbox", "payload_hash", "text"),
+    eventingColumn("eventing_inbox", "semantic_hash", "text"),
     eventingColumn(
       "eventing_inbox",
       "processed_at",
@@ -242,6 +296,22 @@ const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
       "created_at",
       "timestamp with time zone",
     ),
+    eventingColumn("eventing_projection", "id", "text"),
+    eventingColumn("eventing_projection", "source", "text"),
+    eventingColumn("eventing_projection", "scope_fingerprint", "text"),
+    eventingColumn("eventing_projection", "idempotency_key", "text"),
+    eventingColumn("eventing_projection", "semantic_hash", "text"),
+    eventingColumn("eventing_projection", "applied_count", "integer", true, "0"),
+    eventingColumn(
+      "eventing_projection",
+      "updated_at",
+      "timestamp with time zone",
+    ),
+    eventingColumn("eventing_audit", "id", "text"),
+    eventingColumn("eventing_audit", "inbox_id", "text"),
+    eventingColumn("eventing_audit", "event_id", "text"),
+    eventingColumn("eventing_audit", "semantic_hash", "text"),
+    eventingColumn("eventing_audit", "created_at", "timestamp with time zone"),
     eventingColumn("eventing_outbox", "id", "text"),
     eventingColumn("eventing_outbox", "event_type", "text"),
     eventingColumn("eventing_outbox", "schema_version", "text"),
@@ -304,9 +374,9 @@ const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
       validated: true,
     },
     {
-      constraint_name: "eventing_inbox_source_idempotency_key_key",
+      constraint_name: "eventing_inbox_source_scope_fingerprint_idempotency_key_key",
       table_name: "eventing_inbox",
-      columns: ["source", "idempotency_key"],
+      columns: ["source", "scope_fingerprint", "idempotency_key"],
       kind: "unique",
       deferrable: false,
       initially_deferred: false,
@@ -324,6 +394,24 @@ const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
     {
       constraint_name: "eventing_outbox_pkey",
       table_name: "eventing_outbox",
+      columns: ["id"],
+      kind: "primary_key",
+      deferrable: false,
+      initially_deferred: false,
+      validated: true,
+    },
+    {
+      constraint_name: "eventing_projection_pkey",
+      table_name: "eventing_projection",
+      columns: ["id"],
+      kind: "primary_key",
+      deferrable: false,
+      initially_deferred: false,
+      validated: true,
+    },
+    {
+      constraint_name: "eventing_audit_pkey",
+      table_name: "eventing_audit",
       columns: ["id"],
       kind: "primary_key",
       deferrable: false,
@@ -351,10 +439,10 @@ const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
       valid: true,
     },
     {
-      index_name: "eventing_inbox_source_idempotency_key_key",
+      index_name: "eventing_inbox_source_scope_fingerprint_idempotency_key_key",
       table_name: "eventing_inbox",
       definition:
-        "CREATE UNIQUE INDEX eventing_inbox_source_idempotency_key_key ON skill_registry.eventing_inbox USING btree (source, idempotency_key)",
+        "CREATE UNIQUE INDEX eventing_inbox_source_scope_fingerprint_idempotency_key_key ON skill_registry.eventing_inbox USING btree (source, scope_fingerprint, idempotency_key)",
       unique: true,
       primary: false,
       valid: true,
@@ -373,6 +461,24 @@ const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
       table_name: "eventing_outbox",
       definition:
         "CREATE UNIQUE INDEX eventing_outbox_pkey ON skill_registry.eventing_outbox USING btree (id)",
+      unique: true,
+      primary: true,
+      valid: true,
+    },
+    {
+      index_name: "eventing_projection_pkey",
+      table_name: "eventing_projection",
+      definition:
+        "CREATE UNIQUE INDEX eventing_projection_pkey ON skill_registry.eventing_projection USING btree (id)",
+      unique: true,
+      primary: true,
+      valid: true,
+    },
+    {
+      index_name: "eventing_audit_pkey",
+      table_name: "eventing_audit",
+      definition:
+        "CREATE UNIQUE INDEX eventing_audit_pkey ON skill_registry.eventing_audit USING btree (id)",
       unique: true,
       primary: true,
       valid: true,
@@ -422,7 +528,12 @@ const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
       },
     },
   ],
-  append_only_tables: ["eventing_outbox", "eventing_inbox", "eventing_dlq"],
+  append_only_tables: [
+    "eventing_outbox",
+    "eventing_inbox",
+    "eventing_audit",
+    "eventing_dlq",
+  ],
   outbox_tables: ["eventing_outbox"],
   inbox_tables: ["eventing_inbox"],
   dlq_tables: ["eventing_dlq"],
@@ -481,11 +592,13 @@ CREATE TABLE skill_registry.eventing_inbox (
   id text PRIMARY KEY,
   source text NOT NULL,
   event_id text NOT NULL,
+  scope_fingerprint text NOT NULL,
   idempotency_key text NOT NULL,
   payload_hash text NOT NULL,
+  semantic_hash text NOT NULL,
   processed_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL,
-  UNIQUE (source, idempotency_key)
+  UNIQUE (source, scope_fingerprint, idempotency_key)
 );
 CREATE TABLE skill_registry.eventing_dlq (
   id text PRIMARY KEY,
@@ -495,6 +608,22 @@ CREATE TABLE skill_registry.eventing_dlq (
   last_error jsonb NOT NULL,
   failed_at timestamptz NOT NULL,
   resolved_at timestamptz
+);
+CREATE TABLE skill_registry.eventing_projection (
+  id text PRIMARY KEY,
+  source text NOT NULL,
+  scope_fingerprint text NOT NULL,
+  idempotency_key text NOT NULL,
+  semantic_hash text NOT NULL,
+  applied_count integer NOT NULL DEFAULT 0,
+  updated_at timestamptz NOT NULL
+);
+CREATE TABLE skill_registry.eventing_audit (
+  id text PRIMARY KEY,
+  inbox_id text NOT NULL,
+  event_id text NOT NULL,
+  semantic_hash text NOT NULL,
+  created_at timestamptz NOT NULL
 );
 CREATE FUNCTION skill_registry.enqueue_eventing_outbox_v1(
   p_event jsonb,
@@ -624,29 +753,60 @@ $$;
 CREATE FUNCTION skill_registry.consume_eventing_inbox_v1(
   p_event jsonb,
   p_idempotency_key text,
-  p_payload_hash text
+  p_payload_hash text,
+  p_semantic_hash text,
+  p_scope_fingerprint text
 ) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = skill_registry, pg_temp
 AS $$
-DECLARE existing_hash text;
+DECLARE
+  existing_hash text;
+  applied_inbox_id text;
+  projection_id text;
 BEGIN
+  projection_id := (p_event->>'producer') || ':' || p_scope_fingerprint || ':' || p_idempotency_key;
   INSERT INTO skill_registry.eventing_inbox(
-    id, source, event_id, idempotency_key, payload_hash, processed_at, created_at
+    id, source, event_id, scope_fingerprint, idempotency_key, payload_hash,
+    semantic_hash, processed_at, created_at
   ) VALUES (
-    'inbox:' || (p_event->>'producer') || ':' || p_idempotency_key,
-    p_event->>'producer', p_event->>'event_id', p_idempotency_key,
-    p_payload_hash, clock_timestamp(), clock_timestamp()
-  ) ON CONFLICT (source, idempotency_key) DO NOTHING;
+    'inbox:' || projection_id,
+    p_event->>'producer', p_event->>'event_id', p_scope_fingerprint,
+    p_idempotency_key, p_payload_hash, p_semantic_hash,
+    clock_timestamp(), clock_timestamp()
+  ) ON CONFLICT (source, scope_fingerprint, idempotency_key) DO NOTHING
+  RETURNING id INTO applied_inbox_id;
   IF FOUND THEN
+    INSERT INTO skill_registry.eventing_projection(
+      id, source, scope_fingerprint, idempotency_key, semantic_hash,
+      applied_count, updated_at
+    ) VALUES (
+      projection_id, p_event->>'producer', p_scope_fingerprint,
+      p_idempotency_key, p_semantic_hash, 1, clock_timestamp()
+    )
+    ON CONFLICT (id) DO UPDATE
+      SET semantic_hash = EXCLUDED.semantic_hash,
+          applied_count = skill_registry.eventing_projection.applied_count + 1,
+          updated_at = EXCLUDED.updated_at;
+    INSERT INTO skill_registry.eventing_audit(
+      id, inbox_id, event_id, semantic_hash, created_at
+    ) VALUES (
+      'audit:' || projection_id, applied_inbox_id, p_event->>'event_id',
+      p_semantic_hash, clock_timestamp()
+    );
     RETURN jsonb_build_object('status', 'processed');
   END IF;
-  SELECT payload_hash INTO existing_hash
+  SELECT semantic_hash INTO existing_hash
     FROM skill_registry.eventing_inbox
-   WHERE source = p_event->>'producer' AND idempotency_key = p_idempotency_key
+   WHERE source = p_event->>'producer'
+     AND scope_fingerprint = p_scope_fingerprint
+     AND idempotency_key = p_idempotency_key
    FOR UPDATE;
-  IF existing_hash <> p_payload_hash THEN
-    RAISE EXCEPTION 'inbox idempotency payload hash conflict';
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'inbox idempotency scope fingerprint missing';
+  END IF;
+  IF existing_hash <> p_semantic_hash THEN
+    RAISE EXCEPTION 'inbox idempotency semantic hash conflict';
   END IF;
   RETURN jsonb_build_object('status', 'replayed');
 END;
@@ -657,10 +817,12 @@ REVOKE ALL ON ALL FUNCTIONS IN SCHEMA skill_registry FROM PUBLIC, anon, authenti
 GRANT SELECT (${EVENTING_CONTRACT.table_permissions[0]!.select_columns.join(", ")}) ON skill_registry.eventing_outbox TO pai_skill_registry_app;
 GRANT SELECT (${EVENTING_CONTRACT.table_permissions[1]!.select_columns.join(", ")}) ON skill_registry.eventing_inbox TO pai_skill_registry_app;
 GRANT SELECT (${EVENTING_CONTRACT.table_permissions[2]!.select_columns.join(", ")}) ON skill_registry.eventing_dlq TO pai_skill_registry_app;
+GRANT SELECT (${EVENTING_CONTRACT.table_permissions[3]!.select_columns.join(", ")}) ON skill_registry.eventing_projection TO pai_skill_registry_app;
+GRANT SELECT (${EVENTING_CONTRACT.table_permissions[4]!.select_columns.join(", ")}) ON skill_registry.eventing_audit TO pai_skill_registry_app;
 GRANT EXECUTE ON FUNCTION skill_registry.enqueue_eventing_outbox_v1(jsonb, text, text) TO pai_skill_registry_app;
 GRANT EXECUTE ON FUNCTION skill_registry.claim_eventing_outbox_v1(text, integer, integer, timestamptz) TO pai_skill_registry_app;
 GRANT EXECUTE ON FUNCTION skill_registry.ack_eventing_outbox_v1(text, text, text, timestamptz, jsonb, timestamptz) TO pai_skill_registry_app;
-GRANT EXECUTE ON FUNCTION skill_registry.consume_eventing_inbox_v1(jsonb, text, text) TO pai_skill_registry_app;
+GRANT EXECUTE ON FUNCTION skill_registry.consume_eventing_inbox_v1(jsonb, text, text, text, text) TO pai_skill_registry_app;
 `;
 
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;
@@ -697,7 +859,15 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
       occurred_at: "2026-07-21T05:00:00.000Z",
       idempotency_key: "skill_version_001:published",
       trace_id: "trace_restart_001",
-      payload: { skill_version_id: "skill_version_001" },
+      payload: {
+        scope_kind: "bot",
+        workspace_id: "workspace_001",
+        bot_id: "bot_001",
+        owner_agent_id: "owner_agent_001",
+        deployment_environment: "dev",
+        release_channel: "stable",
+        skill_version_id: "skill_version_001",
+      },
     } as const;
     const payloadHash = canonicalPayloadHashV1(envelope.payload);
 
@@ -766,7 +936,7 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     });
     expect(published).toEqual([envelope.event_id]);
 
-    const consume = async (eventPayload: typeof envelope.payload) =>
+    const consume = async (eventPayload: Readonly<Record<string, unknown>>) =>
       secondProcess.unit_of_work.withTransaction(
         {
           operation: "consume_skill_event",
@@ -785,6 +955,14 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
               p_event: { ...envelope, payload: eventPayload },
               p_idempotency_key: envelope.idempotency_key,
               p_payload_hash: canonicalPayloadHashV1(eventPayload),
+              p_semantic_hash: canonicalDurableEventEnvelopeSemanticHashV1({
+                ...envelope,
+                payload: eventPayload,
+              }),
+              p_scope_fingerprint: durableEventScopeFingerprintV1({
+                ...envelope,
+                payload: eventPayload,
+              }),
             },
             expected_rows: 1,
           }),
@@ -792,10 +970,29 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     await expect(consume(envelope.payload)).resolves.toEqual({ status: "processed" });
     await expect(consume(envelope.payload)).resolves.toEqual({ status: "replayed" });
     await expect(
-      consume({ skill_version_id: "skill_version_drift" }),
-    ).rejects.toThrow(/payload hash conflict/);
+      consume({ ...envelope.payload, skill_version_id: "skill_version_drift" }),
+    ).rejects.toThrow(/semantic hash conflict/);
 
     if (admin === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
+    const projection = await admin.query<{
+      applied_count: number;
+      semantic_hash: string;
+    }>(
+      "SELECT applied_count, semantic_hash FROM skill_registry.eventing_projection WHERE id = $1",
+      [
+        `${envelope.producer}:${durableEventScopeFingerprintV1(envelope)}:${envelope.idempotency_key}`,
+      ],
+    );
+    expect(projection.rows).toEqual([
+      {
+        applied_count: 1,
+        semantic_hash: canonicalDurableEventEnvelopeSemanticHashV1(envelope),
+      },
+    ]);
+    const audit = await admin.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM skill_registry.eventing_audit",
+    );
+    expect(audit.rows).toEqual([{ count: "1" }]);
     const persisted = await admin.query<{ status: string; attempt_count: number }>(
       "SELECT status, attempt_count FROM skill_registry.eventing_outbox WHERE id = $1",
       [envelope.event_id],

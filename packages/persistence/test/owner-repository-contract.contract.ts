@@ -378,13 +378,20 @@ describe("owner repository contracts", () => {
         ({ constraint_name }) =>
           constraint_name === "trigger_processes_meta_enqueue_presence_check",
       );
+    const terminalExpectation =
+      TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks?.find(
+        ({ constraint_name }) =>
+          constraint_name === "trigger_processes_terminal_reason_presence_check",
+      );
     expect(generationExpectation).toBeDefined();
     expect(reasonExpectation).toBeDefined();
     expect(presenceExpectation).toBeDefined();
+    expect(terminalExpectation).toBeDefined();
     if (
       generationExpectation === undefined ||
       reasonExpectation === undefined ||
-      presenceExpectation === undefined
+      presenceExpectation === undefined ||
+      terminalExpectation === undefined
     ) return;
 
     expect(() =>
@@ -422,13 +429,31 @@ describe("owner repository contracts", () => {
     expect(() =>
       verifyOwnerDatabaseCheckDefinitionV1(
         presenceExpectation,
-        "CHECK (phase <> 'meta_enqueued' OR meta_enqueue_reason IS NOT NULL)",
+        "CHECK ((phase = 'meta_enqueued') = (meta_enqueue_reason IS NOT NULL))",
       ),
     ).not.toThrow();
     expect(() =>
       verifyOwnerDatabaseCheckDefinitionV1(
         presenceExpectation,
-        "CHECK (phase <> 'meta_enqueued' OR true)",
+        "CHECK (phase <> 'meta_enqueued' OR meta_enqueue_reason IS NOT NULL)",
+      ),
+    ).toThrow(/CHECK constraint drift/u);
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        presenceExpectation,
+        "CHECK ((phase = 'meta_enqueued') = true)",
+      ),
+    ).toThrow(/CHECK constraint drift/u);
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        terminalExpectation,
+        "CHECK ((phase = 'closed') = (terminal_reason IS NOT NULL AND terminal_reason <> ''))",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        terminalExpectation,
+        "CHECK ((phase = 'closed') = (terminal_reason IS NOT NULL))",
       ),
     ).toThrow(/CHECK constraint drift/u);
   });
@@ -806,6 +831,9 @@ describe("owner repository contracts", () => {
            AND b.owner_agent_id = p_scope->>'owner_agent_id'
            AND b.deployment_environment = p_scope->>'deployment_environment'
            AND b.release_channel = p_scope->>'release_channel';
+        IF NOT FOUND THEN
+          RAISE EXCEPTION 'bot authority not found';
+        END IF;
         INSERT INTO trigger_processor.weak_trigger_queue_items(id) VALUES ('id');
         RETURN '{}'::jsonb;
       END $body$`;
@@ -825,9 +853,31 @@ describe("owner repository contracts", () => {
              AND process.deployment_environment = p_scope->>'deployment_environment'
              AND process.release_channel = p_scope->>'release_channel'
            FOR UPDATE;
+          IF NOT FOUND THEN
+            RAISE EXCEPTION 'slot/process fence not found';
+          END IF;
         `),
       ),
     ).not.toThrow();
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        signature,
+        body(`
+          PERFORM 1
+            FROM trigger_processor.bot_foreground_slots slot
+            JOIN trigger_processor.trigger_processes process
+              ON process.id = slot.process_id
+           WHERE slot.bot_id = p_scope->>'bot_id'
+             AND process.workspace_id = p_scope->>'workspace_id'
+             AND process.bot_id = p_scope->>'bot_id'
+             AND process.owner_agent_id = p_scope->>'owner_agent_id'
+             AND process.deployment_environment = p_scope->>'deployment_environment'
+             AND process.release_channel = p_scope->>'release_channel'
+           FOR UPDATE;
+        `),
+      ),
+    ).toThrow(/slot\/process fence drift/);
     expect(() =>
       verifyOwnerWriterDefinitionV1(
         TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
@@ -849,6 +899,23 @@ describe("owner repository contracts", () => {
               ON process.id = slot.process_id
            WHERE false
            FOR UPDATE;
+        `),
+      ),
+    ).toThrow(/unreachable relational proof|slot\/process fence drift/);
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        signature,
+        body(`
+          PERFORM 1
+            FROM trigger_processor.bot_foreground_slots slot
+            JOIN trigger_processor.trigger_processes process
+              ON process.id = slot.process_id
+           WHERE slot.process_id IS DISTINCT FROM slot.process_id
+           FOR UPDATE;
+          IF NOT FOUND THEN
+            RAISE EXCEPTION 'slot/process fence not found';
+          END IF;
         `),
       ),
     ).toThrow(/unreachable relational proof|slot\/process fence drift/);
@@ -1001,6 +1068,18 @@ describe("owner repository contracts", () => {
       ),
     ).toThrow(/unreachable proof block/);
 
+    const castedConstantFalseProofBody = constantFalseProofBody.replace(
+      "IF 2 = 3 THEN",
+      "IF 2::integer = 3::integer THEN",
+    );
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        transitionSignature,
+        castedConstantFalseProofBody,
+      ),
+    ).toThrow(/unreachable proof block/);
+
     const nullProofBody = constantFalseProofBody.replace(
       "IF 2 = 3 THEN",
       "IF NULL THEN",
@@ -1037,6 +1116,37 @@ describe("owner repository contracts", () => {
         coalesceOnlyProofBody,
       ),
     ).toThrow(/CAS fence drift/);
+
+    const localConstantProofBody = partialExpectedBody.replace(
+      "BEGIN",
+      "DECLARE v_observed_status text;\n      BEGIN",
+    ).replace(
+      "RETURN '{}'::jsonb;",
+      `v_observed_status := 'running';
+       PERFORM p_expected_status = v_observed_status;
+       RETURN '{}'::jsonb;`,
+    );
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        transitionSignature,
+        localConstantProofBody,
+      ),
+    ).toThrow(/CAS fence drift/);
+
+    const selfDistinctPredicateBody = partialExpectedBody.replace(
+      "AND p.phase = p_expected_phase;",
+      `AND p.phase = p_expected_phase
+           AND p.status = p_expected_status
+           AND p.status IS DISTINCT FROM p.status;`,
+    );
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        transitionSignature,
+        selfDistinctPredicateBody,
+      ),
+    ).toThrow(/unreachable relational proof|CAS fence drift/);
 
     const dollarQuotedProofBody = partialExpectedBody.replace(
       `UPDATE trigger_processor.trigger_processes p

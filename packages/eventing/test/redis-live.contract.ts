@@ -2,6 +2,7 @@ import { createClient } from "redis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  canonicalJsonV1,
   canonicalPayloadHashV1,
   createRedisNamespaceV1,
   namespacedRedisKeyV1,
@@ -55,7 +56,20 @@ describeRedis("locked Redis 8.8 Stream integration", () => {
       occurred_at: "2026-07-21T05:00:00.000Z",
       idempotency_key: "timer_occurrence_live_001:due",
       trace_id: "trace_timer_live_001",
-      payload: { occurrence_id: "timer_occurrence_live_001" },
+      payload: {
+        scope_kind: "bot",
+        workspace_id: "workspace_live_001",
+        bot_id: "bot_live_001",
+        owner_agent_id: "owner_agent_live_001",
+        deployment_environment: "local",
+        release_channel: "stable",
+        occurrence_id: "timer_occurrence_live_001",
+        schedule_id: "timer_schedule_live_001",
+        scheduled_fire_at: "2026-07-21T05:00:00.000Z",
+        effective_fire_at: "2026-07-21T05:00:00.000Z",
+        dedupe_key: "timer:timer_occurrence_live_001",
+        is_catch_up: false,
+      },
     } as const;
     const published = await composition!.transport.publish({
       target,
@@ -80,7 +94,7 @@ describeRedis("locked Redis 8.8 Stream integration", () => {
       occurred_at: envelope.occurred_at,
       idempotency_key: envelope.idempotency_key,
       trace_id: envelope.trace_id,
-      payload: JSON.stringify(envelope.payload),
+      payload: canonicalJsonV1(envelope.payload),
     });
     expect(await reader!.info("commandstats")).toMatch(
       /cmdstat_waitaof:calls=[1-9]\d*/u,
@@ -97,7 +111,16 @@ describeRedis("locked Redis 8.8 Stream integration", () => {
       occurred_at: "2026-07-21T05:00:00.000Z",
       idempotency_key: "runtime_run_001:completed",
       trace_id: "trace_cross_owner_001",
-      payload: { runtime_run_id: "runtime_run_001" },
+      payload: {
+        scope_kind: "bot",
+        workspace_id: "workspace_live_001",
+        bot_id: "bot_live_001",
+        owner_agent_id: "owner_agent_live_001",
+        deployment_environment: "local",
+        release_channel: "stable",
+        runtime_run_id: "runtime_run_001",
+        outcome: "completed",
+      },
     } as const;
     await expect(
       composition!.transport.publish({

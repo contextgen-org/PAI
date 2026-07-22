@@ -172,6 +172,13 @@ export interface OwnerDatabaseCheckV1<TTable extends string = string> {
         column_name: string;
         condition_column_name: string;
         condition_equals: string;
+      }>
+    | Readonly<{
+        kind: "iff_not_null";
+        column_name: string;
+        condition_column_name: string;
+        condition_equals: string;
+        require_non_empty: boolean;
       }>;
 }
 
@@ -691,10 +698,13 @@ export function defineOwnerRepositoryContractV1<
             semantic.min > semantic.max;
           break;
         case "implies_not_null":
+        case "iff_not_null":
           invalidSemantic =
             !sqlIdentifierPattern.test(semantic.condition_column_name) ||
             !tableColumns?.has(semantic.condition_column_name) ||
-            semantic.condition_equals.length === 0;
+            semantic.condition_equals.length === 0 ||
+            (semantic.kind === "iff_not_null" &&
+              typeof semantic.require_non_empty !== "boolean");
           break;
       }
     }
@@ -1176,8 +1186,21 @@ function unquoteSqlLiteral(value: string): string {
   return value.slice(1, -1).replace(/''/g, "'");
 }
 
+function stripSimpleSqlCasts(value: string): string {
+  let current = value;
+  for (let pass = 0; pass < 4; pass += 1) {
+    const next = current.replace(
+      /((?:\b[a-z][a-z0-9_]*(?:\s*\.\s*[a-z][a-z0-9_]*)*\b)|(?:-?\d+)|(?:true|false|null|unknown)|(?:'(?:''|[^'])*')|\([^()]*\))\s*::\s*(?:(?:pg_catalog|public)\s*\.\s*)?[a-z][a-z0-9_]*(?:\s*\[\s*\])?/giu,
+      "$1",
+    );
+    if (next === current) return current;
+    current = next;
+  }
+  return current;
+}
+
 function evaluateConstantBooleanCondition(condition: string): boolean | undefined {
-  let normalized = condition.trim().replace(/\s+/g, " ");
+  let normalized = stripSimpleSqlCasts(condition).trim().replace(/\s+/g, " ");
   while (/^\([^()]*\)$/.test(normalized)) {
     normalized = normalized.slice(1, -1).trim();
   }
@@ -1237,7 +1260,72 @@ function evaluateConstantBooleanCondition(condition: string): boolean | undefine
       return left !== right;
     }
   }
+  const identifierComparison =
+    /^([a-z][a-z0-9_]*(?:\s*\.\s*[a-z][a-z0-9_]*)*)\s*(=|<>|!=|is\s+(?:not\s+)?distinct\s+from)\s*\1$/i
+      .exec(normalized);
+  if (identifierComparison !== null) {
+    const operator = identifierComparison[2]?.toLowerCase().replace(/\s+/g, " ");
+    if (operator === "=" || operator === "is not distinct from") return true;
+    if (operator === "<>" || operator === "!=" || operator === "is distinct from") {
+      return false;
+    }
+  }
   return undefined;
+}
+
+function sqlStatementsWithOffsets(
+  value: string,
+): readonly Readonly<{ statement: string; start: number; end: number }>[] {
+  const statements: Array<Readonly<{ statement: string; start: number; end: number }>> = [];
+  let start = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] !== ";") continue;
+    const statement = value.slice(start, index).trim();
+    if (statement.length > 0) statements.push({ statement, start, end: index + 1 });
+    start = index + 1;
+  }
+  const statement = value.slice(start).trim();
+  if (statement.length > 0) {
+    statements.push({ statement, start, end: value.length });
+  }
+  return statements;
+}
+
+function followedByFoundRaise(sql: string, endIndex: number): boolean {
+  return /^\s*if\s+not\s+found\s+then\b[\s\S]{0,240}\braise\s+exception\b[\s\S]{0,120}\bend\s+if\b/i
+    .test(sql.slice(endIndex, endIndex + 420));
+}
+
+function trustedLocalRowValueIdentifiers(
+  signature: OwnerFunctionSignatureV1,
+  executable: string,
+): ReadonlySet<string> {
+  const trusted = new Set<string>();
+  const allowedTables = new Set([...signature.reads_tables, ...signature.writes_tables]);
+  const statementRows = sqlStatementsWithOffsets(executable);
+  for (const { statement } of statementRows) {
+    if (constantFalseWherePredicate(statement)) continue;
+    const match =
+      /\bselect\s+((?:[a-z][a-z0-9_]*\s*\.\s*)?[a-z][a-z0-9_]*)\s+into\s+([a-z][a-z0-9_]*)\b[\s\S]*?\bfrom\s+(?:only\s+)?(?:"?([a-z][a-z0-9_]*)"?\s*\.\s*)?"?([a-z][a-z0-9_]*)"?\b/i
+        .exec(statement);
+    const selected = match?.[1]?.toLowerCase().replace(/\s+/g, "");
+    const local = match?.[2]?.toLowerCase();
+    const schema = match?.[3] ?? signature.schema;
+    const table = match?.[4];
+    if (
+      selected === undefined ||
+      local === undefined ||
+      table === undefined ||
+      schema !== signature.schema ||
+      !allowedTables.has(table) ||
+      selected.startsWith("p_") ||
+      /^\d/u.test(selected)
+    ) {
+      continue;
+    }
+    trusted.add(local);
+  }
+  return trusted;
 }
 
 function constantFalseWherePredicate(statement: string): boolean {
@@ -1382,7 +1470,8 @@ function assertConcurrencyFenceIsConsumed(
     );
   }
   if (effect.concurrency_control === "slot_and_process_state_fence") {
-    const statements = semantic.split(";");
+    const statementRows = sqlStatementsWithOffsets(semantic);
+    const statements = statementRows.map(({ statement }) => statement);
     const qualifiedTable = (table: string): string =>
       `(?:"?${escapeRegularExpression(signature.schema)}"?\\s*\\.\\s*)?"?${escapeRegularExpression(table)}"?`;
     const referencesTable = (statement: string, table: string): boolean =>
@@ -1420,7 +1509,7 @@ function assertConcurrencyFenceIsConsumed(
       }
       return [...aliases];
     };
-    const lockedSlotAndProcess = statements.some((statement) => {
+    const lockedSlotAndProcess = statementRows.some(({ statement, end }) => {
       if (
         !referencesTable(statement, "bot_foreground_slots") ||
         !referencesTable(statement, "trigger_processes") ||
@@ -1433,17 +1522,20 @@ function assertConcurrencyFenceIsConsumed(
       }
       const slotAliases = aliasesForTable(statement, "bot_foreground_slots");
       const processAliases = aliasesForTable(statement, "trigger_processes");
-      return slotAliases.some((slotAlias) =>
-        processAliases.some((processAlias) => {
-          const slot = escapeRegularExpression(slotAlias);
-          const process = escapeRegularExpression(processAlias);
-          return (
-            new RegExp(`\\b${slot}\\.process_id\\s*=\\s*${process}\\.id\\b`, "i")
-              .test(statement) ||
-            new RegExp(`\\b${process}\\.id\\s*=\\s*${slot}\\.process_id\\b`, "i")
-              .test(statement)
-          );
-        }),
+      return (
+        followedByFoundRaise(semantic, end) &&
+        slotAliases.some((slotAlias) =>
+          processAliases.some((processAlias) => {
+            const slot = escapeRegularExpression(slotAlias);
+            const process = escapeRegularExpression(processAlias);
+            return (
+              new RegExp(`\\b${slot}\\.process_id\\s*=\\s*${process}\\.id\\b`, "i")
+                .test(statement) ||
+              new RegExp(`\\b${process}\\.id\\s*=\\s*${slot}\\.process_id\\b`, "i")
+                .test(statement)
+            );
+          }),
+        )
       );
     });
     const locksTable = (table: string): boolean => {
@@ -1479,6 +1571,15 @@ function assertConcurrencyFenceIsConsumed(
             .test(executable)
         );
       },
+    );
+    const foundCheckedAuthProof = statementRows.some(
+      ({ statement, end }) =>
+        referencesTable(statement, "bots") &&
+        referencesTable(statement, "bot_permission_bindings") &&
+        /\bwhere\b/i.test(statement) &&
+        !constantFalseWherePredicate(statement) &&
+        !hasUnboundConstantJoin(statement) &&
+        followedByFoundRaise(semantic, end),
     );
     const recomputesServerSide =
       !usesCallerPrecondition &&
@@ -1519,6 +1620,7 @@ function assertConcurrencyFenceIsConsumed(
           "i",
         ).test(semantic),
       ) &&
+      foundCheckedAuthProof &&
       !/\bjoin\s+(?:"?[a-z][a-z0-9_]*"?\s*\.\s*)?"?bot_permission_bindings"?\s+(?:as\s+)?[a-z][a-z0-9_]*\s+on\s+(?:true|1\s*=\s*1)\b/i
         .test(semantic);
     if (
@@ -1542,6 +1644,10 @@ function assertConcurrencyFenceIsConsumed(
   ) {
     const argumentNames = new Set(
       signature.arguments.map(({ argument_name }) => argument_name),
+    );
+    const trustedLocalRows = trustedLocalRowValueIdentifiers(
+      signature,
+      executable,
     );
     const compared = (name: string): boolean => {
       const escaped = escapeRegularExpression(name);
@@ -1571,6 +1677,7 @@ function assertConcurrencyFenceIsConsumed(
           identifier !== undefined &&
           column !== undefined &&
           identifier !== name &&
+          (identifier.includes(".") || trustedLocalRows.has(identifier)) &&
           !identifierIsFunctionCall &&
           !argumentNames.has(identifier) &&
           !argumentNames.has(column) &&
@@ -2017,6 +2124,24 @@ function matchesImplicationNotNull(
   );
 }
 
+function matchesIffNotNull(
+  expression: string,
+  column: string,
+  conditionColumn: string,
+  conditionEquals: string,
+  requireNonEmpty: boolean,
+): boolean {
+  const value = escapeRegularExpression(conditionEquals.replace(/'/gu, "''"));
+  const conditionPattern = `\\(?\\s*\\b${conditionColumn}\\b\\s*=\\s*'${value}'${postgresTextCastPattern}\\s*\\)?`;
+  const notNullPattern = requireNonEmpty
+    ? `\\(?\\s*\\b${column}\\b\\s+is\\s+not\\s+null\\s+and\\s+\\b${column}\\b\\s*<>\\s*''${postgresTextCastPattern}\\s*\\)?`
+    : `\\(?\\s*\\b${column}\\b\\s+is\\s+not\\s+null\\s*\\)?`;
+  return new RegExp(
+    `^\\(?\\s*(?:${conditionPattern}\\s*=\\s*${notNullPattern}|${notNullPattern}\\s*=\\s*${conditionPattern})\\s*\\)?$`,
+    "iu",
+  ).test(expression);
+}
+
 function matchesRequiredJsonKeys(
   term: string,
   column: string,
@@ -2186,6 +2311,15 @@ function checkSemanticMatches(
       column,
       escapeRegularExpression(semantic.condition_column_name),
       semantic.condition_equals,
+    );
+  }
+  if (semantic.kind === "iff_not_null") {
+    return matchesIffNotNull(
+      expression,
+      column,
+      escapeRegularExpression(semantic.condition_column_name),
+      semantic.condition_equals,
+      semantic.require_non_empty,
     );
   }
   return matchesPostgresTextEnum(

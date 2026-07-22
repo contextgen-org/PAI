@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import type { DurableEventEnvelopeV1 } from "@pai/contracts";
+
 export class CanonicalJsonValidationErrorV1 extends Error {
   public constructor(message: string) {
     super(message);
@@ -99,4 +101,47 @@ export function canonicalPayloadHashV1(payload: unknown): string {
   return `sha256:${createHash("sha256")
     .update(canonicalJsonV1(payload), "utf8")
     .digest("hex")}`;
+}
+
+function sha256Canonical(value: unknown): string {
+  return `sha256:${createHash("sha256")
+    .update(canonicalJsonV1(value), "utf8")
+    .digest("hex")}`;
+}
+
+export function canonicalDurableEventEnvelopeSemanticHashV1(
+  envelope: DurableEventEnvelopeV1,
+): string {
+  return sha256Canonical({
+    producer: envelope.producer,
+    event_type: envelope.event_type,
+    schema_version: envelope.schema_version,
+    payload: envelope.payload,
+  });
+}
+
+export function durableEventScopeFingerprintV1(
+  envelope: DurableEventEnvelopeV1,
+): string {
+  const payload = envelope.payload as Readonly<Record<string, unknown>>;
+  if (payload.scope_kind === "bot") {
+    return sha256Canonical({
+      scope_kind: "bot",
+      workspace_id: payload.workspace_id,
+      bot_id: payload.bot_id,
+      owner_agent_id: payload.owner_agent_id,
+      deployment_environment: payload.deployment_environment,
+      release_channel: payload.release_channel,
+    });
+  }
+  if (payload.scope_kind === "global") {
+    return sha256Canonical({
+      scope_kind: "global",
+      deployment_environment: payload.deployment_environment,
+      release_channel: payload.release_channel,
+    });
+  }
+  throw new CanonicalJsonValidationErrorV1(
+    "durable event scope fingerprint requires bot or global scope_kind",
+  );
 }

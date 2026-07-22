@@ -96,7 +96,7 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "runtime_event_inbox",
-      select_columns: ["id","source","idempotency_key","payload_hash","processed_at","created_at"],
+      select_columns: ["id","source","event_id","scope_fingerprint","idempotency_key","payload_hash","semantic_hash","processed_at","created_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -359,6 +359,7 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
       arguments: [
         ["p_runtime_run_id", "text"], ["p_event", "jsonb"],
         ["p_idempotency_key", "text"], ["p_payload_hash", "text"],
+        ["p_semantic_hash", "text"], ["p_scope_fingerprint", "text"],
         ["p_trace_id", "text"],
       ],
       reads_tables: ["runtime_event_inbox"],

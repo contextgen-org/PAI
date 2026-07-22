@@ -1,7 +1,7 @@
 CHECK ((status = 'waiting') = (wait_reason IS NOT NULL)),
-CHECK ((phase = 'closed') = (terminal_reason IS NOT NULL)),
+CHECK ((phase = 'closed') = (terminal_reason IS NOT NULL AND terminal_reason <> '')),
 CHECK (meta_enqueue_reason IS NULL OR meta_enqueue_reason IN ('cooldown_expired', 'user_retracted', 'system_interrupted', 'failed_with_learnable_snapshot')),
-CHECK (phase <> 'meta_enqueued' OR meta_enqueue_reason IS NOT NULL),
+CHECK ((phase = 'meta_enqueued') = (meta_enqueue_reason IS NOT NULL)),
 CHECK (
   (phase = 'admission' AND status = 'running' AND wait_reason IS NULL)
   OR (phase = 'admission' AND status = 'waiting' AND wait_reason IN ('weak_queue', 'preempt_commit', 'deferred_strong_queue', 'stage_retry_wait'))

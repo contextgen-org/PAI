@@ -11,7 +11,9 @@ import {
 import type { OwnerOutboxStorePortV1 } from "@pai/persistence";
 
 import {
+  canonicalDurableEventEnvelopeSemanticHashV1,
   canonicalPayloadHashV1,
+  durableEventScopeFingerprintV1,
   CanonicalJsonValidationErrorV1,
 } from "./canonical-json.v1.js";
 
@@ -345,6 +347,8 @@ export interface TransactionalInboxApplyPortV1 {
     event_id: string;
     idempotency_key: string;
     payload_hash: string;
+    semantic_hash: string;
+    scope_fingerprint: string;
     envelope: DurableEventEnvelopeV1;
   }>): Promise<Readonly<{ status: "processed" | "replayed" }>>;
 }
@@ -377,8 +381,89 @@ export function createDurableInboxConsumerV1(
         event_id: envelope.event_id,
         idempotency_key: envelope.idempotency_key,
         payload_hash: canonicalPayloadHashV1(envelope.payload),
+        semantic_hash: canonicalDurableEventEnvelopeSemanticHashV1(envelope),
+        scope_fingerprint: durableEventScopeFingerprintV1(envelope),
         envelope,
       });
+    },
+  });
+}
+
+export interface DurableEventDeliveryMessageV1 {
+  readonly delivery_id: string;
+  readonly envelope: DurableEventEnvelopeV1;
+}
+
+export interface DurableEventDeliveryConsumerPortV1 {
+  readNew(request: Readonly<{
+    count: number;
+    block_ms: number;
+  }>): Promise<readonly DurableEventDeliveryMessageV1[]>;
+  reclaimPending(request: Readonly<{
+    min_idle_ms: number;
+    count: number;
+    start_id: string;
+  }>): Promise<readonly DurableEventDeliveryMessageV1[]>;
+  acknowledge(request: Readonly<{
+    delivery_ids: readonly string[];
+  }>): Promise<Readonly<{ acknowledged: number }>>;
+}
+
+export interface DurableEventConsumerWorkerSummaryV1 {
+  readonly received: number;
+  readonly processed: number;
+  readonly replayed: number;
+  readonly failed: number;
+  readonly acknowledged: number;
+}
+
+export function createDurableEventConsumerWorkerV1(
+  delivery: DurableEventDeliveryConsumerPortV1,
+  inbox: TransactionalInboxApplyPortV1,
+  config: Readonly<{ consumer_service: DurableEventConsumerServiceIdV1 }>,
+): Readonly<{
+  consumeNewBatch: (
+    request: Readonly<{ count: number; block_ms: number }>,
+  ) => Promise<DurableEventConsumerWorkerSummaryV1>;
+  reclaimAndConsumeBatch: (
+    request: Readonly<{ min_idle_ms: number; count: number; start_id: string }>,
+  ) => Promise<DurableEventConsumerWorkerSummaryV1>;
+}> {
+  const consumer = createDurableInboxConsumerV1(inbox, config);
+  const consumeMessages = async (
+    messages: readonly DurableEventDeliveryMessageV1[],
+  ): Promise<DurableEventConsumerWorkerSummaryV1> => {
+    let processed = 0;
+    let replayed = 0;
+    let failed = 0;
+    let acknowledged = 0;
+    for (const message of messages) {
+      try {
+        const result = await consumer.consume(message.envelope);
+        const ack = await delivery.acknowledge({
+          delivery_ids: [message.delivery_id],
+        });
+        acknowledged += ack.acknowledged;
+        if (result.status === "processed") processed += 1;
+        else replayed += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    return {
+      received: messages.length,
+      processed,
+      replayed,
+      failed,
+      acknowledged,
+    };
+  };
+  return Object.freeze({
+    async consumeNewBatch(request) {
+      return consumeMessages(await delivery.readNew(request));
+    },
+    async reclaimAndConsumeBatch(request) {
+      return consumeMessages(await delivery.reclaimPending(request));
     },
   });
 }

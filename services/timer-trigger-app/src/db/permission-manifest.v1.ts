@@ -96,7 +96,7 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
     },
     {
       table_name: "timer_event_inbox",
-      select_columns: ["id","source","idempotency_key","payload_hash","processed_at","created_at"],
+      select_columns: ["id","source","event_id","scope_fingerprint","idempotency_key","payload_hash","semantic_hash","processed_at","created_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,

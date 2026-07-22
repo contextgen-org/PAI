@@ -5,6 +5,7 @@ import {
   canonicalPayloadHashV1,
   createRedisNamespaceV1,
   createRedisDependencyMonitorV1,
+  createRedisStreamConsumerGroupPortV1,
   loadRedisRuntimeConfigV1,
   namespacedRedisKeyV1,
   openVerifiedRedisStreamCompositionV1,
@@ -19,7 +20,20 @@ const envelope = {
   occurred_at: "2026-07-21T05:00:00Z",
   idempotency_key: "occurrence_001:due",
   trace_id: "trace_001",
-  payload: { occurrence_id: "occurrence_001", scheduled: true },
+  payload: {
+    scope_kind: "bot",
+    workspace_id: "workspace_001",
+    bot_id: "bot_001",
+    owner_agent_id: "owner_agent_001",
+    deployment_environment: "dev",
+    release_channel: "stable",
+    occurrence_id: "occurrence_001",
+    schedule_id: "schedule_001",
+    scheduled_fire_at: "2026-07-21T05:00:00Z",
+    effective_fire_at: "2026-07-21T05:00:00Z",
+    dedupe_key: "timer:occurrence_001",
+    is_catch_up: false,
+  },
 } as const;
 
 describe("Redis Stream transport V1", () => {
@@ -147,5 +161,64 @@ describe("Redis Stream transport V1", () => {
       consecutive_failures: 0,
       changed_at: "2026-07-21T05:00:20.000Z",
     });
+  });
+
+  it("reads, reclaims and acknowledges through Redis consumer-group commands", async () => {
+    const commands: string[][] = [];
+    const client = {
+      async sendCommand(args: readonly string[]): Promise<unknown> {
+        commands.push([...args]);
+        if (args[0] === "XGROUP") {
+          throw new Error("BUSYGROUP Consumer Group name already exists");
+        }
+        if (args[0] === "XREADGROUP") {
+          return [
+            [
+              "pai:dev:stable:timer_trigger_app:v1:stream:timer_events",
+              [
+                [
+                  "1-0",
+                  Object.entries(buildRedisStreamMessageV1(envelope)).flat(),
+                ],
+              ],
+            ],
+          ];
+        }
+        if (args[0] === "XAUTOCLAIM") {
+          return [
+            "0-0",
+            [["1-0", Object.entries(buildRedisStreamMessageV1(envelope)).flat()]],
+            [],
+          ];
+        }
+        if (args[0] === "XACK") return 1;
+        throw new Error(`unexpected command ${args[0]}`);
+      },
+    };
+    const consumer = createRedisStreamConsumerGroupPortV1(client, {
+      stream: "pai:dev:stable:timer_trigger_app:v1:stream:timer_events",
+      group: "trigger_processor",
+      consumer: "worker_001",
+    });
+    await expect(consumer.ensureGroup()).resolves.toBeUndefined();
+    await expect(consumer.readNew({ count: 10, block_ms: 0 })).resolves.toEqual([
+      { delivery_id: "1-0", envelope },
+    ]);
+    await expect(
+      consumer.reclaimPending({
+        min_idle_ms: 30_000,
+        count: 10,
+        start_id: "0-0",
+      }),
+    ).resolves.toEqual([{ delivery_id: "1-0", envelope }]);
+    await expect(
+      consumer.acknowledge({ delivery_ids: ["1-0"] }),
+    ).resolves.toEqual({ acknowledged: 1 });
+    expect(commands.map((command) => command[0])).toEqual([
+      "XGROUP",
+      "XREADGROUP",
+      "XAUTOCLAIM",
+      "XACK",
+    ]);
   });
 });

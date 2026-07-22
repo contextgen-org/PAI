@@ -5,15 +5,41 @@ import type {
 import { describe, expect, it } from "vitest";
 
 import {
+  canonicalDurableEventEnvelopeSemanticHashV1,
   canonicalPayloadHashV1,
+  durableEventScopeFingerprintV1,
   createDurableInboxConsumerV1,
+  createDurableEventConsumerWorkerV1,
   createDurableOutboxDispatcherV1,
   EventTransportErrorV1,
   type ClaimedOutboxRecordV1,
   type DurableEventTransportPortV1,
   type DurableOutboxStorePortV1,
   type TransactionalInboxApplyPortV1,
+  type DurableEventDeliveryConsumerPortV1,
+  type DurableEventDeliveryMessageV1,
 } from "../src/index.js";
+
+function botScope(
+  overrides: Partial<Record<
+    | "workspace_id"
+    | "bot_id"
+    | "owner_agent_id"
+    | "deployment_environment"
+    | "release_channel",
+    string
+  >> = {},
+) {
+  return {
+    scope_kind: "bot",
+    workspace_id: "workspace_001",
+    bot_id: "bot_001",
+    owner_agent_id: "owner_agent_001",
+    deployment_environment: "dev",
+    release_channel: "stable",
+    ...overrides,
+  } as const;
+}
 
 function event(
   overrides: Partial<DurableEventEnvelopeV1> = {},
@@ -26,7 +52,11 @@ function event(
     occurred_at: "2026-07-21T05:00:00.000Z",
     idempotency_key: "run_001:completed",
     trace_id: "trace_001",
-    payload: { runtime_run_id: "run_001", outcome: "completed" },
+    payload: {
+      ...botScope(),
+      runtime_run_id: "run_001",
+      outcome: "completed",
+    },
     ...overrides,
   };
 }
@@ -358,18 +388,27 @@ describe("durable outbox dispatcher V1", () => {
 });
 
 describe("durable inbox consumer V1", () => {
-  it("processes one identity once and rejects same-key payload drift", async () => {
+  it("processes one scoped identity once and rejects same-key semantic drift", async () => {
     const seen = new Map<string, string>();
     const inbox: TransactionalInboxApplyPortV1 = {
       async apply(request) {
-        const key = `${request.source}:${request.idempotency_key}`;
+        const key = `${request.source}:${request.scope_fingerprint}:${request.idempotency_key}`;
         const existing = seen.get(key);
         if (existing === undefined) {
-          seen.set(key, request.payload_hash);
+          expect(request.payload_hash).toBe(
+            canonicalPayloadHashV1(request.envelope.payload),
+          );
+          expect(request.semantic_hash).toBe(
+            canonicalDurableEventEnvelopeSemanticHashV1(request.envelope),
+          );
+          expect(request.scope_fingerprint).toBe(
+            durableEventScopeFingerprintV1(request.envelope),
+          );
+          seen.set(key, request.semantic_hash);
           return { status: "processed" };
         }
-        if (existing !== request.payload_hash) {
-          throw new Error("inbox idempotency payload hash conflict");
+        if (existing !== request.semantic_hash) {
+          throw new Error("inbox idempotency semantic hash conflict");
         }
         return { status: "replayed" };
       },
@@ -379,13 +418,59 @@ describe("durable inbox consumer V1", () => {
     });
     await expect(consumer.consume(event())).resolves.toEqual({ status: "processed" });
     await expect(consumer.consume(event())).resolves.toEqual({ status: "replayed" });
+    const skillPayload = {
+      ...botScope(),
+      runtime_run_id: "run_001",
+      skill_id: "skill_001",
+    } as const;
     await expect(
       consumer.consume(
         event({
-          payload: { runtime_run_id: "run_drift", outcome: "completed" },
+          event_id: "evt_skill_001",
+          event_type: "runtime.skill.load.requested",
+          idempotency_key: "skill_load:run_001:skill_001",
+          payload: skillPayload,
         }),
       ),
-    ).rejects.toThrow(/payload hash conflict/);
+    ).resolves.toEqual({ status: "processed" });
+    await expect(
+      consumer.consume(
+        event({
+          event_id: "evt_skill_002",
+          event_type: "runtime.skill.load.resolved",
+          idempotency_key: "skill_load:run_001:skill_001",
+          payload: skillPayload,
+        }),
+      ),
+    ).rejects.toThrow(/semantic hash conflict/);
+  });
+
+  it("does not collapse different bot scopes that reuse producer idempotency keys", async () => {
+    const seen = new Set<string>();
+    const inbox: TransactionalInboxApplyPortV1 = {
+      async apply(request) {
+        const key = `${request.source}:${request.scope_fingerprint}:${request.idempotency_key}`;
+        if (seen.has(key)) return { status: "replayed" };
+        seen.add(key);
+        return { status: "processed" };
+      },
+    };
+    const consumer = createDurableInboxConsumerV1(inbox, {
+      consumer_service: "trigger_processor",
+    });
+    await expect(consumer.consume(event())).resolves.toEqual({ status: "processed" });
+    await expect(
+      consumer.consume(
+        event({
+          payload: {
+            ...botScope({ bot_id: "bot_002", owner_agent_id: "owner_agent_002" }),
+            runtime_run_id: "run_001",
+            outcome: "completed",
+          },
+        }),
+      ),
+    ).resolves.toEqual({ status: "processed" });
+    expect(seen.size).toBe(2);
   });
 
   it("rejects an unknown producer event branch before owner side effects", async () => {
@@ -412,5 +497,90 @@ describe("durable inbox consumer V1", () => {
     }, { consumer_service: "memory" });
     await expect(consumer.consume(event())).rejects.toThrow(/consumer/u);
     expect(applies).toBe(0);
+  });
+});
+
+describe("durable event consumer worker V1", () => {
+  class DeliveryFake implements DurableEventDeliveryConsumerPortV1 {
+    public readonly acknowledged: string[] = [];
+    public constructor(
+      private readonly newMessages: readonly DurableEventDeliveryMessageV1[],
+      private readonly reclaimedMessages: readonly DurableEventDeliveryMessageV1[] = [],
+    ) {}
+
+    public async readNew(): Promise<readonly DurableEventDeliveryMessageV1[]> {
+      return this.newMessages;
+    }
+
+    public async reclaimPending(): Promise<readonly DurableEventDeliveryMessageV1[]> {
+      return this.reclaimedMessages;
+    }
+
+    public async acknowledge(request: {
+      delivery_ids: readonly string[];
+    }): Promise<Readonly<{ acknowledged: number }>> {
+      this.acknowledged.push(...request.delivery_ids);
+      return { acknowledged: request.delivery_ids.length };
+    }
+  }
+
+  it("acks transport only after the transactional inbox apply succeeds", async () => {
+    const delivery = new DeliveryFake([
+      { delivery_id: "1-0", envelope: event({ event_id: "evt_worker_001" }) },
+    ]);
+    const applied: string[] = [];
+    const inbox: TransactionalInboxApplyPortV1 = {
+      async apply(request) {
+        applied.push(request.event_id);
+        return { status: "processed" };
+      },
+    };
+    const worker = createDurableEventConsumerWorkerV1(delivery, inbox, {
+      consumer_service: "trigger_processor",
+    });
+    await expect(worker.consumeNewBatch({ count: 10, block_ms: 0 })).resolves.toEqual({
+      received: 1,
+      processed: 1,
+      replayed: 0,
+      failed: 0,
+      acknowledged: 1,
+    });
+    expect(applied).toEqual(["evt_worker_001"]);
+    expect(delivery.acknowledged).toEqual(["1-0"]);
+  });
+
+  it("does not ack when the inbox transaction fails, leaving the message reclaimable", async () => {
+    const delivery = new DeliveryFake(
+      [{ delivery_id: "1-0", envelope: event({ event_id: "evt_worker_fail" }) }],
+      [{ delivery_id: "1-0", envelope: event({ event_id: "evt_worker_fail" }) }],
+    );
+    let fail = true;
+    const inbox: TransactionalInboxApplyPortV1 = {
+      async apply() {
+        if (fail) throw new Error("domain transaction failed");
+        return { status: "replayed" };
+      },
+    };
+    const worker = createDurableEventConsumerWorkerV1(delivery, inbox, {
+      consumer_service: "trigger_processor",
+    });
+    await expect(worker.consumeNewBatch({ count: 10, block_ms: 0 })).resolves.toEqual({
+      received: 1,
+      processed: 0,
+      replayed: 0,
+      failed: 1,
+      acknowledged: 0,
+    });
+    expect(delivery.acknowledged).toEqual([]);
+
+    fail = false;
+    await expect(
+      worker.reclaimAndConsumeBatch({
+        min_idle_ms: 30_000,
+        count: 10,
+        start_id: "0-0",
+      }),
+    ).resolves.toMatchObject({ replayed: 1, acknowledged: 1 });
+    expect(delivery.acknowledged).toEqual(["1-0"]);
   });
 });

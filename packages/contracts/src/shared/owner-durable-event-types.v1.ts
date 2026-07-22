@@ -1,4 +1,5 @@
 import { Type, type TSchema } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 
 import {
   assertDurableEventEnvelopeV1,
@@ -6,6 +7,8 @@ import {
   DurableEventEnvelopeValidationErrorV1,
   type DurableEventEnvelopeV1,
 } from "./durable-event-envelope.v1.js";
+import { DeploymentEnvironmentV1Schema } from "./deployment-environment.v1.js";
+import { ReleaseChannelV1Schema } from "./release-channel.v1.js";
 import { SERVICE_IDS, type ServiceIdV1 } from "./service-id.v1.js";
 
 export type DurableEventOwnerServiceIdV1 = Exclude<
@@ -124,7 +127,8 @@ export type DurableEventConsumerServiceIdV1 = DurableEventOwnerServiceIdV1;
 
 export interface OwnerDurableEventContractV1 {
   readonly schema_version: string;
-  readonly required_payload_keys: readonly [string, ...string[]];
+  readonly payload_schema: TSchema;
+  readonly payload_scope: "bot" | "bot_or_global";
   readonly consumer_services: readonly [
     DurableEventConsumerServiceIdV1,
     ...DurableEventConsumerServiceIdV1[],
@@ -144,13 +148,19 @@ function eventContract(
     DurableEventConsumerServiceIdV1,
     ...DurableEventConsumerServiceIdV1[],
   ],
+  options: Readonly<{
+    payload_scope?: OwnerDurableEventContractV1["payload_scope"] | undefined;
+    fields?: Readonly<Record<string, TSchema>> | undefined;
+  }> = {},
 ): OwnerDurableEventContractV1 {
+  const payloadScope = options.payload_scope ?? "bot";
   return Object.freeze({
     schema_version: schemaVersion,
-    required_payload_keys: Object.freeze([...requiredPayloadKeys]) as [
-      string,
-      ...string[],
-    ],
+    payload_schema: scopedPayloadSchema(
+      payloadScope,
+      payloadProperties(requiredPayloadKeys, options.fields ?? {}),
+    ),
+    payload_scope: payloadScope,
     consumer_services: Object.freeze([...consumerServices]) as [
       DurableEventConsumerServiceIdV1,
       ...DurableEventConsumerServiceIdV1[],
@@ -163,28 +173,147 @@ const runtimeEventConsumer = ["trigger_processor"] as const;
 const metaConsumer = ["meta_cognition"] as const;
 const memoryConsumer = ["memory"] as const;
 const knowthatConsumer = ["knowthat"] as const;
+const runtimeAndTriggerConsumers = ["trigger_processor", "action_runtime"] as const;
 
-const triggerEvent = (keys: readonly [string, ...string[]]) =>
-  eventContract("trigger_processor_event.v1", keys, metaConsumer);
-const runtimeEvent = (keys: readonly [string, ...string[]]) =>
-  eventContract("runtime_domain_event.v1", keys, runtimeEventConsumer);
-const toolEvent = (keys: readonly [string, ...string[]]) =>
-  eventContract("tool_invocation_event.v1", keys, runtimeEventConsumer);
-const timerEvent = (keys: readonly [string, ...string[]]) =>
-  eventContract("timer_event.v1", keys, triggerProcessorConsumer);
+const triggerEvent = (
+  keys: readonly [string, ...string[]],
+  fields?: Readonly<Record<string, TSchema>>,
+) => eventContract("trigger_processor_event.v1", keys, metaConsumer, { fields });
+const runtimeEvent = (
+  keys: readonly [string, ...string[]],
+  fields?: Readonly<Record<string, TSchema>>,
+) =>
+  eventContract("runtime_domain_event.v1", keys, runtimeEventConsumer, {
+    fields,
+  });
+const toolEvent = (
+  keys: readonly [string, ...string[]],
+  fields?: Readonly<Record<string, TSchema>>,
+) =>
+  eventContract("tool_invocation_event.v1", keys, runtimeEventConsumer, {
+    fields,
+  });
+const timerEvent = (
+  keys: readonly [string, ...string[]],
+  fields?: Readonly<Record<string, TSchema>>,
+) => eventContract("timer_event.v1", keys, triggerProcessorConsumer, { fields });
 const metaEvent = (
   keys: readonly [string, ...string[]],
   consumers: readonly [
     DurableEventConsumerServiceIdV1,
     ...DurableEventConsumerServiceIdV1[],
   ] = triggerProcessorConsumer,
-) => eventContract("meta_cognition_event.v1", keys, consumers);
-const skillEvent = (keys: readonly [string, ...string[]]) =>
-  eventContract("skill_registry_event.v1", keys, triggerProcessorConsumer);
+  fields?: Readonly<Record<string, TSchema>>,
+) => eventContract("meta_cognition_event.v1", keys, consumers, { fields });
+const skillEvent = (
+  keys: readonly [string, ...string[]],
+  options: Readonly<{
+    payload_scope?: OwnerDurableEventContractV1["payload_scope"] | undefined;
+    consumers?: readonly [
+      DurableEventConsumerServiceIdV1,
+      ...DurableEventConsumerServiceIdV1[],
+    ] | undefined;
+    fields?: Readonly<Record<string, TSchema>> | undefined;
+  }> = {},
+) =>
+  eventContract(
+    "skill_registry_event.v1",
+    keys,
+    options.consumers ?? triggerProcessorConsumer,
+    { payload_scope: options.payload_scope, fields: options.fields },
+  );
 const knowthatEvent = (keys: readonly [string, ...string[]]) =>
   eventContract("knowthat_event.v1", keys, metaConsumer);
 const memoryEvent = (keys: readonly [string, ...string[]]) =>
   eventContract("memory_event.v1", keys, metaConsumer);
+
+const nonEmptyPayloadString = Type.String({ minLength: 1, maxLength: 512 });
+const reasonCode = Type.String({
+  minLength: 1,
+  maxLength: 128,
+  pattern: "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+});
+const boundedInteger = Type.Integer({ minimum: 0, maximum: 9_007_199_254_740_991 });
+const eventTimestamp = DurableEventEnvelopeV1Schema.properties.occurred_at;
+const triggerPhase = Type.Union([
+  Type.Literal("admission"),
+  Type.Literal("context"),
+  Type.Literal("intent"),
+  Type.Literal("execution"),
+  Type.Literal("cooldown"),
+  Type.Literal("meta_enqueued"),
+  Type.Literal("closed"),
+]);
+const terminalOutcome = Type.Union([
+  Type.Literal("completed"),
+  Type.Literal("cancelled_with_reason"),
+  Type.Literal("interrupted_with_reason"),
+  Type.Literal("failed_with_reason"),
+  Type.Literal("preempted_and_handed_off"),
+  Type.Literal("superseded_by_later_trigger"),
+]);
+const reviewDecision = Type.Union([
+  Type.Literal("accepted"),
+  Type.Literal("rejected"),
+  Type.Literal("needs_changes"),
+]);
+
+const botScopeProperties = {
+  scope_kind: Type.Literal("bot"),
+  workspace_id: nonEmptyPayloadString,
+  bot_id: nonEmptyPayloadString,
+  owner_agent_id: nonEmptyPayloadString,
+  deployment_environment: DeploymentEnvironmentV1Schema,
+  release_channel: ReleaseChannelV1Schema,
+} as const satisfies Readonly<Record<string, TSchema>>;
+
+const globalScopeProperties = {
+  scope_kind: Type.Literal("global"),
+  deployment_environment: DeploymentEnvironmentV1Schema,
+  release_channel: ReleaseChannelV1Schema,
+} as const satisfies Readonly<Record<string, TSchema>>;
+
+function schemaForPayloadKey(key: string): TSchema {
+  if (key === "phase") return triggerPhase;
+  if (key === "outcome") return terminalOutcome;
+  if (key === "decision") return reviewDecision;
+  if (key === "revocation_epoch" || key.endsWith("_version")) {
+    return boundedInteger;
+  }
+  if (key.endsWith("_at") || key === "scheduled_fire_at" || key === "effective_fire_at") {
+    return eventTimestamp;
+  }
+  if (key === "is_catch_up") return Type.Boolean();
+  if (key === "error_code" || key === "reason") return reasonCode;
+  return nonEmptyPayloadString;
+}
+
+function payloadProperties(
+  keys: readonly [string, ...string[]],
+  overrides: Readonly<Record<string, TSchema>>,
+): Readonly<Record<string, TSchema>> {
+  return Object.fromEntries(
+    keys.map((key) => [key, overrides[key] ?? schemaForPayloadKey(key)]),
+  );
+}
+
+function scopedPayloadSchema(
+  scope: OwnerDurableEventContractV1["payload_scope"],
+  properties: Readonly<Record<string, TSchema>>,
+): TSchema {
+  const botPayload = Type.Object(
+    { ...botScopeProperties, ...properties },
+    { additionalProperties: false },
+  );
+  if (scope === "bot") return botPayload;
+  return Type.Union([
+    botPayload,
+    Type.Object(
+      { ...globalScopeProperties, ...properties },
+      { additionalProperties: false },
+    ),
+  ]);
+}
 
 export const OWNER_DURABLE_EVENT_CONTRACTS_V1 = Object.freeze({
   trigger_processor: Object.freeze({
@@ -208,7 +337,9 @@ export const OWNER_DURABLE_EVENT_CONTRACTS_V1 = Object.freeze({
   }),
   action_runtime: Object.freeze({
     "runtime.run.started": runtimeEvent(["runtime_run_id"]),
-    "runtime.run.completed": runtimeEvent(["runtime_run_id", "outcome"]),
+    "runtime.run.completed": runtimeEvent(["runtime_run_id", "outcome"], {
+      outcome: Type.Literal("completed"),
+    }),
     "runtime.run.failed": runtimeEvent(["runtime_run_id", "error_code"]),
     "runtime.run.cancelled": runtimeEvent(["runtime_run_id", "reason"]),
     "runtime.run.preempted": runtimeEvent(["runtime_run_id", "reason"]),
@@ -259,7 +390,14 @@ export const OWNER_DURABLE_EVENT_CONTRACTS_V1 = Object.freeze({
     "timer.schedule.completed": timerEvent(["schedule_id"]),
     "timer.schedule.expired": timerEvent(["schedule_id"]),
     "timer.schedule.failed": timerEvent(["schedule_id", "error_code"]),
-    "timer.occurrence.due": timerEvent(["occurrence_id"]),
+    "timer.occurrence.due": timerEvent([
+      "occurrence_id",
+      "schedule_id",
+      "scheduled_fire_at",
+      "effective_fire_at",
+      "dedupe_key",
+      "is_catch_up",
+    ]),
     "timer.occurrence.snoozed": timerEvent(["occurrence_id"]),
     "timer.occurrence.dispatched": timerEvent(["occurrence_id"]),
     "timer.occurrence.skipped": timerEvent(["occurrence_id", "reason"]),
@@ -298,7 +436,10 @@ export const OWNER_DURABLE_EVENT_CONTRACTS_V1 = Object.freeze({
     "skill.version.revoked": skillEvent(["skill_version_id", "reason"]),
     "skill.permission.granted": skillEvent(["skill_id", "principal_id"]),
     "skill.permission.revoked": skillEvent(["skill_id", "principal_id"]),
-    "skill.security_revocation_epoch.changed": skillEvent(["revocation_epoch"]),
+    "skill.security_revocation_epoch.changed": skillEvent(["revocation_epoch"], {
+      consumers: runtimeAndTriggerConsumers,
+      payload_scope: "bot_or_global",
+    }),
     "skill.candidate.application.updated": skillEvent([
       "candidate_application_id",
     ]),
@@ -323,17 +464,6 @@ export const OWNER_DURABLE_EVENT_CONTRACTS_V1 = Object.freeze({
   }),
 } as const satisfies OwnerDurableEventContractMapV1);
 
-const nonEmptyPayloadString = Type.String({ minLength: 1, maxLength: 512 });
-
-function payloadSchema(requiredPayloadKeys: readonly string[]): TSchema {
-  return Type.Object(
-    Object.fromEntries(
-      requiredPayloadKeys.map((key) => [key, nonEmptyPayloadString]),
-    ),
-    { additionalProperties: false },
-  );
-}
-
 const ownerDurableEventBranches = Object.entries(
   OWNER_DURABLE_EVENT_CONTRACTS_V1,
 ).flatMap(([owner, contracts]) =>
@@ -348,7 +478,7 @@ const ownerDurableEventBranches = Object.entries(
         idempotency_key:
           DurableEventEnvelopeV1Schema.properties.idempotency_key,
         trace_id: DurableEventEnvelopeV1Schema.properties.trace_id,
-        payload: payloadSchema(contract.required_payload_keys),
+        payload: contract.payload_schema,
       },
       { additionalProperties: false },
     ),
@@ -397,18 +527,13 @@ export function assertOwnerDurableEventEnvelopeV1(
     if (value.schema_version !== contract.schema_version) {
       issues.push("/schema_version: must match the owner event branch");
     }
-    const payload = value.payload;
-    const allowedKeys = new Set(contract.required_payload_keys);
-    for (const key of contract.required_payload_keys) {
-      const payloadValue = payload[key];
-      if (typeof payloadValue !== "string" || payloadValue.length === 0) {
-        issues.push(`/payload/${key}: required non-empty string`);
-      }
-    }
-    for (const key of Object.keys(payload)) {
-      if (!allowedKeys.has(key)) {
-        issues.push(`/payload/${key}: undeclared owner event payload field`);
-      }
+    if (!Value.Check(contract.payload_schema, value.payload)) {
+      issues.push(
+        ...[...Value.Errors(contract.payload_schema, value.payload)].map(
+          (issue) =>
+            `/payload${issue.path || ""}: ${issue.message}`,
+        ),
+      );
     }
   }
   if (issues.length > 0) {
