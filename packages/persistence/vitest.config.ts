@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url";
 export default defineConfig({
   resolve: {
     alias: {
+      "@pai/contracts": fileURLToPath(
+        new URL("../contracts/src/index.ts", import.meta.url),
+      ),
       "@pai/persistence": fileURLToPath(new URL("./src/index.ts", import.meta.url)),
     },
   },
