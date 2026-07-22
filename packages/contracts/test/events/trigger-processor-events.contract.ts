@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+
 import { Value } from "@sinclair/typebox/value";
 import { describe, expect, it } from "vitest";
 
@@ -5,6 +8,7 @@ import {
   TRIGGER_PROCESSOR_DOMAIN_EVENT_CONSUMERS_V1,
   TRIGGER_PROCESSOR_DOMAIN_EVENT_TYPES_V1,
   TRIGGER_PROCESSOR_DOMAIN_EVENT_V1_DATABASE_CHECK,
+  TRIGGER_PROCESSOR_DOMAIN_EVENT_BRANCH_SCHEMAS_V1,
   TRIGGER_PROCESSOR_SCHEMA_CATALOG,
   TriggerProcessorDomainEventV1Schema,
 } from "../../src/index.js";
@@ -37,6 +41,22 @@ const acceptedEvent = {
     request_hash: "hash_001",
   },
 } as const;
+
+const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
+
+async function readGeneratedJson(path: string): Promise<unknown> {
+  return JSON.parse(
+    await readFile(new URL(path, `file://${packageRoot}/`), "utf8"),
+  ) as unknown;
+}
+
+function triggerProcessorEventMessageName(eventType: string): string {
+  return `TriggerProcessor${eventType
+    .split(/[^a-z0-9]+/u)
+    .filter(Boolean)
+    .map((segment) => `${segment[0]!.toUpperCase()}${segment.slice(1)}`)
+    .join("")}EventV1`;
+}
 
 describe("TriggerProcessorDomainEventV1", () => {
   it("validates the canonical trigger accepted envelope and rejects nested-scope payloads", () => {
@@ -127,7 +147,17 @@ describe("TriggerProcessorDomainEventV1", () => {
     ).not.toContain("action_runtime");
   });
 
-  it("is registered with generated schema, AsyncAPI, type and DB CHECK outputs", () => {
+  it("uses draft 2020-12 strict root schema metadata", () => {
+    const schema = TriggerProcessorDomainEventV1Schema as unknown as Readonly<
+      Record<string, unknown>
+    >;
+    expect(schema.$schema).toBe(
+      "https://json-schema.org/draft/2020-12/schema",
+    );
+    expect(schema.unevaluatedProperties).toBe(false);
+  });
+
+  it("is registered with generated schema, AsyncAPI, type and column-level DB CHECK outputs", () => {
     const eventEntry = TRIGGER_PROCESSOR_SCHEMA_CATALOG.find(
       (entry) => entry.schema_name === "TriggerProcessorDomainEventV1",
     );
@@ -150,7 +180,93 @@ describe("TriggerProcessorDomainEventV1", () => {
       );
     }
     expect(TRIGGER_PROCESSOR_DOMAIN_EVENT_V1_DATABASE_CHECK).toContain(
-      "payload->>'schema_version' = 'trigger_processor_event.v1'",
+      "schema_version = 'trigger_processor_event.v1'",
     );
+    expect(TRIGGER_PROCESSOR_DOMAIN_EVENT_V1_DATABASE_CHECK).toContain(
+      "producer = 'trigger_processor'",
+    );
+    expect(TRIGGER_PROCESSOR_DOMAIN_EVENT_V1_DATABASE_CHECK).toContain(
+      "event_type in (",
+    );
+    expect(TRIGGER_PROCESSOR_DOMAIN_EVENT_V1_DATABASE_CHECK).not.toContain(
+      "payload->>",
+    );
+    expect(TRIGGER_PROCESSOR_DOMAIN_EVENT_V1_DATABASE_CHECK).toContain(
+      "drop constraint if exists trigger_event_outbox_event_schema_pair_check",
+    );
+  });
+
+  it("exposes one branch schema per AsyncAPI channel discriminator", () => {
+    expect(Object.keys(TRIGGER_PROCESSOR_DOMAIN_EVENT_BRANCH_SCHEMAS_V1)).toEqual(
+      [...TRIGGER_PROCESSOR_DOMAIN_EVENT_TYPES_V1],
+    );
+    expect(
+      Value.Check(
+        TRIGGER_PROCESSOR_DOMAIN_EVENT_BRANCH_SCHEMAS_V1["trigger.accepted"],
+        acceptedEvent,
+      ),
+    ).toBe(true);
+    expect(
+      Value.Check(
+        TRIGGER_PROCESSOR_DOMAIN_EVENT_BRANCH_SCHEMAS_V1["trigger.rejected"],
+        acceptedEvent,
+      ),
+    ).toBe(false);
+  });
+
+  it("generates strict JSON schema metadata and branch-specific AsyncAPI messages", async () => {
+    const generatedSchema = await readGeneratedJson(
+      "generated/schema/trigger-processor/events.v1.json",
+    ) as Readonly<Record<string, unknown>>;
+    expect(generatedSchema.$schema).toBe(
+      "https://json-schema.org/draft/2020-12/schema",
+    );
+    expect(generatedSchema.unevaluatedProperties).toBe(false);
+
+    const asyncApi = await readGeneratedJson(
+      "generated/asyncapi/trigger-processor.yaml",
+    ) as Readonly<{
+      channels: Record<
+        string,
+        Readonly<{ messages: Record<string, Readonly<{ $ref: string }>> }>
+      >;
+      components: Readonly<{
+        messages: Record<string, Readonly<{ payload: unknown }>>;
+      }>;
+    }>;
+    const expectedMessages = TRIGGER_PROCESSOR_DOMAIN_EVENT_TYPES_V1.map(
+      triggerProcessorEventMessageName,
+    );
+    expect(Object.keys(asyncApi.components.messages).sort()).toEqual(
+      [...expectedMessages].sort(),
+    );
+    for (const eventType of TRIGGER_PROCESSOR_DOMAIN_EVENT_TYPES_V1) {
+      const messageName = triggerProcessorEventMessageName(eventType);
+      expect(
+        asyncApi.channels[`trigger_processor.${eventType}`]?.messages[
+          messageName
+        ]?.$ref,
+      ).toBe(`#/components/messages/${messageName}`);
+    }
+    expect(
+      (
+        asyncApi.components.messages.TriggerProcessorTriggerAcceptedEventV1
+          ?.payload as Readonly<{
+          properties?: Readonly<{
+            event_type?: Readonly<{ const?: unknown }>;
+          }>;
+        }>
+      ).properties?.event_type?.const,
+    ).toBe("trigger.accepted");
+    expect(
+      (
+        asyncApi.components.messages.TriggerProcessorTriggerRejectedEventV1
+          ?.payload as Readonly<{
+          properties?: Readonly<{
+            event_type?: Readonly<{ const?: unknown }>;
+          }>;
+        }>
+      ).properties?.event_type?.const,
+    ).toBe("trigger.rejected");
   });
 });

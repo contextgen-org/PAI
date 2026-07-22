@@ -167,6 +167,16 @@ export interface OwnerDatabaseCheckV1<TTable extends string = string> {
         }>[];
       }>
     | Readonly<{
+        kind: "column_event_envelope";
+        column_name: string;
+        producer_column_name: string;
+        producer_value: string;
+        schema_version_column_name: string;
+        schema_version_value: string;
+        event_type_column_name: string;
+        event_type_allowed_values: readonly string[];
+      }>
+    | Readonly<{
         kind: "integer_range";
         column_name: string;
         min: number;
@@ -733,6 +743,23 @@ export function defineOwnerRepositoryContractV1<
                 !tableColumns?.has(column_name),
             );
           break;
+        case "column_event_envelope":
+          invalidSemantic =
+            !sqlIdentifierPattern.test(semantic.producer_column_name) ||
+            !tableColumns?.has(semantic.producer_column_name) ||
+            !sqlIdentifierPattern.test(semantic.schema_version_column_name) ||
+            !tableColumns?.has(semantic.schema_version_column_name) ||
+            !sqlIdentifierPattern.test(semantic.event_type_column_name) ||
+            !tableColumns?.has(semantic.event_type_column_name) ||
+            semantic.producer_value.length === 0 ||
+            semantic.schema_version_value.length === 0 ||
+            semantic.event_type_allowed_values.length === 0 ||
+            new Set(semantic.event_type_allowed_values).size !==
+              semantic.event_type_allowed_values.length ||
+            semantic.event_type_allowed_values.some(
+              (value) => value.length === 0,
+            );
+          break;
         case "integer_range":
           invalidSemantic =
             !Number.isSafeInteger(semantic.min) ||
@@ -773,6 +800,9 @@ export function defineOwnerRepositoryContractV1<
     if (semantic?.kind === "json_event_envelope") {
       for (const binding of semantic.field_bindings) Object.freeze(binding);
       Object.freeze(semantic.field_bindings);
+    }
+    if (semantic?.kind === "column_event_envelope") {
+      Object.freeze(semantic.event_type_allowed_values);
     }
     if (semantic !== undefined) Object.freeze(semantic);
     Object.freeze(check.required_definition_fragments);
@@ -2191,6 +2221,56 @@ function matchesPostgresTextEnum(
   );
 }
 
+function matchesPostgresTextEquals(
+  expression: string,
+  column: string,
+  value: string,
+): boolean {
+  const escapedValue = escapeRegularExpression(value.replace(/'/gu, "''"));
+  return new RegExp(
+    `^\\b${column}\\b\\s*=\\s*'${escapedValue}'${postgresTextCastPattern}$`,
+    "iu",
+  ).test(expression);
+}
+
+function matchesColumnEventEnvelope(
+  expression: string,
+  semantic: Extract<
+    NonNullable<OwnerDatabaseCheckV1["semantic_constraint"]>,
+    { readonly kind: "column_event_envelope" }
+  >,
+): boolean {
+  const terms = splitCheckConjunction(expression);
+  const producerColumn = escapeRegularExpression(semantic.producer_column_name);
+  const schemaVersionColumn = escapeRegularExpression(
+    semantic.schema_version_column_name,
+  );
+  const eventTypeColumn = escapeRegularExpression(semantic.event_type_column_name);
+  const producerTerms = terms.filter((term) =>
+    matchesPostgresTextEquals(term, producerColumn, semantic.producer_value),
+  );
+  const schemaVersionTerms = terms.filter((term) =>
+    matchesPostgresTextEquals(
+      term,
+      schemaVersionColumn,
+      semantic.schema_version_value,
+    ),
+  );
+  const eventTypeTerms = terms.filter((term) =>
+    matchesPostgresTextEnum(
+      term,
+      eventTypeColumn,
+      semantic.event_type_allowed_values,
+    ),
+  );
+  return (
+    terms.length === 3 &&
+    producerTerms.length === 1 &&
+    schemaVersionTerms.length === 1 &&
+    eventTypeTerms.length === 1
+  );
+}
+
 function matchesNullablePostgresTextEnum(
   expression: string,
   column: string,
@@ -2337,13 +2417,10 @@ function checkSemanticMatches(
   const expression = postgresCheckExpression(definition);
   if (expression === undefined) return false;
   if (semantic.kind === "text_equals") {
-    const value = escapeRegularExpression(
-      semantic.value.replace(/'/gu, "''"),
-    );
-    return new RegExp(
-      `^\\b${column}\\b\\s*=\\s*'${value}'${postgresTextCastPattern}$`,
-      "iu",
-    ).test(expression);
+    return matchesPostgresTextEquals(expression, column, semantic.value);
+  }
+  if (semantic.kind === "column_event_envelope") {
+    return matchesColumnEventEnvelope(expression, semantic);
   }
   if (semantic.kind === "json_text_equals") {
     const value = escapeRegularExpression(
@@ -2677,6 +2754,40 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
       `runtime PostgreSQL role membership options drift for ${contract.owner_service}`,
     );
   }
+  const appRoleMemberResult = await postgres.query<{
+    role_name: string;
+    can_login: boolean;
+  }>(
+    `WITH RECURSIVE app_role_members(role_oid, path) AS (
+       SELECT r.oid, ARRAY[r.oid]
+         FROM pg_catalog.pg_roles r
+        WHERE r.rolname = $1
+       UNION ALL
+       SELECT m.member, app_role_members.path || m.member
+         FROM pg_catalog.pg_auth_members m
+         JOIN app_role_members ON app_role_members.role_oid = m.roleid
+        WHERE NOT m.member = ANY(app_role_members.path)
+     )
+     SELECT r.rolname AS role_name, r.rolcanlogin AS can_login
+       FROM app_role_members
+       JOIN pg_catalog.pg_roles r ON r.oid = app_role_members.role_oid
+      WHERE r.rolname <> $1
+      ORDER BY r.rolname`,
+    [contract.app_role],
+  );
+  assertSameSet(
+    `${contract.app_role} reverse members`,
+    appRoleMemberResult.rows.map(({ role_name }) => role_name),
+    [runtimeIdentity.current_user],
+  );
+  if (
+    appRoleMemberResult.rows.length !== 1 ||
+    appRoleMemberResult.rows[0]?.can_login !== true
+  ) {
+    throw new Error(
+      `application PostgreSQL role reverse membership drift for ${contract.owner_service}`,
+    );
+  }
 
   const unsupportedRelationResult = await postgres.query<{
     relation_name: string;
@@ -2936,6 +3047,13 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     function_owner: string;
     security_definer: boolean;
     settings: string[] | null;
+    strict: boolean;
+    volatility: string;
+    parallel_safety: string;
+    leakproof: boolean;
+    function_kind: string;
+    default_argument_count: number;
+    identity_arguments: string;
     argument_names: string[] | null;
     argument_types: string[] | null;
     returns_set: boolean;
@@ -2947,6 +3065,13 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     `SELECT p.oid::text AS oid, p.proname AS function_name,
             pg_get_userbyid(p.proowner) AS function_owner,
             p.prosecdef AS security_definer, p.proconfig AS settings,
+            p.proisstrict AS strict,
+            p.provolatile::text AS volatility,
+            p.proparallel::text AS parallel_safety,
+            p.proleakproof AS leakproof,
+            p.prokind::text AS function_kind,
+            p.pronargdefaults AS default_argument_count,
+            pg_catalog.pg_get_function_identity_arguments(p.oid) AS identity_arguments,
             p.proargnames AS argument_names,
             CASE WHEN p.pronargs = 0 THEN ARRAY[]::text[]
                  ELSE string_to_array(pg_catalog.oidvectortypes(p.proargtypes), ', ')
@@ -2964,6 +3089,11 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
   );
   const postgresType = (type: OwnerPostgresTypeV1): string =>
     type === "timestamptz" ? "timestamp with time zone" : type;
+  assertSameSet(
+    `${contract.schema} owner functions`,
+    functionResult.rows.map(({ function_name }) => function_name),
+    contract.mutable_writers,
+  );
   for (const signature of contract.function_signatures) {
     const deployed = functionResult.rows.find(
       ({ function_name }) => function_name === signature.function_name,
@@ -2973,6 +3103,12 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
       deployed === undefined ||
       deployed.function_owner !== options.expected_schema_owner ||
       deployed.security_definer !== true ||
+      deployed.strict ||
+      deployed.volatility !== "v" ||
+      deployed.parallel_safety !== "u" ||
+      deployed.leakproof ||
+      deployed.function_kind !== "f" ||
+      deployed.default_argument_count !== 0 ||
       JSON.stringify(deployed.settings ?? []) !== JSON.stringify([expectedSettings]) ||
       JSON.stringify(deployed.argument_names ?? []) !==
         JSON.stringify(signature.arguments.map(({ argument_name }) => argument_name)) ||
@@ -3222,6 +3358,15 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     }
     verifyOwnerDatabaseCheckDefinitionV1(expectation, observed.definition);
   }
+  assertSameSet(
+    `${contract.schema} CHECK constraints`,
+    checkConstraintResult.rows.map(
+      ({ constraint_name, table_name }) => `${table_name}.${constraint_name}`,
+    ),
+    (contract.database_checks ?? []).map(
+      ({ constraint_name, table_name }) => `${table_name}.${constraint_name}`,
+    ),
+  );
 
   const contractFingerprint = fingerprint(contract);
   const databaseFingerprint = fingerprint({
@@ -3232,6 +3377,7 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     runtime_identity: runtimeIdentityResult.rows,
     runtime_membership: runtimeMembershipResult.rows,
     runtime_membership_options: runtimeMembershipOptionsResult.rows,
+    app_role_reverse_membership: appRoleMemberResult.rows,
     unsupported_relations: unsupportedRelationResult.rows,
     rewrite_rules: rewriteRuleResult.rows,
     table_acl: tableAclResult.rows,
@@ -3588,7 +3734,13 @@ export function createVerifiedOwnerPostgresRepositoryV1<
         `SELECT value AS result FROM ${invocation} AS value`,
         [...values],
       );
-      return result.rows.map(({ result: value }) => value);
+      const valuesReturned = result.rows.map(({ result: value }) => value);
+      if (valuesReturned.some((value) => value === null || value === undefined)) {
+        throw new Error(
+          `owner writer returned null result: ${contract.schema}.${signature.function_name}`,
+        );
+      }
+      return valuesReturned;
     }
     const result = await client.query<{ result: TResult }>(
       `SELECT ${invocation} AS result`,
@@ -3597,6 +3749,11 @@ export function createVerifiedOwnerPostgresRepositoryV1<
     if (result.rows.length !== 1 || result.rows[0] === undefined) {
       throw new Error(
         `owner writer row-count drift: ${contract.schema}.${signature.function_name}`,
+      );
+    }
+    if (result.rows[0].result === null || result.rows[0].result === undefined) {
+      throw new Error(
+        `owner writer returned null result: ${contract.schema}.${signature.function_name}`,
       );
     }
     return result.rows[0].result;

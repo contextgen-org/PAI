@@ -63,6 +63,7 @@ const EVENTING_CONTRACT_INPUT = {
   ],
   tables: [
     "eventing_outbox",
+    "eventing_transport_epochs",
     "eventing_inbox",
     "eventing_projection",
     "eventing_audit",
@@ -91,6 +92,7 @@ const EVENTING_CONTRACT_INPUT = {
         "last_error",
         "transport_ref",
         "transport_epoch",
+        "transport_generation",
         "sent_at",
         "redrive_claimed_by",
         "redrive_claim_token",
@@ -103,6 +105,19 @@ const EVENTING_CONTRACT_INPUT = {
       update_columns: [],
       delete_allowed: false,
       writer_kind: "outbox_claim_ack",
+    },
+    {
+      table_name: "eventing_transport_epochs",
+      select_columns: [
+        "transport_name",
+        "active_epoch",
+        "active_generation",
+        "activated_at",
+      ],
+      insert_columns: [],
+      update_columns: [],
+      delete_allowed: false,
+      writer_kind: "pointer_cas",
     },
     {
       table_name: "eventing_inbox",
@@ -176,6 +191,7 @@ const EVENTING_CONTRACT_INPUT = {
     "consume_eventing_inbox_v1",
     "record_eventing_consumer_dlq_v1",
     "claim_sent_eventing_outbox_redrive_v1",
+    "activate_eventing_transport_epoch_v1",
     "ack_sent_eventing_outbox_redrive_v1",
   ],
   function_signatures: [
@@ -329,8 +345,9 @@ const EVENTING_CONTRACT_INPUT = {
         ["p_now", "timestamptz"],
         ["p_sent_after", "timestamptz"],
         ["p_current_transport_epoch", "text"],
+        ["p_current_transport_generation", "bigint"],
       ],
-      reads_tables: ["eventing_outbox"],
+      reads_tables: ["eventing_outbox", "eventing_transport_epochs"],
       writes_tables: ["eventing_outbox"],
       effects: [
         {
@@ -343,6 +360,29 @@ const EVENTING_CONTRACT_INPUT = {
     }),
     ownerFunctionSignatureV1({
       schema: "skill_registry",
+      function_name: "activate_eventing_transport_epoch_v1",
+      primary_table: "eventing_transport_epochs",
+      writer_kind: "pointer_cas",
+      arguments: [
+        ["p_transport_name", "text"],
+        ["p_expected_generation", "bigint"],
+        ["p_next_epoch", "text"],
+        ["p_next_generation", "bigint"],
+        ["p_now", "timestamptz"],
+      ],
+      reads_tables: ["eventing_transport_epochs"],
+      writes_tables: ["eventing_transport_epochs"],
+      effects: [
+        {
+          table_name: "eventing_transport_epochs",
+          operation: "cas",
+          concurrency_control: "generation_fence",
+        },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "skill_registry",
       function_name: "ack_sent_eventing_outbox_redrive_v1",
       primary_table: "eventing_outbox",
       writer_kind: "outbox_claim_ack",
@@ -350,11 +390,13 @@ const EVENTING_CONTRACT_INPUT = {
         ["p_outbox_id", "text"],
         ["p_claim_token", "text"],
         ["p_previous_transport_epoch", "text"],
+        ["p_previous_transport_generation", "bigint"],
         ["p_transport_ref", "text"],
         ["p_transport_epoch", "text"],
+        ["p_current_transport_generation", "bigint"],
         ["p_now", "timestamptz"],
       ],
-      reads_tables: ["eventing_outbox"],
+      reads_tables: ["eventing_outbox", "eventing_transport_epochs"],
       writes_tables: ["eventing_outbox"],
       effects: [
         {
@@ -451,6 +493,7 @@ const EVENTING_CONTRACT_INPUT = {
     eventingColumn("eventing_outbox", "last_error", "jsonb", false),
     eventingColumn("eventing_outbox", "transport_ref", "text", false),
     eventingColumn("eventing_outbox", "transport_epoch", "text", false),
+    eventingColumn("eventing_outbox", "transport_generation", "bigint", false),
     eventingColumn(
       "eventing_outbox",
       "sent_at",
@@ -480,6 +523,14 @@ const EVENTING_CONTRACT_INPUT = {
     eventingColumn(
       "eventing_outbox",
       "updated_at",
+      "timestamp with time zone",
+    ),
+    eventingColumn("eventing_transport_epochs", "transport_name", "text"),
+    eventingColumn("eventing_transport_epochs", "active_epoch", "text"),
+    eventingColumn("eventing_transport_epochs", "active_generation", "bigint"),
+    eventingColumn(
+      "eventing_transport_epochs",
+      "activated_at",
       "timestamp with time zone",
     ),
   ],
@@ -524,6 +575,15 @@ const EVENTING_CONTRACT_INPUT = {
       constraint_name: "eventing_outbox_pkey",
       table_name: "eventing_outbox",
       columns: ["id"],
+      kind: "primary_key",
+      deferrable: false,
+      initially_deferred: false,
+      validated: true,
+    },
+    {
+      constraint_name: "eventing_transport_epochs_pkey",
+      table_name: "eventing_transport_epochs",
+      columns: ["transport_name"],
       kind: "primary_key",
       deferrable: false,
       initially_deferred: false,
@@ -590,6 +650,15 @@ const EVENTING_CONTRACT_INPUT = {
       table_name: "eventing_outbox",
       definition:
         "CREATE UNIQUE INDEX eventing_outbox_pkey ON skill_registry.eventing_outbox USING btree (id)",
+      unique: true,
+      primary: true,
+      valid: true,
+    },
+    {
+      index_name: "eventing_transport_epochs_pkey",
+      table_name: "eventing_transport_epochs",
+      definition:
+        "CREATE UNIQUE INDEX eventing_transport_epochs_pkey ON skill_registry.eventing_transport_epochs USING btree (transport_name)",
       unique: true,
       primary: true,
       valid: true,
@@ -716,6 +785,7 @@ CREATE TABLE skill_registry.eventing_outbox (
   last_error jsonb,
   transport_ref text,
   transport_epoch text,
+  transport_generation bigint,
   sent_at timestamptz,
   redrive_claimed_by text,
   redrive_claim_token text,
@@ -724,6 +794,15 @@ CREATE TABLE skill_registry.eventing_outbox (
   created_at timestamptz NOT NULL,
   updated_at timestamptz NOT NULL
 );
+CREATE TABLE skill_registry.eventing_transport_epochs (
+  transport_name text PRIMARY KEY,
+  active_epoch text NOT NULL,
+  active_generation bigint NOT NULL,
+  activated_at timestamptz NOT NULL
+);
+INSERT INTO skill_registry.eventing_transport_epochs(
+  transport_name, active_epoch, active_generation, activated_at
+) VALUES ('redis_stream', 'epoch_new', 2, '2026-07-22T00:00:00.000Z');
 CREATE TABLE skill_registry.eventing_inbox (
   id text PRIMARY KEY,
   source text NOT NULL,
@@ -1010,13 +1089,48 @@ BEGIN
   );
 END;
 $$;
+CREATE FUNCTION skill_registry.activate_eventing_transport_epoch_v1(
+  p_transport_name text,
+  p_expected_generation bigint,
+  p_next_epoch text,
+  p_next_generation bigint,
+  p_now timestamptz
+) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = skill_registry, pg_temp
+AS $$
+DECLARE updated_name text;
+BEGIN
+  IF p_transport_name IS NULL OR btrim(p_transport_name) = ''
+     OR p_next_epoch IS NULL OR btrim(p_next_epoch) = ''
+     OR p_next_generation <= p_expected_generation THEN
+    RAISE EXCEPTION 'invalid active transport epoch transition';
+  END IF;
+  UPDATE skill_registry.eventing_transport_epochs
+     SET active_epoch = p_next_epoch,
+         active_generation = p_next_generation,
+         activated_at = p_now
+   WHERE transport_name = p_transport_name
+     AND active_generation = p_expected_generation
+   RETURNING transport_name INTO updated_name;
+  IF updated_name IS NULL THEN
+    RAISE EXCEPTION 'stale active transport generation';
+  END IF;
+  RETURN jsonb_build_object(
+    'transport_name', updated_name,
+    'active_epoch', p_next_epoch,
+    'active_generation', p_next_generation
+  );
+END;
+$$;
 CREATE FUNCTION skill_registry.claim_sent_eventing_outbox_redrive_v1(
   p_worker_id text,
   p_limit integer,
   p_lease_seconds integer,
   p_now timestamptz,
   p_sent_after timestamptz,
-  p_current_transport_epoch text
+  p_current_transport_epoch text,
+  p_current_transport_generation bigint
 ) RETURNS SETOF jsonb
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = skill_registry, pg_temp
@@ -1024,21 +1138,33 @@ AS $$
 BEGIN
   RETURN QUERY
   WITH candidates AS (
-    SELECT id
-      FROM skill_registry.eventing_outbox
-     WHERE status = 'sent'
-       AND sent_at >= p_sent_after
-       AND transport_epoch IS DISTINCT FROM p_current_transport_epoch
-       AND (redrive_locked_until IS NULL OR redrive_locked_until <= p_now)
-     ORDER BY sent_at, id
+    SELECT outbox.id
+      FROM skill_registry.eventing_outbox outbox
+      JOIN skill_registry.eventing_transport_epochs active
+        ON active.transport_name = 'redis_stream'
+     WHERE outbox.status = 'sent'
+       AND outbox.sent_at >= p_sent_after
+       AND active.active_epoch = p_current_transport_epoch
+       AND active.active_generation = p_current_transport_generation
+       AND (
+         outbox.transport_epoch IS DISTINCT FROM active.active_epoch OR
+         outbox.transport_generation IS DISTINCT FROM active.active_generation
+       )
+       AND (
+         outbox.redrive_locked_until IS NULL OR
+         outbox.redrive_locked_until <= p_now
+       )
+     ORDER BY outbox.sent_at, outbox.id
      FOR UPDATE SKIP LOCKED
      LIMIT p_limit
   ), claimed AS (
     UPDATE skill_registry.eventing_outbox outbox
        SET redrive_claimed_by = p_worker_id,
            redrive_claim_generation = outbox.redrive_claim_generation + 1,
-           redrive_claim_token = p_worker_id || ':' || outbox.id || ':' ||
-             (outbox.redrive_claim_generation + 1)::text || ':' || p_current_transport_epoch,
+          redrive_claim_token = p_worker_id || ':' || outbox.id || ':' ||
+             (outbox.redrive_claim_generation + 1)::text || ':' ||
+             p_current_transport_epoch || ':' ||
+             p_current_transport_generation::text,
            redrive_locked_until = p_now + make_interval(secs => p_lease_seconds),
            updated_at = p_now
       FROM candidates
@@ -1054,6 +1180,8 @@ BEGIN
     'sent_at', sent_at,
     'transport_ref', transport_ref,
     'transport_epoch', transport_epoch,
+    'transport_generation', transport_generation,
+    'active_transport_generation', p_current_transport_generation,
     'envelope', jsonb_build_object(
       'event_id', id,
       'event_type', event_type,
@@ -1071,23 +1199,42 @@ CREATE FUNCTION skill_registry.ack_sent_eventing_outbox_redrive_v1(
   p_outbox_id text,
   p_claim_token text,
   p_previous_transport_epoch text,
+  p_previous_transport_generation bigint,
   p_transport_ref text,
   p_transport_epoch text,
+  p_current_transport_generation bigint,
   p_now timestamptz
 ) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = skill_registry, pg_temp
 AS $$
-DECLARE updated_id text;
+DECLARE
+  updated_id text;
+  active_epoch text;
+  active_generation bigint;
 BEGIN
   IF p_transport_ref IS NULL OR btrim(p_transport_ref) = ''
      OR p_transport_epoch IS NULL OR btrim(p_transport_epoch) = ''
-     OR p_transport_epoch = p_previous_transport_epoch THEN
+     OR (
+       p_transport_epoch = p_previous_transport_epoch AND
+       p_previous_transport_generation IS NOT DISTINCT FROM
+         p_current_transport_generation
+     ) THEN
     RAISE EXCEPTION 'invalid sent outbox redrive receipt';
+  END IF;
+  SELECT active.active_epoch, active.active_generation
+    INTO active_epoch, active_generation
+    FROM skill_registry.eventing_transport_epochs active
+   WHERE active.transport_name = 'redis_stream'
+   FOR UPDATE;
+  IF active_epoch IS DISTINCT FROM p_transport_epoch
+     OR active_generation IS DISTINCT FROM p_current_transport_generation THEN
+    RAISE EXCEPTION 'stale active transport generation';
   END IF;
   UPDATE skill_registry.eventing_outbox
      SET transport_ref = p_transport_ref,
          transport_epoch = p_transport_epoch,
+         transport_generation = p_current_transport_generation,
          redrive_claimed_by = NULL,
          redrive_claim_token = NULL,
          redrive_locked_until = NULL,
@@ -1095,7 +1242,8 @@ BEGIN
    WHERE id = p_outbox_id
      AND status = 'sent'
      AND redrive_claim_token = p_claim_token
-     AND transport_epoch = p_previous_transport_epoch
+     AND transport_epoch IS NOT DISTINCT FROM p_previous_transport_epoch
+     AND transport_generation IS NOT DISTINCT FROM p_previous_transport_generation
    RETURNING id INTO updated_id;
   IF updated_id IS NULL THEN
     RAISE EXCEPTION 'stale sent outbox redrive claim';
@@ -1107,17 +1255,19 @@ RESET ROLE;
 REVOKE ALL ON ALL TABLES IN SCHEMA skill_registry FROM PUBLIC, anon, authenticated, pai_skill_registry_app, pai_skill_registry_eventing_test;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA skill_registry FROM PUBLIC, anon, authenticated, pai_skill_registry_app, pai_skill_registry_eventing_test;
 GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[0]!.select_columns.join(", ")}) ON skill_registry.eventing_outbox TO pai_skill_registry_app;
-GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[1]!.select_columns.join(", ")}) ON skill_registry.eventing_inbox TO pai_skill_registry_app;
-GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[2]!.select_columns.join(", ")}) ON skill_registry.eventing_dlq TO pai_skill_registry_app;
-GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[3]!.select_columns.join(", ")}) ON skill_registry.eventing_projection TO pai_skill_registry_app;
-GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[4]!.select_columns.join(", ")}) ON skill_registry.eventing_audit TO pai_skill_registry_app;
+GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[1]!.select_columns.join(", ")}) ON skill_registry.eventing_transport_epochs TO pai_skill_registry_app;
+GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[2]!.select_columns.join(", ")}) ON skill_registry.eventing_inbox TO pai_skill_registry_app;
+GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[3]!.select_columns.join(", ")}) ON skill_registry.eventing_dlq TO pai_skill_registry_app;
+GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[4]!.select_columns.join(", ")}) ON skill_registry.eventing_projection TO pai_skill_registry_app;
+GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[5]!.select_columns.join(", ")}) ON skill_registry.eventing_audit TO pai_skill_registry_app;
 GRANT EXECUTE ON FUNCTION skill_registry.enqueue_eventing_outbox_v1(jsonb, text, text) TO pai_skill_registry_app;
 GRANT EXECUTE ON FUNCTION skill_registry.claim_eventing_outbox_v1(text, integer, integer, timestamptz) TO pai_skill_registry_app;
 GRANT EXECUTE ON FUNCTION skill_registry.ack_eventing_outbox_v1(text, text, text, timestamptz, jsonb, text, text, timestamptz) TO pai_skill_registry_app;
 GRANT EXECUTE ON FUNCTION skill_registry.consume_eventing_inbox_v1(jsonb, text, text, text, text) TO pai_skill_registry_app;
 GRANT EXECUTE ON FUNCTION skill_registry.record_eventing_consumer_dlq_v1(text, text, text, text, text, jsonb, jsonb, timestamptz) TO pai_skill_registry_app;
-GRANT EXECUTE ON FUNCTION skill_registry.claim_sent_eventing_outbox_redrive_v1(text, integer, integer, timestamptz, timestamptz, text) TO pai_skill_registry_app;
-GRANT EXECUTE ON FUNCTION skill_registry.ack_sent_eventing_outbox_redrive_v1(text, text, text, text, text, timestamptz) TO pai_skill_registry_app;
+GRANT EXECUTE ON FUNCTION skill_registry.activate_eventing_transport_epoch_v1(text, bigint, text, bigint, timestamptz) TO pai_skill_registry_app;
+GRANT EXECUTE ON FUNCTION skill_registry.claim_sent_eventing_outbox_redrive_v1(text, integer, integer, timestamptz, timestamptz, text, bigint) TO pai_skill_registry_app;
+GRANT EXECUTE ON FUNCTION skill_registry.ack_sent_eventing_outbox_redrive_v1(text, text, text, bigint, text, text, bigint, timestamptz) TO pai_skill_registry_app;
 `;
 
 function generatedWriterBody(functionName: string): string {
@@ -1508,7 +1658,9 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
         return composition.unit_of_work.withTransaction(
           {
             operation: "claim_sent_redrive",
-            idempotency_key: `${request.worker_id}:${request.current_transport_epoch}`,
+            idempotency_key:
+              `${request.worker_id}:${request.current_transport_epoch}:` +
+              `${request.current_transport_generation}`,
             trace_id: "trace_claim_sent_redrive",
             isolation: "read_committed",
             retry: "none",
@@ -1526,6 +1678,8 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
                 p_now: request.now,
                 p_sent_after: request.sent_after,
                 p_current_transport_epoch: request.current_transport_epoch,
+                p_current_transport_generation:
+                  String(request.current_transport_generation),
               },
               expected_rows: "one_or_more",
             }),
@@ -1547,8 +1701,14 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
                 p_outbox_id: request.outbox_id,
                 p_claim_token: request.claim_token,
                 p_previous_transport_epoch: request.previous_transport_epoch,
+                p_previous_transport_generation:
+                  request.previous_transport_generation === null
+                    ? null
+                    : String(request.previous_transport_generation),
                 p_transport_ref: request.transport_ref,
                 p_transport_epoch: request.transport_epoch,
+                p_current_transport_generation:
+                  String(request.current_transport_generation),
                 p_now: request.now,
               },
               expected_rows: 1,
@@ -1579,6 +1739,7 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
         batch_size: 10,
         lease_seconds: 30,
         current_transport_epoch: "epoch_new",
+        current_transport_generation: 2,
         sent_after: "2026-07-01T00:00:00.000Z",
       },
       { now: () => new Date(at) },
@@ -1606,8 +1767,10 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
         outbox_id: envelope.event_id,
         claim_token: redriveClaimTokens[0]!,
         previous_transport_epoch: "epoch_old",
+        previous_transport_generation: null,
         transport_ref: "redis_stream:stale:1-0",
         transport_epoch: "epoch_new",
+        current_transport_generation: 2,
         now: "2026-07-22T04:01:01.000Z",
       }),
     ).rejects.toThrow(/stale sent outbox redrive claim/u);
@@ -1644,9 +1807,11 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     const persisted = await admin.query<{
       transport_ref: string;
       transport_epoch: string;
+      transport_generation: string;
       projection_count: number;
     }>(
       `SELECT outbox.transport_ref, outbox.transport_epoch,
+              outbox.transport_generation::text AS transport_generation,
               projection.applied_count AS projection_count
          FROM skill_registry.eventing_outbox outbox
          JOIN skill_registry.eventing_projection projection
@@ -1662,6 +1827,7 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
         /^redis_stream:pai:dev:stable:skill_registry:v1:epoch_new:stream:skill_events:\d+-\d+$/u,
       ),
       transport_epoch: "epoch_new",
+      transport_generation: "2",
       projection_count: 1,
     }]);
     } finally {

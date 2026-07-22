@@ -1799,6 +1799,8 @@
     "schemas": {
       "TriggerProcessorDomainEventV1": {
         "$id": "urn:pai:trigger-processor:domain-event:v1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "unevaluatedProperties": false,
         "anyOf": [
           {
             "additionalProperties": false,

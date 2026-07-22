@@ -160,50 +160,73 @@ export const TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1 = Object.freeze({
   }),
 } as const);
 
+export const TRIGGER_PROCESSOR_DOMAIN_EVENT_BRANCH_SCHEMAS_V1 = Object.freeze({
+  "trigger.accepted": event(
+    "trigger.accepted",
+    TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1["trigger.accepted"],
+  ),
+  "trigger.rejected": event(
+    "trigger.rejected",
+    TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1["trigger.rejected"],
+  ),
+  "trigger_process.phase_changed": event(
+    "trigger_process.phase_changed",
+    TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1[
+      "trigger_process.phase_changed"
+    ],
+  ),
+  "trigger_process.user_message_retracted": event(
+    "trigger_process.user_message_retracted",
+    TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1[
+      "trigger_process.user_message_retracted"
+    ],
+  ),
+  "trigger_process.system_interrupted": event(
+    "trigger_process.system_interrupted",
+    TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1[
+      "trigger_process.system_interrupted"
+    ],
+  ),
+  "cooldown.expired": event(
+    "cooldown.expired",
+    TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1["cooldown.expired"],
+  ),
+  "weak_trigger.merged": event(
+    "weak_trigger.merged",
+    TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1["weak_trigger.merged"],
+  ),
+  "trigger_process.outcome_finalized": event(
+    "trigger_process.outcome_finalized",
+    TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1[
+      "trigger_process.outcome_finalized"
+    ],
+  ),
+} as const);
+
 export const TriggerProcessorDomainEventV1Schema = Type.Union(
   [
-    event(
-      "trigger.accepted",
-      TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1["trigger.accepted"],
-    ),
-    event(
-      "trigger.rejected",
-      TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1["trigger.rejected"],
-    ),
-    event(
-      "trigger_process.phase_changed",
-      TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1[
-        "trigger_process.phase_changed"
-      ],
-    ),
-    event(
-      "trigger_process.user_message_retracted",
-      TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1[
-        "trigger_process.user_message_retracted"
-      ],
-    ),
-    event(
-      "trigger_process.system_interrupted",
-      TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1[
-        "trigger_process.system_interrupted"
-      ],
-    ),
-    event(
-      "cooldown.expired",
-      TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1["cooldown.expired"],
-    ),
-    event(
-      "weak_trigger.merged",
-      TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1["weak_trigger.merged"],
-    ),
-    event(
-      "trigger_process.outcome_finalized",
-      TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1[
-        "trigger_process.outcome_finalized"
-      ],
-    ),
+    TRIGGER_PROCESSOR_DOMAIN_EVENT_BRANCH_SCHEMAS_V1["trigger.accepted"],
+    TRIGGER_PROCESSOR_DOMAIN_EVENT_BRANCH_SCHEMAS_V1["trigger.rejected"],
+    TRIGGER_PROCESSOR_DOMAIN_EVENT_BRANCH_SCHEMAS_V1[
+      "trigger_process.phase_changed"
+    ],
+    TRIGGER_PROCESSOR_DOMAIN_EVENT_BRANCH_SCHEMAS_V1[
+      "trigger_process.user_message_retracted"
+    ],
+    TRIGGER_PROCESSOR_DOMAIN_EVENT_BRANCH_SCHEMAS_V1[
+      "trigger_process.system_interrupted"
+    ],
+    TRIGGER_PROCESSOR_DOMAIN_EVENT_BRANCH_SCHEMAS_V1["cooldown.expired"],
+    TRIGGER_PROCESSOR_DOMAIN_EVENT_BRANCH_SCHEMAS_V1["weak_trigger.merged"],
+    TRIGGER_PROCESSOR_DOMAIN_EVENT_BRANCH_SCHEMAS_V1[
+      "trigger_process.outcome_finalized"
+    ],
   ],
-  { $id: "urn:pai:trigger-processor:domain-event:v1" },
+  {
+    $id: "urn:pai:trigger-processor:domain-event:v1",
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    unevaluatedProperties: false,
+  },
 );
 
 export type TriggerProcessorDomainEventV1 = Static<
@@ -216,14 +239,13 @@ const quotedEventTypes = TRIGGER_PROCESSOR_DOMAIN_EVENT_TYPES_V1.map(
 
 export const TRIGGER_PROCESSOR_DOMAIN_EVENT_V1_DATABASE_CHECK = [
   "alter table trigger_processor.trigger_event_outbox",
-  "  add constraint trigger_event_outbox_payload_domain_event_v1_check",
+  "  drop constraint if exists trigger_event_outbox_event_schema_pair_check,",
+  "  drop constraint if exists trigger_event_outbox_payload_domain_event_v1_check,",
+  "  drop constraint if exists trigger_event_outbox_domain_event_v1_check,",
+  "  add constraint trigger_event_outbox_domain_event_v1_check",
   "  check (",
-  "    payload ? 'event_type'",
-  "    and payload ? 'schema_version'",
-  "    and payload ? 'producer'",
-  "    and payload ? 'payload'",
-  "    and payload->>'producer' = 'trigger_processor'",
-  "    and payload->>'schema_version' = 'trigger_processor_event.v1'",
-  `    and payload->>'event_type' in (${quotedEventTypes})`,
+  "    producer = 'trigger_processor'",
+  "    and schema_version = 'trigger_processor_event.v1'",
+  `    and event_type in (${quotedEventTypes})`,
   "  );",
 ].join("\n");

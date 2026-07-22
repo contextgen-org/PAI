@@ -589,6 +589,42 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
         },
       },
       {
+        constraint_name: "trigger_event_outbox_schema_version_check",
+        table_name: "trigger_event_outbox",
+        required_definition_fragments: [
+          "schema_version",
+          "trigger_processor_event.v1",
+        ],
+        semantic_constraint: {
+          kind: "text_equals",
+          column_name: "schema_version",
+          value: "trigger_processor_event.v1",
+        },
+      },
+      {
+        constraint_name: "trigger_event_outbox_domain_event_v1_check",
+        table_name: "trigger_event_outbox",
+        required_definition_fragments: [
+          "producer",
+          "trigger_processor",
+          "schema_version",
+          "trigger_processor_event.v1",
+          "event_type",
+          "trigger_process.outcome_finalized",
+        ],
+        semantic_constraint: {
+          kind: "column_event_envelope",
+          column_name: "event_type",
+          producer_column_name: "producer",
+          producer_value: "trigger_processor",
+          schema_version_column_name: "schema_version",
+          schema_version_value: "trigger_processor_event.v1",
+          event_type_column_name: "event_type",
+          event_type_allowed_values:
+            OWNER_DURABLE_EVENT_TYPES_V1.trigger_processor,
+        },
+      },
+      {
         constraint_name: "bot_foreground_slots_generation_safe_check",
         table_name: "bot_foreground_slots",
         required_definition_fragments: [

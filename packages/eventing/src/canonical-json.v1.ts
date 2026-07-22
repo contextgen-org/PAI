@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 
-import type { DurableEventEnvelopeV1 } from "@pai/contracts";
+import {
+  ownerDurableEventContractV1,
+  type DurableEventEnvelopeV1,
+} from "@pai/contracts";
 
 export class CanonicalJsonValidationErrorV1 extends Error {
   public constructor(message: string) {
@@ -137,6 +140,20 @@ export function durableEventScopeFingerprintV1(
   if (payload.scope_kind === "global") {
     return sha256Canonical({
       scope_kind: "global",
+      deployment_environment: payload.deployment_environment,
+      release_channel: payload.release_channel,
+    });
+  }
+  const contract = ownerDurableEventContractV1(
+    envelope.producer,
+    envelope.event_type,
+  );
+  if (contract?.payload_scope === "bot") {
+    return sha256Canonical({
+      scope_kind: "bot",
+      workspace_id: payload.workspace_id,
+      bot_id: payload.bot_id,
+      owner_agent_id: payload.owner_agent_id,
       deployment_environment: payload.deployment_environment,
       release_channel: payload.release_channel,
     });

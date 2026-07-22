@@ -12,6 +12,7 @@ import {
   TRIGGER_PROCESS_STATE_V1_DATABASE_CHECK,
 } from "../dist/trigger-processor/trigger-process-state.v1.js";
 import {
+  TRIGGER_PROCESSOR_DOMAIN_EVENT_BRANCH_SCHEMAS_V1,
   TRIGGER_PROCESSOR_DOMAIN_EVENT_CONSUMERS_V1,
   TRIGGER_PROCESSOR_DOMAIN_EVENT_TYPES_V1,
   TRIGGER_PROCESSOR_DOMAIN_EVENT_V1_DATABASE_CHECK,
@@ -176,6 +177,12 @@ const triggerProcessorAsyncApiPath = resolve(
   packageRoot,
   "generated/asyncapi/trigger-processor.yaml",
 );
+const triggerProcessorEventMessageName = (eventType) =>
+  `TriggerProcessor${eventType
+    .split(/[^a-z0-9]+/u)
+    .filter(Boolean)
+    .map((segment) => `${segment[0].toUpperCase()}${segment.slice(1)}`)
+    .join("")}EventV1`;
 await emitGeneratedFile(
   triggerProcessorAsyncApiPath,
   `${JSON.stringify(
@@ -191,8 +198,8 @@ await emitGeneratedFile(
           {
             address: `trigger_processor.${eventType}`,
             messages: {
-              TriggerProcessorDomainEventV1: {
-                $ref: "#/components/messages/TriggerProcessorDomainEventV1",
+              [triggerProcessorEventMessageName(eventType)]: {
+                $ref: `#/components/messages/${triggerProcessorEventMessageName(eventType)}`,
               },
             },
             "x-pai-consumer-services":
@@ -213,11 +220,18 @@ await emitGeneratedFile(
       ),
       components: {
         messages: {
-          TriggerProcessorDomainEventV1: {
-            name: "TriggerProcessorDomainEventV1",
-            title: "Trigger Processor domain event envelope",
-            payload: triggerProcessorDomainEventSchema,
-          },
+          ...Object.fromEntries(
+            TRIGGER_PROCESSOR_DOMAIN_EVENT_TYPES_V1.map((eventType) => [
+              triggerProcessorEventMessageName(eventType),
+              {
+                name: triggerProcessorEventMessageName(eventType),
+                title: `Trigger Processor ${eventType} domain event envelope`,
+                payload: TRIGGER_PROCESSOR_DOMAIN_EVENT_BRANCH_SCHEMAS_V1[
+                  eventType
+                ],
+              },
+            ]),
+          ),
         },
       },
     },

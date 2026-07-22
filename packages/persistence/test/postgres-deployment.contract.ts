@@ -310,6 +310,11 @@ ALTER ROLE pai_timer_runtime LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NO
 REVOKE pai_timer_app FROM pai_timer_runtime;
 REVOKE pai_runtime_bridge FROM pai_timer_runtime;
 REVOKE pai_memory_app FROM pai_timer_runtime;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_timer_intruder') THEN
+    EXECUTE 'REVOKE pai_timer_app FROM pai_timer_intruder';
+  END IF;
+END $$;
 GRANT pai_timer_app TO pai_timer_runtime WITH INHERIT TRUE, SET FALSE, ADMIN FALSE;
 DROP SCHEMA IF EXISTS timer CASCADE;
 CREATE SCHEMA timer AUTHORIZATION pai_migrator;
@@ -561,7 +566,22 @@ describePostgres("PostgreSQL owner deployment verification", () => {
     ["missing function", "DROP FUNCTION timer.write_contract_child_v1(text, bigint, text, jsonb)"],
     ["direct DML", "GRANT UPDATE ON timer.contract_children TO pai_timer_app"],
     ["PUBLIC execute", "GRANT EXECUTE ON FUNCTION timer.write_contract_child_v1(text, bigint, text, jsonb) TO PUBLIC"],
+    ["STRICT writer function", "ALTER FUNCTION timer.write_contract_child_v1(text, bigint, text, jsonb) STRICT"],
     ["wrong search_path", "ALTER FUNCTION timer.write_contract_child_v1(text, bigint, text, jsonb) SET search_path = public"],
+    [
+      "undeclared NOT VALID CHECK helper surface",
+      "ALTER TABLE timer.contract_children ADD CONSTRAINT contract_children_payload_extra_check CHECK (jsonb_typeof(payload) = 'object') NOT VALID",
+    ],
+    [
+      "extra LOGIN inheriting the app role",
+      `DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_timer_intruder') THEN
+           CREATE ROLE pai_timer_intruder LOGIN PASSWORD 'timer-intruder-test';
+         END IF;
+       END $$;
+       ALTER ROLE pai_timer_intruder LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD 'timer-intruder-test';
+       GRANT pai_timer_app TO pai_timer_intruder WITH INHERIT TRUE, SET FALSE, ADMIN FALSE`,
+    ],
     ["missing composite FK", "ALTER TABLE timer.contract_children DROP CONSTRAINT contract_children_parent_fk"],
     [
       "updatable view with app-role DML",
@@ -877,6 +897,60 @@ describePostgres("PostgreSQL owner deployment verification", () => {
        WHERE child_id = 'child-rollback'`,
     );
     expect(audit.rows[0]?.count).toBe("0");
+  });
+
+  it("rejects a NULL writer result even after a deployment was verified", async () => {
+    const postgres = await reset();
+    if (databaseUrl === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
+    const runtimeUrl = new URL(databaseUrl);
+    runtimeUrl.username = "pai_timer_runtime";
+    runtimeUrl.password = "timer-runtime-test";
+    const composition = await openVerifiedOwnerPostgresCompositionV1(
+      POSTGRES_CONTRACT,
+      runtimeUrl.toString(),
+    );
+    try {
+      await postgres.query(`
+        CREATE OR REPLACE FUNCTION timer.write_contract_child_v1(
+          p_parent_key text,
+          p_expected_parent_version bigint,
+          p_child_id text,
+          p_payload jsonb
+        ) RETURNS jsonb
+        LANGUAGE plpgsql
+        SECURITY DEFINER
+        SET search_path = timer, pg_temp
+        AS $body$
+        BEGIN
+          RETURN NULL::jsonb;
+        END;
+        $body$
+      `);
+      await expect(
+        composition.unit_of_work.withTransaction(
+          {
+            operation: "write_contract_child_null_result",
+            idempotency_key: "null-result",
+            trace_id: "trace-null-result",
+            isolation: "read_committed",
+            retry: "none",
+          },
+          async (transaction, { owner }) =>
+            owner.executeWriter(transaction, {
+              writer: "write_contract_child_v1",
+              arguments: {
+                p_parent_key: "parent-null-result",
+                p_expected_parent_version: "0",
+                p_child_id: "child-null-result",
+                p_payload: {},
+              },
+              expected_rows: 1,
+            }),
+        ),
+      ).rejects.toThrow(/returned null result/u);
+    } finally {
+      await composition.close();
+    }
   });
 
   it("serializes competing expected-version writers", async () => {

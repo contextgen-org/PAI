@@ -65,6 +65,36 @@ function event(
   };
 }
 
+function triggerEvent(
+  overrides: Partial<DurableEventEnvelopeV1> = {},
+): DurableEventEnvelopeV1 {
+  return {
+    event_id: "evt_trigger_accepted_001",
+    event_type: "trigger.accepted",
+    schema_version: "trigger_processor_event.v1",
+    producer: "trigger_processor",
+    occurred_at: "2026-07-22T04:00:00.000Z",
+    idempotency_key: "trigger_001:accepted",
+    trace_id: "trace_trigger_001",
+    payload: {
+      workspace_id: "workspace_001",
+      bot_id: "bot_001",
+      owner_agent_id: "owner_agent_001",
+      deployment_environment: "dev",
+      release_channel: "stable",
+      reason_code: "admission_accepted",
+      source_ref: "trigger_event:submit_001",
+      trigger_id: "trigger_001",
+      trigger_process_id: "process_001",
+      admission_outcome: "accepted",
+      priority: "strong",
+      dedupe_key: "chat:message_001",
+      request_hash: "hash_001",
+    },
+    ...overrides,
+  };
+}
+
 interface StoredRecord extends ClaimedOutboxRecordV1 {
   status: "pending" | "dispatching" | "retry_wait" | "sent" | "failed";
   next_retry_at: string | null;
@@ -417,15 +447,25 @@ describe("durable sent outbox redrive V1", () => {
       sent_at: "2026-07-21T05:00:00.000Z",
       transport_ref: "redis_stream:old-1-0",
       transport_epoch: "epoch_old",
+      transport_generation: 1,
+      active_transport_generation: 2,
     };
     const store: DurableSentOutboxRedriveStorePortV1 = {
       async claimSentForRedrive(request) {
-        return row.transport_epoch === request.current_transport_epoch ? [] : [row];
+        expect(request.current_transport_generation).toBe(2);
+        return row.transport_epoch === request.current_transport_epoch &&
+          row.transport_generation === request.current_transport_generation
+          ? []
+          : [row];
       },
       async acknowledgeSentRedrive(request) {
         expect(request.previous_transport_epoch).toBe(row.transport_epoch);
+        expect(request.previous_transport_generation).toBe(row.transport_generation);
+        expect(request.current_transport_generation).toBe(2);
         row.transport_ref = request.transport_ref;
         row.transport_epoch = request.transport_epoch;
+        row.transport_generation = request.current_transport_generation;
+        row.active_transport_generation = request.current_transport_generation;
       },
     };
     let redisStream = [envelope];
@@ -463,6 +503,7 @@ describe("durable sent outbox redrive V1", () => {
         batch_size: 10,
         lease_seconds: 30,
         current_transport_epoch: "epoch_new",
+        current_transport_generation: 2,
         sent_after: "2026-07-01T00:00:00.000Z",
       },
       { now: () => new Date("2026-07-22T04:00:00.000Z") },
@@ -483,9 +524,88 @@ describe("durable sent outbox redrive V1", () => {
     });
     await expect(redriver.redriveBatch()).resolves.toMatchObject({ claimed: 0 });
   });
+
+  it("redrives the same Redis epoch when the authoritative generation advances", async () => {
+    const envelope = event({ event_id: "evt_redrive_same_epoch_001" });
+    const row = {
+      outbox_id: "outbox_redrive_same_epoch_001",
+      claim_token: "redrive_worker:1",
+      attempt_count: 1,
+      target: "trigger_processor.runtime_event_append",
+      envelope,
+      payload_hash: canonicalPayloadHashV1(envelope.payload),
+      sent_at: "2026-07-21T05:00:00.000Z",
+      transport_ref: "redis_stream:old-1-0",
+      transport_epoch: "epoch_current",
+      transport_generation: 1,
+      active_transport_generation: 2,
+    };
+    const store: DurableSentOutboxRedriveStorePortV1 = {
+      async claimSentForRedrive(request) {
+        expect(request.current_transport_epoch).toBe("epoch_current");
+        expect(request.current_transport_generation).toBe(2);
+        return [row];
+      },
+      async acknowledgeSentRedrive(request) {
+        expect(request.previous_transport_epoch).toBe("epoch_current");
+        expect(request.previous_transport_generation).toBe(1);
+        row.transport_ref = request.transport_ref;
+        row.transport_generation = request.current_transport_generation;
+        row.active_transport_generation = request.current_transport_generation;
+      },
+    };
+    const redriver = createDurableSentOutboxRedriverV1(
+      store,
+      {
+        async publish() {
+          return {
+            transport_ref: "redis_stream:same-epoch-new-1-0",
+            transport_epoch: "epoch_current",
+          };
+        },
+      },
+      {
+        owner_service: "action_runtime",
+        worker_id: "redrive_worker",
+        batch_size: 10,
+        lease_seconds: 30,
+        current_transport_epoch: "epoch_current",
+        current_transport_generation: 2,
+        sent_after: "2026-07-01T00:00:00.000Z",
+      },
+      { now: () => new Date("2026-07-22T04:00:00.000Z") },
+    );
+    await expect(redriver.redriveBatch()).resolves.toMatchObject({
+      claimed: 1,
+      redriven: 1,
+      permanent_failures: 0,
+    });
+    expect(row).toMatchObject({
+      transport_ref: "redis_stream:same-epoch-new-1-0",
+      transport_generation: 2,
+    });
+  });
 });
 
 describe("durable inbox consumer V1", () => {
+  it("computes scope fingerprint for canonical flat Trigger domain payloads", async () => {
+    let observedScope: string | undefined;
+    const consumer = createDurableInboxConsumerV1(
+      {
+        async apply(request) {
+          observedScope = request.scope_fingerprint;
+          return { status: "processed" };
+        },
+      },
+      { consumer_service: "observation_gateway" },
+    );
+    const envelope = triggerEvent();
+    await expect(consumer.consume(envelope)).resolves.toEqual({
+      status: "processed",
+    });
+    expect(observedScope).toBe(durableEventScopeFingerprintV1(envelope));
+  });
+
   it("processes one scoped identity once and rejects same-key semantic drift", async () => {
     const seen = new Map<string, string>();
     const inbox: TransactionalInboxApplyPortV1 = {
@@ -596,6 +716,23 @@ describe("durable inbox consumer V1", () => {
     await expect(consumer.consume(event())).rejects.toThrow(/consumer/u);
     expect(applies).toBe(0);
   });
+
+  it.each([null, {}, { status: "unknown" }])(
+    "rejects invalid inbox apply result %# before callers can ACK",
+    async (invalidResult) => {
+      const consumer = createDurableInboxConsumerV1(
+        {
+          async apply() {
+            return invalidResult as never;
+          },
+        },
+        { consumer_service: "trigger_processor" },
+      );
+      await expect(consumer.consume(event())).rejects.toThrow(
+        /invalid result status/u,
+      );
+    },
+  );
 });
 
 describe("durable event consumer worker V1", () => {
@@ -812,6 +949,43 @@ describe("durable event consumer worker V1", () => {
       .toMatchObject({ failed: 1, dead_lettered: 0, acknowledged: 0 });
     expect(delivery.acknowledged).toEqual([]);
   });
+
+  it.each([null, {}, { status: "unknown" }])(
+    "does not XACK invalid inbox apply result %#",
+    async (invalidResult) => {
+      const delivery = new DeliveryFake([
+        {
+          kind: "event",
+          delivery_id: "1-0",
+          delivery_ref: "stream:test#1-0",
+          envelope: event({ event_id: "evt_worker_invalid_result" }),
+        },
+      ]);
+      const deadLetter = deadLetterFake();
+      const worker = createDurableEventConsumerWorkerV1(
+        delivery,
+        {
+          async apply() {
+            return invalidResult as never;
+          },
+        },
+        {
+          consumer_service: "trigger_processor",
+          dead_letter: deadLetter.port,
+        },
+      );
+      await expect(worker.consumeNewBatch({ count: 10, block_ms: 0 })).resolves
+        .toMatchObject({
+          processed: 0,
+          replayed: 0,
+          failed: 1,
+          dead_lettered: 0,
+          acknowledged: 0,
+        });
+      expect(delivery.acknowledged).toEqual([]);
+      expect(deadLetter.records).toEqual([]);
+    },
+  );
 
   it("advances XAUTOCLAIM across a poison prefix until the PEL cursor reaches zero", async () => {
     const cursors: string[] = [];

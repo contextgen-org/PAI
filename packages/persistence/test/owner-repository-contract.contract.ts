@@ -254,6 +254,22 @@ describe("owner repository contracts", () => {
     }
   });
 
+  it("binds Trigger Processor outbox schema_version to the single domain-event union version", () => {
+    expect(TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          table_name: "trigger_event_outbox",
+          constraint_name: "trigger_event_outbox_schema_version_check",
+          semantic_constraint: {
+            kind: "text_equals",
+            column_name: "schema_version",
+            value: "trigger_processor_event.v1",
+          },
+        }),
+      ]),
+    );
+  });
+
   it("binds the Action Runtime controlled outbox to a complete canonical source envelope", () => {
     expect(
       ACTION_RUNTIME_REPOSITORY_CONTRACT_V1.foreign_keys.filter(
@@ -490,6 +506,39 @@ describe("owner repository contracts", () => {
       verifyOwnerDatabaseCheckDefinitionV1(
         expectation,
         definition.replace("'trace_id'::text", "'extra'::text"),
+      ),
+    ).toThrow(/CHECK constraint drift/u);
+  });
+
+  it("requires Trigger outbox domain CHECK to bind columns, not payload fields", () => {
+    const expectation = TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks
+      .find(
+        ({ constraint_name }) =>
+          constraint_name === "trigger_event_outbox_domain_event_v1_check",
+      );
+    expect(expectation).toBeDefined();
+    if (expectation === undefined) return;
+    const definition =
+      "CHECK (((producer = 'trigger_processor'::text) AND (schema_version = 'trigger_processor_event.v1'::text) AND (event_type IN ('trigger.accepted'::text, 'trigger.rejected'::text, 'trigger_process.phase_changed'::text, 'trigger_process.user_message_retracted'::text, 'trigger_process.system_interrupted'::text, 'cooldown.expired'::text, 'weak_trigger.merged'::text, 'trigger_process.outcome_finalized'::text))))";
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(expectation, definition),
+    ).not.toThrow();
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        expectation,
+        definition.replace(
+          "schema_version = 'trigger_processor_event.v1'::text",
+          "payload ->> 'schema_version' = 'trigger_processor_event.v1'::text",
+        ),
+      ),
+    ).toThrow(/CHECK constraint drift/u);
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        expectation,
+        definition.replace(
+          ", 'trigger_process.outcome_finalized'::text",
+          ", 'trigger_process.outcome_finalized'::text, 'attacker.event'::text",
+        ),
       ),
     ).toThrow(/CHECK constraint drift/u);
   });

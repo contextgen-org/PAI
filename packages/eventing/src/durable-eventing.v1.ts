@@ -385,6 +385,8 @@ export interface ClaimedSentOutboxRecordV1 extends ClaimedOutboxRecordV1 {
   readonly sent_at: unknown;
   readonly transport_ref: unknown;
   readonly transport_epoch: unknown;
+  readonly transport_generation: unknown;
+  readonly active_transport_generation: unknown;
 }
 
 export interface DurableSentOutboxRedriveStorePortV1 {
@@ -395,13 +397,16 @@ export interface DurableSentOutboxRedriveStorePortV1 {
     now: string;
     sent_after: string;
     current_transport_epoch: string;
+    current_transport_generation: number;
   }>): Promise<readonly ClaimedSentOutboxRecordV1[]>;
   acknowledgeSentRedrive(request: Readonly<{
     outbox_id: string;
     claim_token: string;
     previous_transport_epoch: string;
+    previous_transport_generation: number | null;
     transport_ref: string;
     transport_epoch: string;
+    current_transport_generation: number;
     now: string;
   }>): Promise<void>;
 }
@@ -427,6 +432,7 @@ export function createDurableSentOutboxRedriverV1(
     batch_size: number;
     lease_seconds: number;
     current_transport_epoch: string;
+    current_transport_generation: number;
     sent_after: string;
   }>,
   dependencies: Readonly<{ now?: () => Date }> = {},
@@ -434,6 +440,8 @@ export function createDurableSentOutboxRedriverV1(
   if (
     config.worker_id.trim().length === 0 ||
     config.current_transport_epoch.trim().length === 0 ||
+    !Number.isSafeInteger(config.current_transport_generation) ||
+    config.current_transport_generation < 1 ||
     !Number.isSafeInteger(config.batch_size) ||
     config.batch_size < 1 ||
     config.batch_size > 1_000 ||
@@ -455,6 +463,7 @@ export function createDurableSentOutboxRedriverV1(
         now: claimedAt,
         sent_after: config.sent_after,
         current_transport_epoch: config.current_transport_epoch,
+        current_transport_generation: config.current_transport_generation,
       });
       let redriven = 0;
       let retryableFailures = 0;
@@ -479,7 +488,13 @@ export function createDurableSentOutboxRedriverV1(
             record.transport_ref.trim().length === 0 ||
             typeof record.transport_epoch !== "string" ||
             record.transport_epoch.trim().length === 0 ||
-            record.transport_epoch === config.current_transport_epoch ||
+            (record.transport_generation !== null &&
+              !Number.isSafeInteger(record.transport_generation)) ||
+            record.active_transport_generation !==
+              config.current_transport_generation ||
+            (record.transport_epoch === config.current_transport_epoch &&
+              record.transport_generation ===
+                config.current_transport_generation) ||
             record.envelope.producer !== config.owner_service ||
             !isOwnerDurableEventTypeV1(
               record.envelope.producer,
@@ -502,8 +517,13 @@ export function createDurableSentOutboxRedriverV1(
             outbox_id: record.outbox_id,
             claim_token: record.claim_token,
             previous_transport_epoch: record.transport_epoch,
+            previous_transport_generation:
+              record.transport_generation === null
+                ? null
+                : (record.transport_generation as number),
             transport_ref: receipt.transport_ref,
             transport_epoch: receipt.transport_epoch,
+            current_transport_generation: config.current_transport_generation,
             now: now().toISOString(),
           });
           redriven += 1;
@@ -534,6 +554,21 @@ export interface TransactionalInboxApplyPortV1 {
   }>): Promise<Readonly<{ status: "processed" | "replayed" }>>;
 }
 
+function assertInboxApplyResultV1(
+  value: unknown,
+): asserts value is Readonly<{ status: "processed" | "replayed" }> {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    ((value as Readonly<Record<string, unknown>>).status !== "processed" &&
+      (value as Readonly<Record<string, unknown>>).status !== "replayed")
+  ) {
+    throw new Error(
+      "durable inbox apply returned an invalid result status before XACK",
+    );
+  }
+}
+
 export function createDurableInboxConsumerV1(
   inbox: TransactionalInboxApplyPortV1,
   config: Readonly<{ consumer_service: DurableEventConsumerServiceIdV1 }>,
@@ -557,7 +592,7 @@ export function createDurableInboxConsumerV1(
           "/producer: event branch is not accepted by this durable consumer",
         ]);
       }
-      return inbox.apply({
+      const result = await inbox.apply({
         source: envelope.producer,
         event_id: envelope.event_id,
         idempotency_key: envelope.idempotency_key,
@@ -566,6 +601,8 @@ export function createDurableInboxConsumerV1(
         scope_fingerprint: durableEventScopeFingerprintV1(envelope),
         envelope,
       });
+      assertInboxApplyResultV1(result);
+      return result;
     },
   });
 }
