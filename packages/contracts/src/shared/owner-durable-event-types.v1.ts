@@ -11,7 +11,11 @@ import { DeploymentEnvironmentV1Schema } from "./deployment-environment.v1.js";
 import { ReleaseChannelV1Schema } from "./release-channel.v1.js";
 import { SERVICE_IDS, type ServiceIdV1 } from "./service-id.v1.js";
 import { TypedEvidenceRefV1Schema } from "./typed-evidence-ref.v1.js";
-import { TerminalOutcomeV1Schema } from "../trigger-processor/trigger-process-state.v1.js";
+import {
+  TRIGGER_PROCESSOR_DOMAIN_EVENT_CONSUMERS_V1,
+  TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1,
+  TRIGGER_PROCESSOR_DOMAIN_EVENT_TYPES_V1,
+} from "../trigger-processor/events.v1.js";
 
 export type DurableEventOwnerServiceIdV1 = Exclude<
   ServiceIdV1,
@@ -24,16 +28,7 @@ export type DurableEventOwnerServiceIdV1 = Exclude<
  * and therefore cannot produce an owner outbox union here.
  */
 export const OWNER_DURABLE_EVENT_TYPES_V1 = Object.freeze({
-  trigger_processor: Object.freeze([
-    "trigger.accepted",
-    "trigger.rejected",
-    "trigger_process.phase_changed",
-    "trigger_process.user_message_retracted",
-    "trigger_process.system_interrupted",
-    "cooldown.expired",
-    "weak_trigger.merged",
-    "trigger_process.outcome_finalized",
-  ]),
+  trigger_processor: TRIGGER_PROCESSOR_DOMAIN_EVENT_TYPES_V1,
   action_runtime: Object.freeze([
     "runtime.run.started",
     "runtime.run.completed",
@@ -125,7 +120,7 @@ export type OwnerDurableEventTypeV1<
   TOwner extends DurableEventOwnerServiceIdV1,
 > = (typeof OWNER_DURABLE_EVENT_TYPES_V1)[TOwner][number];
 
-export type DurableEventConsumerServiceIdV1 = DurableEventOwnerServiceIdV1;
+export type DurableEventConsumerServiceIdV1 = ServiceIdV1;
 
 export interface OwnerDurableEventContractV1 {
   readonly schema_version: string;
@@ -153,15 +148,18 @@ function eventContract(
   options: Readonly<{
     payload_scope?: OwnerDurableEventContractV1["payload_scope"] | undefined;
     fields?: Readonly<Record<string, TSchema>> | undefined;
+    payload_schema?: TSchema | undefined;
   }> = {},
 ): OwnerDurableEventContractV1 {
   const payloadScope = options.payload_scope ?? "bot";
   return Object.freeze({
     schema_version: schemaVersion,
-    payload_schema: scopedPayloadSchema(
-      payloadScope,
-      payloadProperties(requiredPayloadKeys, options.fields ?? {}),
-    ),
+    payload_schema:
+      options.payload_schema ??
+      scopedPayloadSchema(
+        payloadScope,
+        payloadProperties(requiredPayloadKeys, options.fields ?? {}),
+      ),
     payload_scope: payloadScope,
     consumer_services: Object.freeze([...consumerServices]) as [
       DurableEventConsumerServiceIdV1,
@@ -178,9 +176,21 @@ const knowthatConsumer = ["knowthat"] as const;
 const runtimeAndTriggerConsumers = ["trigger_processor", "action_runtime"] as const;
 
 const triggerEvent = (
-  keys: readonly [string, ...string[]],
-  fields?: Readonly<Record<string, TSchema>>,
-) => eventContract("trigger_processor_event.v1", keys, metaConsumer, { fields });
+  eventType: keyof typeof TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1,
+) =>
+  eventContract(
+    "trigger_processor_event.v1",
+    ["scope"],
+    TRIGGER_PROCESSOR_DOMAIN_EVENT_CONSUMERS_V1[eventType] as readonly [
+      DurableEventConsumerServiceIdV1,
+      ...DurableEventConsumerServiceIdV1[],
+    ],
+    {
+      payload_schema: TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1[
+        eventType
+      ],
+    },
+  );
 const runtimeEvent = (
   keys: readonly [string, ...string[]],
   fields?: Readonly<Record<string, TSchema>>,
@@ -310,23 +320,20 @@ function scopedPayloadSchema(
 
 export const OWNER_DURABLE_EVENT_CONTRACTS_V1 = Object.freeze({
   trigger_processor: Object.freeze({
-    "trigger.accepted": triggerEvent(["trigger_id", "trigger_process_id"]),
-    "trigger.rejected": triggerEvent(["trigger_id", "reason"]),
-    "trigger_process.phase_changed": triggerEvent(["trigger_process_id", "phase"]),
-    "trigger_process.user_message_retracted": triggerEvent([
-      "trigger_process_id",
-      "reason",
-    ]),
-    "trigger_process.system_interrupted": triggerEvent([
-      "trigger_process_id",
-      "reason",
-    ]),
-    "cooldown.expired": triggerEvent(["trigger_process_id"]),
-    "weak_trigger.merged": triggerEvent(["queue_item_id", "trigger_process_id"]),
-    "trigger_process.outcome_finalized": triggerEvent([
-      "trigger_process_id",
-      "outcome",
-    ], { outcome: TerminalOutcomeV1Schema }),
+    "trigger.accepted": triggerEvent("trigger.accepted"),
+    "trigger.rejected": triggerEvent("trigger.rejected"),
+    "trigger_process.phase_changed": triggerEvent("trigger_process.phase_changed"),
+    "trigger_process.user_message_retracted": triggerEvent(
+      "trigger_process.user_message_retracted",
+    ),
+    "trigger_process.system_interrupted": triggerEvent(
+      "trigger_process.system_interrupted",
+    ),
+    "cooldown.expired": triggerEvent("cooldown.expired"),
+    "weak_trigger.merged": triggerEvent("weak_trigger.merged"),
+    "trigger_process.outcome_finalized": triggerEvent(
+      "trigger_process.outcome_finalized",
+    ),
   }),
   action_runtime: Object.freeze({
     "runtime.run.started": runtimeEvent(["runtime_run_id"]),
@@ -607,7 +614,6 @@ export function isDurableEventConsumerAllowedV1(
     envelope.event_type,
   );
   return (
-    consumer !== "observation_gateway" &&
     contract?.consumer_services.includes(consumer) === true
   );
 }
@@ -621,7 +627,6 @@ export function durableEventTargetConsumerV1(
     segments.length < 2 ||
     segments.some((segment) => !/^[a-z][a-z0-9_]{0,63}$/u.test(segment)) ||
     service === undefined ||
-    service === "observation_gateway" ||
     !(SERVICE_IDS as readonly string[]).includes(service)
   ) {
     return undefined;

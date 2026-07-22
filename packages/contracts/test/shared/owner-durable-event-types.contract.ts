@@ -23,6 +23,18 @@ function botScope() {
   } as const;
 }
 
+function triggerProcessorEventPayloadBase(reasonCode = "admission_accepted") {
+  return {
+    workspace_id: "workspace_001",
+    bot_id: "bot_001",
+    owner_agent_id: "owner_agent_001",
+    deployment_environment: "dev",
+    release_channel: "stable",
+    reason_code: reasonCode,
+    source_ref: "trigger_event:source_001",
+  } as const;
+}
+
 describe("owner durable event type unions V1", () => {
   it("covers every and only database-owning service with globally unique types", () => {
     expect(Object.keys(OWNER_DURABLE_EVENT_TYPES_V1).sort()).toEqual(
@@ -185,23 +197,25 @@ describe("owner durable event type unions V1", () => {
       idempotency_key: "trigger_process_001:terminal",
       trace_id: "trace_trigger_terminal_001",
       payload: {
-        ...botScope(),
+        ...triggerProcessorEventPayloadBase("cooldown_expired"),
         trigger_process_id: "trigger_process_001",
-        outcome: "executed",
+        terminal_outcome: "executed",
+        canonical_reason_code: "cooldown_expired",
+        finalized_at: "2026-07-22T04:00:00.000Z",
       },
     } as const;
     for (const outcome of TERMINAL_OUTCOMES_V1) {
       expect(() =>
         assertOwnerDurableEventEnvelopeV1({
           ...triggerEnvelope,
-          payload: { ...triggerEnvelope.payload, outcome },
+          payload: { ...triggerEnvelope.payload, terminal_outcome: outcome },
         }),
       ).not.toThrow();
     }
     expect(() =>
       assertOwnerDurableEventEnvelopeV1({
         ...triggerEnvelope,
-        payload: { ...triggerEnvelope.payload, outcome: "completed" },
+        payload: { ...triggerEnvelope.payload, terminal_outcome: "completed" },
       }),
     ).toThrow(/payload/u);
 
@@ -320,5 +334,37 @@ describe("owner durable event type unions V1", () => {
     expect(
       isDurableEventTargetAllowedV1(runtimeEnvelope, "memory.runtime_event_append"),
     ).toBe(false);
+
+    const triggerEnvelope = {
+      event_id: "evt_trigger_accepted_001",
+      event_type: "trigger.accepted",
+      schema_version: "trigger_processor_event.v1",
+      producer: "trigger_processor",
+      occurred_at: "2026-07-22T04:00:00.000Z",
+      idempotency_key: "trigger_accepted_001",
+      trace_id: "trace_trigger_accepted_001",
+      payload: {
+        ...triggerProcessorEventPayloadBase("admission_accepted"),
+        trigger_id: "trigger_001",
+        trigger_process_id: "process_001",
+        admission_outcome: "accepted",
+        priority: "strong",
+        dedupe_key: "chat:message_001",
+        request_hash: "hash_001",
+      },
+    } as const;
+    assertOwnerDurableEventEnvelopeV1(triggerEnvelope);
+    expect(
+      isDurableEventConsumerAllowedV1(triggerEnvelope, "observation_gateway"),
+    ).toBe(true);
+    expect(
+      durableEventTargetConsumerV1("observation_gateway.trigger_event_append"),
+    ).toBe("observation_gateway");
+    expect(
+      isDurableEventTargetAllowedV1(
+        triggerEnvelope,
+        "observation_gateway.trigger_event_append",
+      ),
+    ).toBe(true);
   });
 });

@@ -35,7 +35,6 @@ export type OwnerWriterKindV1 =
   | "state_transition"
   | "pointer_cas"
   | "lease_fence"
-  | "queue_claim_ack"
   | "outbox_claim_ack";
 
 export interface OwnerTablePermissionV1<TTable extends string = string> {
@@ -381,7 +380,6 @@ const writerKinds = new Set<OwnerWriterKindV1>([
   "state_transition",
   "pointer_cas",
   "lease_fence",
-  "queue_claim_ack",
   "outbox_claim_ack",
 ]);
 const effectOperations = new Set<OwnerFunctionEffectV1["operation"]>([
@@ -407,7 +405,6 @@ const operationsByWriterKind: Readonly<
   state_transition: new Set(["append", "enqueue", "transition"]),
   pointer_cas: new Set(["cas"]),
   lease_fence: new Set(["cas", "claim", "ack", "transition"]),
-  queue_claim_ack: new Set(["enqueue", "claim", "ack", "transition"]),
   outbox_claim_ack: new Set([
     "enqueue",
     "claim",

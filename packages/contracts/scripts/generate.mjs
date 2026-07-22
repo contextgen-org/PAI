@@ -12,6 +12,11 @@ import {
   TRIGGER_PROCESS_STATE_V1_DATABASE_CHECK,
 } from "../dist/trigger-processor/trigger-process-state.v1.js";
 import {
+  TRIGGER_PROCESSOR_DOMAIN_EVENT_CONSUMERS_V1,
+  TRIGGER_PROCESSOR_DOMAIN_EVENT_TYPES_V1,
+  TRIGGER_PROCESSOR_DOMAIN_EVENT_V1_DATABASE_CHECK,
+} from "../dist/trigger-processor/events.v1.js";
+import {
   validateWorkloadCredentialClaimsV1,
 } from "../dist/shared/workload-credential-claims.v1.js";
 import { evaluateConflictPolicyV1 } from "../dist/policy/conflict-policy.v1.js";
@@ -160,6 +165,67 @@ await emitGeneratedFile(
   )}\n`,
 );
 
+const triggerProcessorDomainEventSchema = schemaByName.get(
+  "TriggerProcessorDomainEventV1",
+);
+if (triggerProcessorDomainEventSchema === undefined) {
+  throw new Error("TriggerProcessorDomainEventV1 missing from schema catalog");
+}
+
+const triggerProcessorAsyncApiPath = resolve(
+  packageRoot,
+  "generated/asyncapi/trigger-processor.yaml",
+);
+await emitGeneratedFile(
+  triggerProcessorAsyncApiPath,
+  `${JSON.stringify(
+    {
+      asyncapi: "3.0.0",
+      info: {
+        title: "PAI Trigger Processor Domain Events",
+        version: "1.0.0",
+      },
+      channels: Object.fromEntries(
+        TRIGGER_PROCESSOR_DOMAIN_EVENT_TYPES_V1.map((eventType) => [
+          `trigger_processor.${eventType}`,
+          {
+            address: `trigger_processor.${eventType}`,
+            messages: {
+              TriggerProcessorDomainEventV1: {
+                $ref: "#/components/messages/TriggerProcessorDomainEventV1",
+              },
+            },
+            "x-pai-consumer-services":
+              TRIGGER_PROCESSOR_DOMAIN_EVENT_CONSUMERS_V1[eventType],
+          },
+        ]),
+      ),
+      operations: Object.fromEntries(
+        TRIGGER_PROCESSOR_DOMAIN_EVENT_TYPES_V1.map((eventType) => [
+          `publish_${eventType.replace(/[^a-z0-9]+/gu, "_")}_v1`,
+          {
+            action: "send",
+            channel: {
+              $ref: `#/channels/trigger_processor.${eventType}`,
+            },
+          },
+        ]),
+      ),
+      components: {
+        messages: {
+          TriggerProcessorDomainEventV1: {
+            name: "TriggerProcessorDomainEventV1",
+            title: "Trigger Processor domain event envelope",
+            payload: triggerProcessorDomainEventSchema,
+          },
+        },
+      },
+    },
+    null,
+    2,
+  )}\n`,
+);
+
 function declarationExportsFor(output, catalog) {
   const sources = new Set(
     catalog
@@ -197,6 +263,18 @@ await emitGeneratedFile(
   ),
 );
 
+const triggerProcessorEventTypesPath = resolve(
+  packageRoot,
+  "generated/types/trigger-processor-events.d.ts",
+);
+await emitGeneratedFile(
+  triggerProcessorEventTypesPath,
+  declarationExportsFor(
+    "generated/types/trigger-processor-events.d.ts",
+    TRIGGER_PROCESSOR_SCHEMA_CATALOG,
+  ),
+);
+
 const policyTypesPath = resolve(packageRoot, "generated/types/shared-policy.d.ts");
 await emitGeneratedFile(
   policyTypesPath,
@@ -222,6 +300,15 @@ const triggerProcessCheckPath = resolve(
 await emitGeneratedFile(
   triggerProcessCheckPath,
   `${TRIGGER_PROCESS_STATE_V1_DATABASE_CHECK.trim()}\n`,
+);
+
+const triggerProcessorEventCheckPath = resolve(
+  packageRoot,
+  "generated/db/trigger-processor-event-check.sql",
+);
+await emitGeneratedFile(
+  triggerProcessorEventCheckPath,
+  `${TRIGGER_PROCESSOR_DOMAIN_EVENT_V1_DATABASE_CHECK.trim()}\n`,
 );
 
 const policyFixtures = [

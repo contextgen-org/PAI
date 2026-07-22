@@ -40,7 +40,6 @@ const writerKinds = new Set([
   "state_transition",
   "pointer_cas",
   "lease_fence",
-  "queue_claim_ack",
   "outbox_claim_ack",
 ]);
 
@@ -587,7 +586,7 @@ describe("owner repository contracts", () => {
         ({ function_name }) =>
           function_name === "transition_trigger_snapshot_pending_event_v1",
       );
-    expect(pendingWriter?.writer_kind).toBe("queue_claim_ack");
+    expect(pendingWriter?.writer_kind).toBe("state_transition");
     expect(pendingWriter?.effects).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

@@ -52,20 +52,21 @@
           "additionalProperties": false,
           "type": "object",
           "required": [
-            "scope_kind",
             "workspace_id",
             "bot_id",
             "owner_agent_id",
             "deployment_environment",
             "release_channel",
+            "reason_code",
+            "source_ref",
             "trigger_id",
-            "trigger_process_id"
+            "trigger_process_id",
+            "admission_outcome",
+            "priority",
+            "dedupe_key",
+            "request_hash"
           ],
           "properties": {
-            "scope_kind": {
-              "const": "bot",
-              "type": "string"
-            },
             "workspace_id": {
               "minLength": 1,
               "maxLength": 512,
@@ -115,12 +116,50 @@
                 }
               ]
             },
+            "reason_code": {
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+              "type": "string"
+            },
+            "source_ref": {
+              "$id": "urn:pai:shared:typed-evidence-ref:v1",
+              "minLength": 3,
+              "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+              "type": "string"
+            },
             "trigger_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "admission_outcome": {
+              "const": "accepted",
+              "type": "string"
+            },
+            "priority": {
+              "anyOf": [
+                {
+                  "const": "strong",
+                  "type": "string"
+                },
+                {
+                  "const": "weak",
+                  "type": "string"
+                }
+              ]
+            },
+            "dedupe_key": {
               "minLength": 1,
               "maxLength": 512,
               "type": "string"
             },
-            "trigger_process_id": {
+            "request_hash": {
               "minLength": 1,
               "maxLength": 512,
               "type": "string"
@@ -180,20 +219,18 @@
           "additionalProperties": false,
           "type": "object",
           "required": [
-            "scope_kind",
             "workspace_id",
             "bot_id",
             "owner_agent_id",
             "deployment_environment",
             "release_channel",
-            "trigger_id",
-            "reason"
+            "reason_code",
+            "source_ref",
+            "submit_attempt_id",
+            "rejection_stage",
+            "rejection_code"
           ],
           "properties": {
-            "scope_kind": {
-              "const": "bot",
-              "type": "string"
-            },
             "workspace_id": {
               "minLength": 1,
               "maxLength": 512,
@@ -243,12 +280,36 @@
                 }
               ]
             },
-            "trigger_id": {
+            "reason_code": {
               "minLength": 1,
-              "maxLength": 512,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
               "type": "string"
             },
-            "reason": {
+            "source_ref": {
+              "$id": "urn:pai:shared:typed-evidence-ref:v1",
+              "minLength": 3,
+              "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+              "type": "string"
+            },
+            "submit_attempt_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "rejection_stage": {
+              "anyOf": [
+                {
+                  "const": "business_admission",
+                  "type": "string"
+                },
+                {
+                  "const": "safety_admission",
+                  "type": "string"
+                }
+              ]
+            },
+            "rejection_code": {
               "minLength": 1,
               "maxLength": 128,
               "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
@@ -309,20 +370,20 @@
           "additionalProperties": false,
           "type": "object",
           "required": [
-            "scope_kind",
             "workspace_id",
             "bot_id",
             "owner_agent_id",
             "deployment_environment",
             "release_channel",
+            "reason_code",
+            "source_ref",
             "trigger_process_id",
-            "phase"
+            "previous_state",
+            "next_state",
+            "expected_state_version",
+            "transition_id"
           ],
           "properties": {
-            "scope_kind": {
-              "const": "bot",
-              "type": "string"
-            },
             "workspace_id": {
               "minLength": 1,
               "maxLength": 512,
@@ -372,42 +433,894 @@
                 }
               ]
             },
-            "trigger_process_id": {
+            "reason_code": {
               "minLength": 1,
-              "maxLength": 512,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
               "type": "string"
             },
-            "phase": {
+            "source_ref": {
+              "$id": "urn:pai:shared:typed-evidence-ref:v1",
+              "minLength": 3,
+              "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "previous_state": {
+              "$id": "urn:pai:trigger-processor:trigger-process-state:v1",
               "anyOf": [
                 {
-                  "const": "admission",
-                  "type": "string"
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "admission",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "type": "null"
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
                 },
                 {
-                  "const": "context",
-                  "type": "string"
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "admission",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "anyOf": [
+                        {
+                          "const": "weak_queue",
+                          "type": "string"
+                        },
+                        {
+                          "const": "preempt_commit",
+                          "type": "string"
+                        },
+                        {
+                          "const": "deferred_strong_queue",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stage_retry_wait",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
                 },
                 {
-                  "const": "intent",
-                  "type": "string"
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "context",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "type": "null"
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
                 },
                 {
-                  "const": "execution",
-                  "type": "string"
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "context",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "anyOf": [
+                        {
+                          "const": "runtime_start_recompose",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stage_retry_wait",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
                 },
                 {
-                  "const": "cooldown",
-                  "type": "string"
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "intent",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "type": "null"
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
                 },
                 {
-                  "const": "meta_enqueued",
-                  "type": "string"
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "intent",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "anyOf": [
+                        {
+                          "const": "external_confirmation",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stage_retry_wait",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
                 },
                 {
-                  "const": "closed",
-                  "type": "string"
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "execution",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "anyOf": [
+                        {
+                          "const": "runtime_start",
+                          "type": "string"
+                        },
+                        {
+                          "const": "runtime_start_reconcile",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stage_retry_wait",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "execution",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "type": "null"
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "execution",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "preempt_requested",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "type": "null"
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "execution",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "cancelling",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "type": "null"
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "cooldown",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "const": "cooldown_until",
+                      "type": "string"
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason",
+                    "meta_enqueue_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "meta_enqueued",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "const": "meta_enqueue_wait",
+                      "type": "string"
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    },
+                    "meta_enqueue_reason": {
+                      "anyOf": [
+                        {
+                          "const": "cooldown_expired",
+                          "type": "string"
+                        },
+                        {
+                          "const": "user_retracted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "system_interrupted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "failed_with_learnable_snapshot",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "closed",
+                      "type": "string"
+                    },
+                    "status": {
+                      "anyOf": [
+                        {
+                          "const": "completed",
+                          "type": "string"
+                        },
+                        {
+                          "const": "failed",
+                          "type": "string"
+                        },
+                        {
+                          "const": "preempted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "cancelled",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "wait_reason": {
+                      "type": "null"
+                    },
+                    "terminal_reason": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
                 }
               ]
+            },
+            "next_state": {
+              "$id": "urn:pai:trigger-processor:trigger-process-state:v1",
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "admission",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "type": "null"
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "admission",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "anyOf": [
+                        {
+                          "const": "weak_queue",
+                          "type": "string"
+                        },
+                        {
+                          "const": "preempt_commit",
+                          "type": "string"
+                        },
+                        {
+                          "const": "deferred_strong_queue",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stage_retry_wait",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "context",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "type": "null"
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "context",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "anyOf": [
+                        {
+                          "const": "runtime_start_recompose",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stage_retry_wait",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "intent",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "type": "null"
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "intent",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "anyOf": [
+                        {
+                          "const": "external_confirmation",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stage_retry_wait",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "execution",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "anyOf": [
+                        {
+                          "const": "runtime_start",
+                          "type": "string"
+                        },
+                        {
+                          "const": "runtime_start_reconcile",
+                          "type": "string"
+                        },
+                        {
+                          "const": "stage_retry_wait",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "execution",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "type": "null"
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "execution",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "preempt_requested",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "type": "null"
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "execution",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "cancelling",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "type": "null"
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "cooldown",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "const": "cooldown_until",
+                      "type": "string"
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason",
+                    "meta_enqueue_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "meta_enqueued",
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    "wait_reason": {
+                      "const": "meta_enqueue_wait",
+                      "type": "string"
+                    },
+                    "terminal_reason": {
+                      "type": "null"
+                    },
+                    "meta_enqueue_reason": {
+                      "anyOf": [
+                        {
+                          "const": "cooldown_expired",
+                          "type": "string"
+                        },
+                        {
+                          "const": "user_retracted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "system_interrupted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "failed_with_learnable_snapshot",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "status",
+                    "wait_reason",
+                    "terminal_reason"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "const": "closed",
+                      "type": "string"
+                    },
+                    "status": {
+                      "anyOf": [
+                        {
+                          "const": "completed",
+                          "type": "string"
+                        },
+                        {
+                          "const": "failed",
+                          "type": "string"
+                        },
+                        {
+                          "const": "preempted",
+                          "type": "string"
+                        },
+                        {
+                          "const": "cancelled",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "wait_reason": {
+                      "type": "null"
+                    },
+                    "terminal_reason": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              ]
+            },
+            "expected_state_version": {
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "transition_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
             }
           }
         }
@@ -464,20 +1377,18 @@
           "additionalProperties": false,
           "type": "object",
           "required": [
-            "scope_kind",
             "workspace_id",
             "bot_id",
             "owner_agent_id",
             "deployment_environment",
             "release_channel",
+            "reason_code",
+            "source_ref",
             "trigger_process_id",
-            "reason"
+            "source_message_ref",
+            "boundary_system_event_ref"
           ],
           "properties": {
-            "scope_kind": {
-              "const": "bot",
-              "type": "string"
-            },
             "workspace_id": {
               "minLength": 1,
               "maxLength": 512,
@@ -527,15 +1438,33 @@
                 }
               ]
             },
-            "trigger_process_id": {
-              "minLength": 1,
-              "maxLength": 512,
-              "type": "string"
-            },
-            "reason": {
+            "reason_code": {
               "minLength": 1,
               "maxLength": 128,
               "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+              "type": "string"
+            },
+            "source_ref": {
+              "$id": "urn:pai:shared:typed-evidence-ref:v1",
+              "minLength": 3,
+              "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "source_message_ref": {
+              "$id": "urn:pai:shared:typed-evidence-ref:v1",
+              "minLength": 3,
+              "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+              "type": "string"
+            },
+            "boundary_system_event_ref": {
+              "$id": "urn:pai:shared:typed-evidence-ref:v1",
+              "minLength": 3,
+              "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
               "type": "string"
             }
           }
@@ -593,20 +1522,18 @@
           "additionalProperties": false,
           "type": "object",
           "required": [
-            "scope_kind",
             "workspace_id",
             "bot_id",
             "owner_agent_id",
             "deployment_environment",
             "release_channel",
+            "reason_code",
+            "source_ref",
             "trigger_process_id",
-            "reason"
+            "boundary_system_event_ref",
+            "interrupt_source"
           ],
           "properties": {
-            "scope_kind": {
-              "const": "bot",
-              "type": "string"
-            },
             "workspace_id": {
               "minLength": 1,
               "maxLength": 512,
@@ -656,15 +1583,32 @@
                 }
               ]
             },
-            "trigger_process_id": {
-              "minLength": 1,
-              "maxLength": 512,
-              "type": "string"
-            },
-            "reason": {
+            "reason_code": {
               "minLength": 1,
               "maxLength": 128,
               "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+              "type": "string"
+            },
+            "source_ref": {
+              "$id": "urn:pai:shared:typed-evidence-ref:v1",
+              "minLength": 3,
+              "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "boundary_system_event_ref": {
+              "$id": "urn:pai:shared:typed-evidence-ref:v1",
+              "minLength": 3,
+              "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+              "type": "string"
+            },
+            "interrupt_source": {
+              "minLength": 1,
+              "maxLength": 512,
               "type": "string"
             }
           }
@@ -722,19 +1666,18 @@
           "additionalProperties": false,
           "type": "object",
           "required": [
-            "scope_kind",
             "workspace_id",
             "bot_id",
             "owner_agent_id",
             "deployment_environment",
             "release_channel",
-            "trigger_process_id"
+            "reason_code",
+            "source_ref",
+            "trigger_process_id",
+            "cooldown_until",
+            "expired_at"
           ],
           "properties": {
-            "scope_kind": {
-              "const": "bot",
-              "type": "string"
-            },
             "workspace_id": {
               "minLength": 1,
               "maxLength": 512,
@@ -784,9 +1727,33 @@
                 }
               ]
             },
+            "reason_code": {
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+              "type": "string"
+            },
+            "source_ref": {
+              "$id": "urn:pai:shared:typed-evidence-ref:v1",
+              "minLength": 3,
+              "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+              "type": "string"
+            },
             "trigger_process_id": {
               "minLength": 1,
-              "maxLength": 512,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "cooldown_until": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "expired_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
               "type": "string"
             }
           }
@@ -844,20 +1811,19 @@
           "additionalProperties": false,
           "type": "object",
           "required": [
-            "scope_kind",
             "workspace_id",
             "bot_id",
             "owner_agent_id",
             "deployment_environment",
             "release_channel",
-            "queue_item_id",
-            "trigger_process_id"
+            "reason_code",
+            "source_ref",
+            "weak_group_id",
+            "canonical_process_id",
+            "merged_process_ids",
+            "merge_window_started_at"
           ],
           "properties": {
-            "scope_kind": {
-              "const": "bot",
-              "type": "string"
-            },
             "workspace_id": {
               "minLength": 1,
               "maxLength": 512,
@@ -907,14 +1873,42 @@
                 }
               ]
             },
-            "queue_item_id": {
+            "reason_code": {
               "minLength": 1,
-              "maxLength": 512,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
               "type": "string"
             },
-            "trigger_process_id": {
+            "source_ref": {
+              "$id": "urn:pai:shared:typed-evidence-ref:v1",
+              "minLength": 3,
+              "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+              "type": "string"
+            },
+            "weak_group_id": {
               "minLength": 1,
-              "maxLength": 512,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "canonical_process_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "merged_process_ids": {
+              "minItems": 1,
+              "maxItems": 10000,
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "maxLength": 256,
+                "type": "string"
+              }
+            },
+            "merge_window_started_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
               "type": "string"
             }
           }
@@ -972,20 +1966,19 @@
           "additionalProperties": false,
           "type": "object",
           "required": [
-            "scope_kind",
             "workspace_id",
             "bot_id",
             "owner_agent_id",
             "deployment_environment",
             "release_channel",
+            "reason_code",
+            "source_ref",
             "trigger_process_id",
-            "outcome"
+            "terminal_outcome",
+            "canonical_reason_code",
+            "finalized_at"
           ],
           "properties": {
-            "scope_kind": {
-              "const": "bot",
-              "type": "string"
-            },
             "workspace_id": {
               "minLength": 1,
               "maxLength": 512,
@@ -1035,12 +2028,24 @@
                 }
               ]
             },
-            "trigger_process_id": {
+            "reason_code": {
               "minLength": 1,
-              "maxLength": 512,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
               "type": "string"
             },
-            "outcome": {
+            "source_ref": {
+              "$id": "urn:pai:shared:typed-evidence-ref:v1",
+              "minLength": 3,
+              "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "terminal_outcome": {
               "$id": "urn:pai:trigger-processor:terminal-outcome:v1",
               "anyOf": [
                 {
@@ -1080,6 +2085,39 @@
                   "type": "string"
                 }
               ]
+            },
+            "canonical_reason_code": {
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+              "type": "string"
+            },
+            "finalized_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "canonical_process_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "successor_process_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "snapshot_transfer_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "boundary_system_event_ref": {
+              "$id": "urn:pai:shared:typed-evidence-ref:v1",
+              "minLength": 3,
+              "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+              "type": "string"
             }
           }
         }

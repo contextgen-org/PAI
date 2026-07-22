@@ -30,6 +30,9 @@ import {
   TriggerProcessStateV1Schema,
   TriggerProcessTransitionEvidenceV1Schema,
 } from "./trigger-processor/trigger-process-state.v1.js";
+import {
+  TriggerProcessorDomainEventV1Schema,
+} from "./trigger-processor/events.v1.js";
 
 export interface SharedSchemaCatalogEntry {
   readonly schema_name: string;
@@ -225,6 +228,7 @@ function triggerProcessorEntry(
   generated_file: string,
   contract_test: string,
   schema: TSchema,
+  generatedOutputs?: readonly string[],
 ): TriggerProcessorSchemaCatalogEntry {
   return {
     schema_name,
@@ -232,17 +236,31 @@ function triggerProcessorEntry(
     version: "1.0.0",
     owner_service: "trigger_processor",
     source_file,
-    generated_outputs: [
-      generated_file,
-      "generated/openapi/trigger-processor-internal.yaml",
-      "generated/types/trigger-processor.d.ts",
-    ],
+    generated_outputs: generatedOutputs ?? [
+        generated_file,
+        "generated/openapi/trigger-processor-internal.yaml",
+        "generated/types/trigger-processor.d.ts",
+      ],
     contract_tests: [contract_test],
     schema,
   };
 }
 
 export const TRIGGER_PROCESSOR_SCHEMA_CATALOG = [
+  triggerProcessorEntry(
+    "TriggerProcessorDomainEventV1",
+    "urn:pai:trigger-processor:domain-event:v1",
+    "packages/contracts/src/trigger-processor/events.v1.ts",
+    "generated/schema/trigger-processor/events.v1.json",
+    "packages/contracts/test/events/trigger-processor-events.contract.ts",
+    TriggerProcessorDomainEventV1Schema,
+    [
+      "generated/schema/trigger-processor/events.v1.json",
+      "generated/asyncapi/trigger-processor.yaml",
+      "generated/types/trigger-processor-events.d.ts",
+      "generated/db/trigger-processor-event-check.sql",
+    ],
+  ),
   triggerProcessorEntry(
     "TriggerProcessStateV1",
     "urn:pai:trigger-processor:trigger-process-state:v1",

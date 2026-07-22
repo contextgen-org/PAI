@@ -245,7 +245,7 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
-      writer_kind: "queue_claim_ack",
+      writer_kind: "state_transition",
     },
     {
       table_name: "trigger_snapshot_append_audits",
@@ -477,7 +477,7 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
       schema: "trigger_processor",
       function_name: "transition_trigger_snapshot_pending_event_v1",
       primary_table: "trigger_snapshot_pending_events",
-      writer_kind: "queue_claim_ack",
+      writer_kind: "state_transition",
       arguments: [
         ["p_pending_event_id", "text"], ["p_expected_status", "text"],
         ["p_expected_updated_at", "timestamptz"], ["p_next_status", "text"],
