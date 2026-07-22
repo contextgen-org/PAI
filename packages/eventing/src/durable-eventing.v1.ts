@@ -41,8 +41,15 @@ export interface DurableOutboxStorePortV1 {
     outcome: "sent" | "retry_wait" | "failed";
     next_retry_at: string | null;
     error: Readonly<Record<string, unknown>> | null;
+    transport_ref: string | null;
+    transport_epoch: string | null;
     now: string;
   }>): Promise<void>;
+}
+
+export interface DurableEventTransportReceiptV1 {
+  readonly transport_ref: string;
+  readonly transport_epoch: string;
 }
 
 export interface DurableEventTransportPortV1 {
@@ -50,7 +57,28 @@ export interface DurableEventTransportPortV1 {
     target: string;
     envelope: DurableEventEnvelopeV1;
     payload_hash: string;
-  }>): Promise<Readonly<{ transport_ref: string }>>;
+  }>): Promise<DurableEventTransportReceiptV1>;
+}
+
+function assertTransportReceiptV1(
+  receipt: DurableEventTransportReceiptV1,
+  expectedEpoch?: string,
+): void {
+  if (
+    typeof receipt !== "object" ||
+    receipt === null ||
+    typeof receipt.transport_ref !== "string" ||
+    receipt.transport_ref.trim().length === 0 ||
+    typeof receipt.transport_epoch !== "string" ||
+    receipt.transport_epoch.trim().length === 0 ||
+    (expectedEpoch !== undefined && receipt.transport_epoch !== expectedEpoch)
+  ) {
+    throw new EventTransportErrorV1(
+      "transport_rejected",
+      false,
+      "transport receipt identity is invalid",
+    );
+  }
 }
 
 export class EventTransportErrorV1 extends Error {
@@ -132,6 +160,8 @@ export function createPostgresOwnerOutboxStoreV1(
       outcome: "sent" | "retry_wait" | "failed";
       next_retry_at: string | null;
       error: Readonly<Record<string, unknown>> | null;
+      transport_ref: string | null;
+      transport_epoch: string | null;
       now: string;
     }>) {
       await ownerOutbox.acknowledge({
@@ -243,12 +273,17 @@ export function createDurableOutboxDispatcherV1(
       let failed = 0;
       for (const record of records) {
         let failure: Readonly<{ code: string; retryable: boolean }> | undefined;
+        let receipt: DurableEventTransportReceiptV1 | undefined;
         let attemptCount = 1;
         try {
           assertOwnerDurableEventEnvelopeV1(record.envelope);
           if (
             !Number.isSafeInteger(record.attempt_count) ||
             (record.attempt_count as number) < 1 ||
+            typeof record.outbox_id !== "string" ||
+            record.outbox_id.trim().length === 0 ||
+            typeof record.claim_token !== "string" ||
+            record.claim_token.trim().length === 0 ||
             typeof record.target !== "string" ||
             record.target.length === 0 ||
             typeof record.payload_hash !== "string" ||
@@ -287,11 +322,12 @@ export function createDurableOutboxDispatcherV1(
               "outbox payload hash does not match the canonical payload",
             );
           }
-          await transport.publish({
+          receipt = await transport.publish({
             target: record.target,
             envelope: record.envelope,
             payload_hash: record.payload_hash,
           });
+          assertTransportReceiptV1(receipt);
         } catch (error) {
           failure = deliveryFailure(error);
         }
@@ -303,6 +339,8 @@ export function createDurableOutboxDispatcherV1(
             outcome: "sent",
             next_retry_at: null,
             error: null,
+            transport_ref: receipt?.transport_ref ?? null,
+            transport_epoch: receipt?.transport_epoch ?? null,
             now: acknowledgedAt.toISOString(),
           });
           sent += 1;
@@ -326,6 +364,8 @@ export function createDurableOutboxDispatcherV1(
               : failure.code,
             retryable,
           },
+          transport_ref: null,
+          transport_epoch: null,
           now: acknowledgedAt.toISOString(),
         });
         if (retryable) retryWait += 1;
@@ -336,6 +376,147 @@ export function createDurableOutboxDispatcherV1(
         sent,
         retry_wait: retryWait,
         failed,
+      };
+    },
+  });
+}
+
+export interface ClaimedSentOutboxRecordV1 extends ClaimedOutboxRecordV1 {
+  readonly sent_at: unknown;
+  readonly transport_ref: unknown;
+  readonly transport_epoch: unknown;
+}
+
+export interface DurableSentOutboxRedriveStorePortV1 {
+  claimSentForRedrive(request: Readonly<{
+    worker_id: string;
+    limit: number;
+    lease_seconds: number;
+    now: string;
+    sent_after: string;
+    current_transport_epoch: string;
+  }>): Promise<readonly ClaimedSentOutboxRecordV1[]>;
+  acknowledgeSentRedrive(request: Readonly<{
+    outbox_id: string;
+    claim_token: string;
+    previous_transport_epoch: string;
+    transport_ref: string;
+    transport_epoch: string;
+    now: string;
+  }>): Promise<void>;
+}
+
+export interface DurableSentOutboxRedriveSummaryV1 {
+  readonly claimed: number;
+  readonly redriven: number;
+  readonly retryable_failures: number;
+  readonly permanent_failures: number;
+}
+
+/**
+ * Re-materializes retained PostgreSQL sent rows into a new Redis stream epoch.
+ * The store must lease only rows whose persisted epoch differs from the current
+ * epoch and must CAS the previous epoch when acknowledging the new receipt.
+ */
+export function createDurableSentOutboxRedriverV1(
+  store: DurableSentOutboxRedriveStorePortV1,
+  transport: DurableEventTransportPortV1,
+  config: Readonly<{
+    owner_service: ServiceIdV1;
+    worker_id: string;
+    batch_size: number;
+    lease_seconds: number;
+    current_transport_epoch: string;
+    sent_after: string;
+  }>,
+  dependencies: Readonly<{ now?: () => Date }> = {},
+): Readonly<{ redriveBatch: () => Promise<DurableSentOutboxRedriveSummaryV1> }> {
+  if (
+    config.worker_id.trim().length === 0 ||
+    config.current_transport_epoch.trim().length === 0 ||
+    !Number.isSafeInteger(config.batch_size) ||
+    config.batch_size < 1 ||
+    config.batch_size > 1_000 ||
+    !Number.isSafeInteger(config.lease_seconds) ||
+    config.lease_seconds < 1 ||
+    config.lease_seconds > 3_600 ||
+    !Number.isFinite(Date.parse(config.sent_after))
+  ) {
+    throw new Error("invalid sent outbox redrive configuration");
+  }
+  const now = dependencies.now ?? (() => new Date());
+  return Object.freeze({
+    async redriveBatch(): Promise<DurableSentOutboxRedriveSummaryV1> {
+      const claimedAt = now().toISOString();
+      const records = await store.claimSentForRedrive({
+        worker_id: config.worker_id,
+        limit: config.batch_size,
+        lease_seconds: config.lease_seconds,
+        now: claimedAt,
+        sent_after: config.sent_after,
+        current_transport_epoch: config.current_transport_epoch,
+      });
+      let redriven = 0;
+      let retryableFailures = 0;
+      let permanentFailures = 0;
+      for (const record of records) {
+        try {
+          assertOwnerDurableEventEnvelopeV1(record.envelope);
+          if (
+            !Number.isSafeInteger(record.attempt_count) ||
+            (record.attempt_count as number) < 1 ||
+            typeof record.outbox_id !== "string" ||
+            record.outbox_id.trim().length === 0 ||
+            typeof record.claim_token !== "string" ||
+            record.claim_token.trim().length === 0 ||
+            typeof record.target !== "string" ||
+            record.target.length === 0 ||
+            typeof record.payload_hash !== "string" ||
+            !sha256Pattern.test(record.payload_hash) ||
+            typeof record.sent_at !== "string" ||
+            !Number.isFinite(Date.parse(record.sent_at)) ||
+            typeof record.transport_ref !== "string" ||
+            record.transport_ref.trim().length === 0 ||
+            typeof record.transport_epoch !== "string" ||
+            record.transport_epoch.trim().length === 0 ||
+            record.transport_epoch === config.current_transport_epoch ||
+            record.envelope.producer !== config.owner_service ||
+            !isOwnerDurableEventTypeV1(
+              record.envelope.producer,
+              record.envelope.event_type,
+            ) ||
+            !isDurableEventTargetAllowedV1(record.envelope, record.target) ||
+            canonicalPayloadHashV1(record.envelope.payload) !== record.payload_hash
+          ) {
+            throw new OutboxClaimContractErrorV1(
+              "sent outbox redrive claim is outside the retained owner contract",
+            );
+          }
+          const receipt = await transport.publish({
+            target: record.target,
+            envelope: record.envelope,
+            payload_hash: record.payload_hash,
+          });
+          assertTransportReceiptV1(receipt, config.current_transport_epoch);
+          await store.acknowledgeSentRedrive({
+            outbox_id: record.outbox_id,
+            claim_token: record.claim_token,
+            previous_transport_epoch: record.transport_epoch,
+            transport_ref: receipt.transport_ref,
+            transport_epoch: receipt.transport_epoch,
+            now: now().toISOString(),
+          });
+          redriven += 1;
+        } catch (error) {
+          if (deliveryFailure(error).retryable) retryableFailures += 1;
+          else permanentFailures += 1;
+        }
+      }
+      return {
+        claimed: records.length,
+        redriven,
+        retryable_failures: retryableFailures,
+        permanent_failures: permanentFailures,
       };
     },
   });
@@ -390,23 +571,76 @@ export function createDurableInboxConsumerV1(
 }
 
 export interface DurableEventDeliveryMessageV1 {
+  readonly kind: "event";
   readonly delivery_id: string;
+  readonly delivery_ref: string;
   readonly envelope: DurableEventEnvelopeV1;
+}
+
+export interface DurableEventInvalidDeliveryV1 {
+  readonly kind: "invalid";
+  readonly delivery_id: string;
+  readonly delivery_ref: string;
+  readonly error_code:
+    | "malformed_stream_fields"
+    | "invalid_json"
+    | "invalid_envelope"
+    | "namespace_mismatch";
+  readonly error_message: string;
+  readonly raw_fields: readonly unknown[];
+}
+
+export type DurableEventDeliveryV1 =
+  | DurableEventDeliveryMessageV1
+  | DurableEventInvalidDeliveryV1;
+
+export interface DurableEventReclaimBatchV1 {
+  readonly next_start_id: string;
+  readonly deliveries: readonly DurableEventDeliveryV1[];
+  readonly deleted_ids: readonly string[];
 }
 
 export interface DurableEventDeliveryConsumerPortV1 {
   readNew(request: Readonly<{
     count: number;
     block_ms: number;
-  }>): Promise<readonly DurableEventDeliveryMessageV1[]>;
+  }>): Promise<readonly DurableEventDeliveryV1[]>;
   reclaimPending(request: Readonly<{
     min_idle_ms: number;
     count: number;
     start_id: string;
-  }>): Promise<readonly DurableEventDeliveryMessageV1[]>;
+  }>): Promise<DurableEventReclaimBatchV1>;
   acknowledge(request: Readonly<{
     delivery_ids: readonly string[];
   }>): Promise<Readonly<{ acknowledged: number }>>;
+}
+
+export class DurableInboxApplyErrorV1 extends Error {
+  public constructor(
+    public readonly code:
+      | "semantic_conflict"
+      | "consumer_contract_violation"
+      | "transient_database_failure",
+    public readonly retryable: boolean,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "DurableInboxApplyErrorV1";
+  }
+}
+
+export interface DurableEventConsumerDeadLetterPortV1 {
+  /** Must durably commit consumer DLQ + audit before resolving. */
+  recordPermanentFailure(request: Readonly<{
+    consumer_service: DurableEventConsumerServiceIdV1;
+    delivery_id: string;
+    delivery_ref: string;
+    failure_code: string;
+    failure_message: string;
+    raw_fields: readonly unknown[] | null;
+    envelope: DurableEventEnvelopeV1 | null;
+  }>): Promise<Readonly<{ status: "recorded" | "replayed" }>>;
 }
 
 export interface DurableEventConsumerWorkerSummaryV1 {
@@ -414,40 +648,123 @@ export interface DurableEventConsumerWorkerSummaryV1 {
   readonly processed: number;
   readonly replayed: number;
   readonly failed: number;
+  readonly dead_lettered: number;
   readonly acknowledged: number;
+  readonly deleted: number;
+  readonly next_start_id: string | null;
 }
 
 export function createDurableEventConsumerWorkerV1(
   delivery: DurableEventDeliveryConsumerPortV1,
   inbox: TransactionalInboxApplyPortV1,
-  config: Readonly<{ consumer_service: DurableEventConsumerServiceIdV1 }>,
+  config: Readonly<{
+    consumer_service: DurableEventConsumerServiceIdV1;
+    dead_letter: DurableEventConsumerDeadLetterPortV1;
+  }>,
 ): Readonly<{
   consumeNewBatch: (
     request: Readonly<{ count: number; block_ms: number }>,
   ) => Promise<DurableEventConsumerWorkerSummaryV1>;
   reclaimAndConsumeBatch: (
-    request: Readonly<{ min_idle_ms: number; count: number; start_id: string }>,
+    request: Readonly<{
+      min_idle_ms: number;
+      count: number;
+      start_id: string;
+      max_pages?: number;
+    }>,
   ) => Promise<DurableEventConsumerWorkerSummaryV1>;
 }> {
   const consumer = createDurableInboxConsumerV1(inbox, config);
+  const acknowledgeOne = async (deliveryId: string): Promise<number> => {
+    const result = await delivery.acknowledge({ delivery_ids: [deliveryId] });
+    if (result.acknowledged !== 1) {
+      throw new Error(`Redis delivery acknowledgement drift: ${deliveryId}`);
+    }
+    return result.acknowledged;
+  };
+  const isPermanentFailure = (error: unknown): boolean =>
+    error instanceof DurableEventEnvelopeValidationErrorV1 ||
+    error instanceof CanonicalJsonValidationErrorV1 ||
+    (error instanceof DurableInboxApplyErrorV1 && !error.retryable);
   const consumeMessages = async (
-    messages: readonly DurableEventDeliveryMessageV1[],
+    messages: readonly DurableEventDeliveryV1[],
+    deleted = 0,
+    nextStartId: string | null = null,
   ): Promise<DurableEventConsumerWorkerSummaryV1> => {
     let processed = 0;
     let replayed = 0;
     let failed = 0;
+    let deadLettered = 0;
     let acknowledged = 0;
     for (const message of messages) {
+      if (
+        typeof message.delivery_id !== "string" ||
+        message.delivery_id.trim().length === 0 ||
+        typeof message.delivery_ref !== "string" ||
+        message.delivery_ref.trim().length === 0
+      ) {
+        failed += 1;
+        continue;
+      }
+      if (message.kind === "invalid") {
+        try {
+          const deadLetter = await config.dead_letter.recordPermanentFailure({
+            consumer_service: config.consumer_service,
+            delivery_id: message.delivery_id,
+            delivery_ref: message.delivery_ref,
+            failure_code: message.error_code,
+            failure_message: message.error_message,
+            raw_fields: message.raw_fields,
+            envelope: null,
+          });
+          if (
+            deadLetter.status !== "recorded" &&
+            deadLetter.status !== "replayed"
+          ) {
+            throw new Error("durable consumer DLQ returned an invalid status");
+          }
+          acknowledged += await acknowledgeOne(message.delivery_id);
+          deadLettered += 1;
+        } catch {
+          failed += 1;
+        }
+        continue;
+      }
       try {
         const result = await consumer.consume(message.envelope);
-        const ack = await delivery.acknowledge({
-          delivery_ids: [message.delivery_id],
-        });
-        acknowledged += ack.acknowledged;
+        acknowledged += await acknowledgeOne(message.delivery_id);
         if (result.status === "processed") processed += 1;
         else replayed += 1;
-      } catch {
-        failed += 1;
+      } catch (error) {
+        if (!isPermanentFailure(error)) {
+          failed += 1;
+          continue;
+        }
+        try {
+          const deadLetter = await config.dead_letter.recordPermanentFailure({
+            consumer_service: config.consumer_service,
+            delivery_id: message.delivery_id,
+            delivery_ref: message.delivery_ref,
+            failure_code:
+              error instanceof DurableInboxApplyErrorV1
+                ? error.code
+                : "consumer_contract_violation",
+            failure_message:
+              error instanceof Error ? error.message : "permanent consumer failure",
+            raw_fields: null,
+            envelope: message.envelope,
+          });
+          if (
+            deadLetter.status !== "recorded" &&
+            deadLetter.status !== "replayed"
+          ) {
+            throw new Error("durable consumer DLQ returned an invalid status");
+          }
+          acknowledged += await acknowledgeOne(message.delivery_id);
+          deadLettered += 1;
+        } catch {
+          failed += 1;
+        }
       }
     }
     return {
@@ -455,7 +772,10 @@ export function createDurableEventConsumerWorkerV1(
       processed,
       replayed,
       failed,
+      dead_lettered: deadLettered,
       acknowledged,
+      deleted,
+      next_start_id: nextStartId,
     };
   };
   return Object.freeze({
@@ -463,7 +783,47 @@ export function createDurableEventConsumerWorkerV1(
       return consumeMessages(await delivery.readNew(request));
     },
     async reclaimAndConsumeBatch(request) {
-      return consumeMessages(await delivery.reclaimPending(request));
+      const maxPages = request.max_pages ?? 10;
+      if (!Number.isSafeInteger(maxPages) || maxPages < 1 || maxPages > 100) {
+        throw new Error("Redis reclaim max_pages is outside the V1 bounds");
+      }
+      let cursor = request.start_id;
+      const total = {
+        received: 0,
+        processed: 0,
+        replayed: 0,
+        failed: 0,
+        dead_lettered: 0,
+        acknowledged: 0,
+        deleted: 0,
+        next_start_id: cursor,
+      };
+      for (let page = 0; page < maxPages; page += 1) {
+        const batch = await delivery.reclaimPending({
+          min_idle_ms: request.min_idle_ms,
+          count: request.count,
+          start_id: cursor,
+        });
+        const summary = await consumeMessages(
+          batch.deliveries,
+          batch.deleted_ids.length,
+          batch.next_start_id,
+        );
+        total.received += summary.received;
+        total.processed += summary.processed;
+        total.replayed += summary.replayed;
+        total.failed += summary.failed;
+        total.dead_lettered += summary.dead_lettered;
+        total.acknowledged += summary.acknowledged;
+        total.deleted += summary.deleted;
+        total.next_start_id = batch.next_start_id;
+        if (batch.next_start_id === "0-0") break;
+        if (batch.next_start_id === cursor) {
+          throw new Error("Redis XAUTOCLAIM cursor did not advance");
+        }
+        cursor = batch.next_start_id;
+      }
+      return total;
     },
   });
 }

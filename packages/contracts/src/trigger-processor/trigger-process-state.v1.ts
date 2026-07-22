@@ -634,7 +634,7 @@ const triggerProcessStateRowsSql = [
 
 export const TRIGGER_PROCESS_STATE_V1_DATABASE_CHECK = [
   "CHECK ((status = 'waiting') = (wait_reason IS NOT NULL))",
-  "CHECK ((phase = 'closed') = (terminal_reason IS NOT NULL AND terminal_reason <> ''))",
+  "CHECK (((phase = 'closed') = (terminal_reason IS NOT NULL)) AND (terminal_reason IS NULL OR terminal_reason <> ''))",
   `CHECK (meta_enqueue_reason IS NULL OR meta_enqueue_reason IN (${sqlList(META_ENQUEUE_REASONS_V1)}))`,
   "CHECK ((phase = 'meta_enqueued') = (meta_enqueue_reason IS NOT NULL))",
   `CHECK (\n  ${triggerProcessStateRowsSql.join("\n  OR ")}\n)`,

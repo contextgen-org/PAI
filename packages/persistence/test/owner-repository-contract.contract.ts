@@ -17,9 +17,11 @@ import {
   OWNER_DATABASE_TARGETS_V1,
   ownerDatabaseApplicationDependenciesV1,
   ownerFunctionSignatureV1,
+  ownerWriterArtifactV1,
   verifyOwnerDatabaseCheckDefinitionV1,
   verifyOwnerRepositoryDeploymentFromPostgresV1,
   verifyOwnerWriterDefinitionV1,
+  lintOwnerWriterDefinitionV1,
 } from "../src/index.js";
 
 const contracts = [
@@ -162,6 +164,8 @@ describe("owner repository contracts", () => {
         ["p_outcome", "text"],
         ["p_next_retry_at", "timestamptz"],
         ["p_error", "jsonb"],
+        ["p_transport_ref", "text"],
+        ["p_transport_epoch", "text"],
         ["p_now", "timestamptz"],
       ],
     } as const;
@@ -447,9 +451,15 @@ describe("owner repository contracts", () => {
     expect(() =>
       verifyOwnerDatabaseCheckDefinitionV1(
         terminalExpectation,
-        "CHECK ((phase = 'closed') = (terminal_reason IS NOT NULL AND terminal_reason <> ''))",
+        "CHECK (((phase = 'closed') = (terminal_reason IS NOT NULL)) AND (terminal_reason IS NULL OR terminal_reason <> ''))",
       ),
     ).not.toThrow();
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        terminalExpectation,
+        "CHECK ((phase = 'closed') = (terminal_reason IS NOT NULL AND terminal_reason <> ''))",
+      ),
+    ).toThrow(/CHECK constraint drift/u);
     expect(() =>
       verifyOwnerDatabaseCheckDefinitionV1(
         terminalExpectation,
@@ -754,7 +764,7 @@ describe("owner repository contracts", () => {
       $body$`;
 
     expect(() =>
-      verifyOwnerWriterDefinitionV1(
+      lintOwnerWriterDefinitionV1(
         MEMORY_REPOSITORY_CONTRACT_V1,
         signature,
         body("PERFORM pg_catalog.set_config('search_path', 'pg_temp', true);"),
@@ -762,7 +772,7 @@ describe("owner repository contracts", () => {
     ).toThrow(/search_path/u);
 
     expect(() =>
-      verifyOwnerWriterDefinitionV1(
+      lintOwnerWriterDefinitionV1(
         MEMORY_REPOSITORY_CONTRACT_V1,
         signature,
         body(""),
@@ -770,7 +780,7 @@ describe("owner repository contracts", () => {
     ).not.toThrow();
 
     expect(() =>
-      verifyOwnerWriterDefinitionV1(
+      lintOwnerWriterDefinitionV1(
         MEMORY_REPOSITORY_CONTRACT_V1,
         signature,
         body("").replaceAll(
@@ -779,6 +789,62 @@ describe("owner repository contracts", () => {
         ),
       ),
     ).toThrow(/unqualified|effect drift/u);
+  });
+
+  it("authorizes only the exact pai-infra writer artifact, not lexical proof lookalikes", () => {
+    const signature = ownerFunctionSignatureV1({
+      schema: "timer",
+      function_name: "artifact_bound_writer_v1",
+      primary_table: "timer_schedules",
+      writer_kind: "state_transition",
+      arguments: [["p_schedule_id", "text"]],
+      reads_tables: ["timer_schedules"],
+      writes_tables: ["timer_schedules"],
+      effects: [
+        {
+          table_name: "timer_schedules",
+          operation: "transition",
+          concurrency_control: "idempotency_key",
+        },
+      ],
+      returns: "jsonb",
+    });
+    const trustedBody = `BEGIN
+  UPDATE timer.timer_schedules SET status = 'paused'
+   WHERE id = p_schedule_id;
+  RETURN '{}'::jsonb;
+END;`;
+    const definition = (body: string) => `
+      CREATE FUNCTION timer.artifact_bound_writer_v1(p_schedule_id text)
+      RETURNS jsonb LANGUAGE plpgsql AS $writer$
+${body}
+$writer$`;
+    const contract = {
+      writer_artifacts: [
+        ownerWriterArtifactV1({
+          signature,
+          generator_source:
+            "pai-infra/supabase/generated/permissions/0300_timer.sql",
+          function_body: trustedBody,
+        }),
+      ],
+    };
+
+    expect(() =>
+      verifyOwnerWriterDefinitionV1(contract, signature, definition(trustedBody)),
+    ).not.toThrow();
+    for (const bypassBody of [
+      `IF CAST(2 AS integer) = 3 THEN\n${trustedBody}\nEND IF;`,
+      `DECLARE v_status text; BEGIN\nSELECT status INTO v_status FROM timer.timer_schedules LIMIT 1;\nPERFORM p_schedule_id = v_status;\n${trustedBody.slice("BEGIN\n".length)}`,
+      trustedBody.replace(
+        "UPDATE timer.timer_schedules",
+        "BEGIN RAISE EXCEPTION 'denied'; EXCEPTION WHEN OTHERS THEN NULL; END;\n  UPDATE timer.timer_schedules",
+      ),
+    ]) {
+      expect(() =>
+        verifyOwnerWriterDefinitionV1(contract, signature, definition(bypassBody)),
+      ).toThrow(/trusted PostgreSQL writer artifact drift/u);
+    }
   });
 
   it("rejects generic row locks as a slot/process admission fence", () => {
@@ -838,7 +904,7 @@ describe("owner repository contracts", () => {
         RETURN '{}'::jsonb;
       END $body$`;
     expect(() =>
-      verifyOwnerWriterDefinitionV1(
+      lintOwnerWriterDefinitionV1(
         TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
         signature,
         body(`
@@ -860,7 +926,7 @@ describe("owner repository contracts", () => {
       ),
     ).not.toThrow();
     expect(() =>
-      verifyOwnerWriterDefinitionV1(
+      lintOwnerWriterDefinitionV1(
         TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
         signature,
         body(`
@@ -879,7 +945,7 @@ describe("owner repository contracts", () => {
       ),
     ).toThrow(/slot\/process fence drift/);
     expect(() =>
-      verifyOwnerWriterDefinitionV1(
+      lintOwnerWriterDefinitionV1(
         TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
         signature,
         body(`
@@ -889,7 +955,7 @@ describe("owner repository contracts", () => {
       ),
     ).toThrow(/slot\/process fence drift/);
     expect(() =>
-      verifyOwnerWriterDefinitionV1(
+      lintOwnerWriterDefinitionV1(
         TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
         signature,
         body(`
@@ -903,7 +969,7 @@ describe("owner repository contracts", () => {
       ),
     ).toThrow(/unreachable relational proof|slot\/process fence drift/);
     expect(() =>
-      verifyOwnerWriterDefinitionV1(
+      lintOwnerWriterDefinitionV1(
         TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
         signature,
         body(`
@@ -920,7 +986,7 @@ describe("owner repository contracts", () => {
       ),
     ).toThrow(/unreachable relational proof|slot\/process fence drift/);
     expect(() =>
-      verifyOwnerWriterDefinitionV1(
+      lintOwnerWriterDefinitionV1(
         TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
         signature,
         body(`
@@ -1004,7 +1070,7 @@ describe("owner repository contracts", () => {
         RETURN '{}'::jsonb;
       END $body$`;
     expect(() =>
-      verifyOwnerWriterDefinitionV1(
+      lintOwnerWriterDefinitionV1(
         TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
         transitionSignature,
         partialExpectedBody,
@@ -1020,7 +1086,7 @@ describe("owner repository contracts", () => {
        RETURN '{}'::jsonb;`,
     );
     expect(() =>
-      verifyOwnerWriterDefinitionV1(
+      lintOwnerWriterDefinitionV1(
         TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
         transitionSignature,
         mergeBody,
@@ -1040,7 +1106,7 @@ describe("owner repository contracts", () => {
         END IF;`,
     );
     expect(() =>
-      verifyOwnerWriterDefinitionV1(
+      lintOwnerWriterDefinitionV1(
         TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
         transitionSignature,
         indirectExpectedCopyBody,
@@ -1061,7 +1127,7 @@ describe("owner repository contracts", () => {
         END IF;`,
     );
     expect(() =>
-      verifyOwnerWriterDefinitionV1(
+      lintOwnerWriterDefinitionV1(
         TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
         transitionSignature,
         constantFalseProofBody,
@@ -1073,7 +1139,7 @@ describe("owner repository contracts", () => {
       "IF 2::integer = 3::integer THEN",
     );
     expect(() =>
-      verifyOwnerWriterDefinitionV1(
+      lintOwnerWriterDefinitionV1(
         TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
         transitionSignature,
         castedConstantFalseProofBody,
@@ -1085,7 +1151,7 @@ describe("owner repository contracts", () => {
       "IF NULL THEN",
     );
     expect(() =>
-      verifyOwnerWriterDefinitionV1(
+      lintOwnerWriterDefinitionV1(
         TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
         transitionSignature,
         nullProofBody,
@@ -1097,7 +1163,7 @@ describe("owner repository contracts", () => {
       "IF 'a' = 'b' THEN",
     );
     expect(() =>
-      verifyOwnerWriterDefinitionV1(
+      lintOwnerWriterDefinitionV1(
         TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
         transitionSignature,
         stringFalseProofBody,
@@ -1110,7 +1176,7 @@ describe("owner repository contracts", () => {
        RETURN '{}'::jsonb;`,
     );
     expect(() =>
-      verifyOwnerWriterDefinitionV1(
+      lintOwnerWriterDefinitionV1(
         TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
         transitionSignature,
         coalesceOnlyProofBody,
@@ -1127,7 +1193,7 @@ describe("owner repository contracts", () => {
        RETURN '{}'::jsonb;`,
     );
     expect(() =>
-      verifyOwnerWriterDefinitionV1(
+      lintOwnerWriterDefinitionV1(
         TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
         transitionSignature,
         localConstantProofBody,
@@ -1141,7 +1207,7 @@ describe("owner repository contracts", () => {
            AND p.status IS DISTINCT FROM p.status;`,
     );
     expect(() =>
-      verifyOwnerWriterDefinitionV1(
+      lintOwnerWriterDefinitionV1(
         TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
         transitionSignature,
         selfDistinctPredicateBody,
@@ -1162,7 +1228,7 @@ describe("owner repository contracts", () => {
         $proof$;`,
     );
     expect(() =>
-      verifyOwnerWriterDefinitionV1(
+      lintOwnerWriterDefinitionV1(
         TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
         transitionSignature,
         dollarQuotedProofBody,

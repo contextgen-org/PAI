@@ -70,7 +70,9 @@ export interface OwnerFunctionEffectV1<TTable extends string = string> {
     | "cas"
     | "enqueue"
     | "claim"
-    | "ack";
+    | "ack"
+    | "redrive_claim"
+    | "redrive_ack";
   readonly concurrency_control:
     | "idempotency_key"
     | "expected_state_version"
@@ -97,6 +99,15 @@ export interface OwnerFunctionSignatureV1<
   readonly returns: "jsonb" | "setof jsonb";
   readonly security_definer: true;
   readonly search_path: readonly [TSchema, "pg_temp"];
+}
+
+export interface OwnerWriterArtifactV1<TWriter extends string = string> {
+  readonly artifact_version: "owner_writer_artifact.v1";
+  readonly generator: "pai-infra-owner-writer.v1";
+  readonly generator_source: string;
+  readonly function_name: TWriter;
+  readonly signature_fingerprint: string;
+  readonly function_body_sha256: string;
 }
 
 export interface OwnerForeignKeyV1<TTable extends string = string> {
@@ -335,6 +346,7 @@ export interface OwnerRepositoryContractV1<
   readonly table_permissions: readonly OwnerTablePermissionV1<TTable>[];
   readonly mutable_writers: readonly TWriter[];
   readonly function_signatures: TSignatures;
+  readonly writer_artifacts?: readonly OwnerWriterArtifactV1<TWriter>[];
   readonly foreign_key_snapshot: OwnerForeignKeySnapshotV1;
   readonly foreign_keys: readonly OwnerForeignKeyV1<TTable>[];
   readonly database_checks?: readonly OwnerDatabaseCheckV1<TTable>[];
@@ -374,6 +386,7 @@ const writerKinds = new Set<OwnerWriterKindV1>([
 ]);
 const effectOperations = new Set<OwnerFunctionEffectV1["operation"]>([
   "append", "upsert", "transition", "cas", "enqueue", "claim", "ack",
+  "redrive_claim", "redrive_ack",
 ]);
 const concurrencyControls = new Set<
   OwnerFunctionEffectV1["concurrency_control"]
@@ -395,7 +408,13 @@ const operationsByWriterKind: Readonly<
   pointer_cas: new Set(["cas"]),
   lease_fence: new Set(["cas", "claim", "ack", "transition"]),
   queue_claim_ack: new Set(["enqueue", "claim", "ack", "transition"]),
-  outbox_claim_ack: new Set(["enqueue", "claim", "ack"]),
+  outbox_claim_ack: new Set([
+    "enqueue",
+    "claim",
+    "ack",
+    "redrive_claim",
+    "redrive_ack",
+  ]),
 };
 
 function hasConcurrencyArgument(
@@ -507,6 +526,32 @@ export function ownerFunctionSignatureV1<
   Object.freeze(signature.effects);
   Object.freeze(signature.search_path);
   return Object.freeze(signature);
+}
+
+/**
+ * Defines the immutable digest emitted beside a pai-infra generated writer.
+ * Runtime verification compares PostgreSQL pg_proc.prosrc byte-for-byte after
+ * newline normalization; it never attempts to prove arbitrary PL/pgSQL with
+ * token or regular-expression heuristics.
+ */
+export function ownerWriterArtifactV1<
+  const TWriter extends string,
+>(input: Readonly<{
+  signature: OwnerFunctionSignatureV1<string, string, TWriter>;
+  generator_source: string;
+  function_body: string;
+}>): OwnerWriterArtifactV1<TWriter> {
+  if (!generatedPermissionPattern.test(input.generator_source)) {
+    throw new Error("owner writer artifact must originate from pai-infra generated SQL");
+  }
+  return Object.freeze({
+    artifact_version: "owner_writer_artifact.v1" as const,
+    generator: "pai-infra-owner-writer.v1" as const,
+    generator_source: input.generator_source,
+    function_name: input.signature.function_name,
+    signature_fingerprint: `sha256:${fingerprint(input.signature)}`,
+    function_body_sha256: writerSourceSha256(input.function_body),
+  });
 }
 
 export function defineOwnerRepositoryContractV1<
@@ -899,6 +944,36 @@ export function defineOwnerRepositoryContractV1<
       `${contract.owner_service} tables without an atomic writer: ${tablesWithoutWriter.join(", ")}`,
     );
   }
+  if (contract.writer_artifacts !== undefined) {
+    const artifactsByName = new Map(
+      contract.writer_artifacts.map((artifact) => [artifact.function_name, artifact]),
+    );
+    if (
+      artifactsByName.size !== contract.function_signatures.length ||
+      contract.writer_artifacts.length !== contract.function_signatures.length
+    ) {
+      throw new Error(
+        `${contract.owner_service} writer_artifacts must cover every generated writer exactly once`,
+      );
+    }
+    for (const signature of contract.function_signatures) {
+      const artifact = artifactsByName.get(signature.function_name);
+      if (
+        artifact === undefined ||
+        artifact.artifact_version !== "owner_writer_artifact.v1" ||
+        artifact.generator !== "pai-infra-owner-writer.v1" ||
+        !generatedPermissionPattern.test(artifact.generator_source) ||
+        !contract.generated_permission_sql.includes(artifact.generator_source) ||
+        artifact.signature_fingerprint !== `sha256:${fingerprint(signature)}` ||
+        !/^sha256:[0-9a-f]{64}$/u.test(artifact.function_body_sha256)
+      ) {
+        throw new Error(
+          `invalid trusted writer artifact: ${contract.schema}.${signature.function_name}`,
+        );
+      }
+      Object.freeze(artifact);
+    }
+  }
   for (const [label, tables] of [
     ["outbox_tables", contract.outbox_tables],
     ["inbox_tables", contract.inbox_tables],
@@ -1040,6 +1115,8 @@ export function defineOwnerRepositoryContractV1<
       ["p_outcome", "text"],
       ["p_next_retry_at", "timestamptz"],
       ["p_error", "jsonb"],
+      ["p_transport_ref", "text"],
+      ["p_transport_epoch", "text"],
       ["p_now", "timestamptz"],
     ],
   } as const;
@@ -1158,6 +1235,16 @@ function staticFunctionBody(definition: string): string {
     throw new Error("owner writer function body must use a static dollar-quoted definition");
   }
   return bodyMatch[2];
+}
+
+function canonicalWriterSource(value: string): string {
+  return value.replace(/\r\n?/gu, "\n").trim();
+}
+
+function writerSourceSha256(value: string): string {
+  return `sha256:${createHash("sha256")
+    .update(canonicalWriterSource(value), "utf8")
+    .digest("hex")}`;
 }
 
 function stripDollarQuotedStringLiterals(value: string): string {
@@ -1905,11 +1992,10 @@ function assertFunctionEffectsInDefinition(
 }
 
 /**
- * Performs the same static writer-body verification used by the live catalog
- * verifier. pai-infra can call this while generating a migration, before the
- * function is applied to PostgreSQL.
+ * Defense-in-depth lint for pai-infra generation. This heuristic must never be
+ * used to mint a VerifiedOwnerRepositoryDeploymentV1 capability.
  */
-export function verifyOwnerWriterDefinitionV1(
+export function lintOwnerWriterDefinitionV1(
   contract: OwnerRepositoryContractV1,
   signature: OwnerFunctionSignatureV1,
   definition: string,
@@ -1920,6 +2006,50 @@ export function verifyOwnerWriterDefinitionV1(
     definition,
     new Set([signature.function_name]),
   );
+}
+
+function trustedWriterArtifact(
+  contract: Pick<OwnerRepositoryContractV1, "writer_artifacts">,
+  signature: OwnerFunctionSignatureV1,
+): OwnerWriterArtifactV1 {
+  const artifact = contract.writer_artifacts?.find(
+    ({ function_name }) => function_name === signature.function_name,
+  );
+  if (artifact === undefined) {
+    throw new Error(
+      `trusted pai-infra writer artifact is required: ${signature.schema}.${signature.function_name}`,
+    );
+  }
+  return artifact;
+}
+
+function verifyOwnerWriterSourceV1(
+  contract: Pick<OwnerRepositoryContractV1, "writer_artifacts">,
+  signature: OwnerFunctionSignatureV1,
+  functionSource: string,
+): void {
+  const artifact = trustedWriterArtifact(contract, signature);
+  if (
+    artifact.signature_fingerprint !== `sha256:${fingerprint(signature)}` ||
+    writerSourceSha256(functionSource) !== artifact.function_body_sha256
+  ) {
+    throw new Error(
+      `trusted PostgreSQL writer artifact drift: ${signature.schema}.${signature.function_name}`,
+    );
+  }
+}
+
+/**
+ * Verifies a complete CREATE FUNCTION definition against its version-pinned
+ * pai-infra artifact. Any source change, including unreachable or swallowed
+ * proof scaffolding, changes the digest and fails closed.
+ */
+export function verifyOwnerWriterDefinitionV1(
+  contract: Pick<OwnerRepositoryContractV1, "writer_artifacts">,
+  signature: OwnerFunctionSignatureV1,
+  definition: string,
+): void {
+  verifyOwnerWriterSourceV1(contract, signature, staticFunctionBody(definition));
 }
 
 function checkTextLiterals(definition: string): readonly string[] {
@@ -2133,13 +2263,22 @@ function matchesIffNotNull(
 ): boolean {
   const value = escapeRegularExpression(conditionEquals.replace(/'/gu, "''"));
   const conditionPattern = `\\(?\\s*\\b${conditionColumn}\\b\\s*=\\s*'${value}'${postgresTextCastPattern}\\s*\\)?`;
-  const notNullPattern = requireNonEmpty
-    ? `\\(?\\s*\\b${column}\\b\\s+is\\s+not\\s+null\\s+and\\s+\\b${column}\\b\\s*<>\\s*''${postgresTextCastPattern}\\s*\\)?`
-    : `\\(?\\s*\\b${column}\\b\\s+is\\s+not\\s+null\\s*\\)?`;
-  return new RegExp(
+  const notNullPattern = `\\(?\\s*\\b${column}\\b\\s+is\\s+not\\s+null\\s*\\)?`;
+  const iffPattern = new RegExp(
     `^\\(?\\s*(?:${conditionPattern}\\s*=\\s*${notNullPattern}|${notNullPattern}\\s*=\\s*${conditionPattern})\\s*\\)?$`,
     "iu",
-  ).test(expression);
+  );
+  if (!requireNonEmpty) return iffPattern.test(expression);
+  const terms = splitCheckConjunction(expression);
+  const nonEmptyPattern = new RegExp(
+    `^\\(?\\s*(?:\\b${column}\\b\\s+is\\s+null\\s+or\\s+\\b${column}\\b\\s*<>\\s*''${postgresTextCastPattern})\\s*\\)?$`,
+    "iu",
+  );
+  return (
+    terms.length === 2 &&
+    terms.some((term) => iffPattern.test(term)) &&
+    terms.some((term) => nonEmptyPattern.test(term))
+  );
 }
 
 function matchesRequiredJsonKeys(
@@ -2379,6 +2518,14 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
   if (contract.database_indexes === undefined) {
     throw new Error(
       `canonical PostgreSQL pg_index snapshot is required for live owner verification: ${contract.owner_service}`,
+    );
+  }
+  if (
+    contract.writer_artifacts === undefined ||
+    contract.writer_artifacts.length !== contract.function_signatures.length
+  ) {
+    throw new Error(
+      `version-pinned pai-infra writer artifacts are required for live owner verification: ${contract.owner_service}`,
     );
   }
   const schemaResult = await postgres.query<{
@@ -2798,6 +2945,7 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     result_type: string;
     language_name: string;
     function_definition: string;
+    function_source: string;
   }>(
     `SELECT p.oid::text AS oid, p.proname AS function_name,
             pg_get_userbyid(p.proowner) AS function_owner,
@@ -2809,7 +2957,8 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
             p.proretset AS returns_set,
             pg_catalog.format_type(p.prorettype, NULL) AS result_type,
             language.lanname AS language_name,
-            pg_catalog.pg_get_functiondef(p.oid) AS function_definition
+            pg_catalog.pg_get_functiondef(p.oid) AS function_definition,
+            p.prosrc AS function_source
        FROM pg_catalog.pg_proc p
        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
        JOIN pg_catalog.pg_language language ON language.oid = p.prolang
@@ -2818,9 +2967,6 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
   );
   const postgresType = (type: OwnerPostgresTypeV1): string =>
     type === "timestamptz" ? "timestamp with time zone" : type;
-  const ownerFunctionNames = new Set(
-    functionResult.rows.map(({ function_name }) => function_name),
-  );
   for (const signature of contract.function_signatures) {
     const deployed = functionResult.rows.find(
       ({ function_name }) => function_name === signature.function_name,
@@ -2841,12 +2987,7 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     ) {
       throw new Error(`PostgreSQL function signature/security drift: ${contract.schema}.${signature.function_name}`);
     }
-    assertFunctionEffectsInDefinition(
-      contract,
-      signature,
-      deployed.function_definition,
-      ownerFunctionNames,
-    );
+    verifyOwnerWriterSourceV1(contract, signature, deployed.function_source);
   }
 
   const executeGrantResult = await postgres.query<{
@@ -3295,6 +3436,8 @@ export interface OwnerOutboxAcknowledgeRequestV1 {
   readonly outcome: "sent" | "retry_wait" | "failed";
   readonly next_retry_at: string | null;
   readonly error: Readonly<Record<string, unknown>> | null;
+  readonly transport_ref: string | null;
+  readonly transport_epoch: string | null;
   readonly now: string;
 }
 
@@ -3335,6 +3478,21 @@ export interface OwnerUnitOfWorkPortV1<
 
 function postgresArgumentCast(type: OwnerPostgresTypeV1): string {
   return type === "timestamptz" ? "timestamp with time zone" : type;
+}
+
+function postgresArgumentValue(
+  type: OwnerPostgresTypeV1,
+  value: unknown,
+): unknown {
+  if (value === undefined) {
+    throw new Error("owner writer argument must be explicitly present or null");
+  }
+  if (type !== "jsonb" || value === null) return value;
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    throw new Error("owner writer jsonb argument is not JSON-serializable");
+  }
+  return serialized;
 }
 
 function isSerializationFailure(error: unknown): boolean {
@@ -3473,7 +3631,8 @@ export function createVerifiedOwnerPostgresRepositoryV1<
         Record<string, unknown>
       >;
       const values = signature.arguments.map(
-        ({ argument_name }) => argumentRecord[argument_name],
+        ({ argument_name, postgres_type }) =>
+          postgresArgumentValue(postgres_type, argumentRecord[argument_name]),
       );
       if (
         Object.keys(argumentRecord).length !== signature.arguments.length ||
@@ -3563,6 +3722,7 @@ export function createVerifiedOwnerPostgresRepositoryV1<
       ): Promise<TResult> {
         assertOutboxRequest(request);
         const retryWait = request.outcome === "retry_wait";
+        const sent = request.outcome === "sent";
         if (
           !(["sent", "retry_wait", "failed"] as const).includes(
             request.outcome,
@@ -3576,7 +3736,14 @@ export function createVerifiedOwnerPostgresRepositoryV1<
           (request.outcome !== "sent" &&
             (typeof request.error !== "object" ||
               request.error === null ||
-              Array.isArray(request.error)))
+              Array.isArray(request.error))) ||
+          sent !==
+            (request.transport_ref !== null &&
+              request.transport_epoch !== null) ||
+          (request.transport_ref !== null &&
+            request.transport_ref.trim().length === 0) ||
+          (request.transport_epoch !== null &&
+            request.transport_epoch.trim().length === 0)
         ) {
           throw new Error("invalid owner outbox acknowledge request");
         }
@@ -3590,6 +3757,8 @@ export function createVerifiedOwnerPostgresRepositoryV1<
             request.outcome,
             request.next_retry_at,
             request.error,
+            request.transport_ref,
+            request.transport_epoch,
             request.now,
           ]);
           await client.query("COMMIT");

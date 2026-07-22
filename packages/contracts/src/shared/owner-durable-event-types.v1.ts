@@ -10,6 +10,8 @@ import {
 import { DeploymentEnvironmentV1Schema } from "./deployment-environment.v1.js";
 import { ReleaseChannelV1Schema } from "./release-channel.v1.js";
 import { SERVICE_IDS, type ServiceIdV1 } from "./service-id.v1.js";
+import { TypedEvidenceRefV1Schema } from "./typed-evidence-ref.v1.js";
+import { TerminalOutcomeV1Schema } from "../trigger-processor/trigger-process-state.v1.js";
 
 export type DurableEventOwnerServiceIdV1 = Exclude<
   ServiceIdV1,
@@ -244,14 +246,6 @@ const triggerPhase = Type.Union([
   Type.Literal("meta_enqueued"),
   Type.Literal("closed"),
 ]);
-const terminalOutcome = Type.Union([
-  Type.Literal("completed"),
-  Type.Literal("cancelled_with_reason"),
-  Type.Literal("interrupted_with_reason"),
-  Type.Literal("failed_with_reason"),
-  Type.Literal("preempted_and_handed_off"),
-  Type.Literal("superseded_by_later_trigger"),
-]);
 const reviewDecision = Type.Union([
   Type.Literal("accepted"),
   Type.Literal("rejected"),
@@ -275,7 +269,6 @@ const globalScopeProperties = {
 
 function schemaForPayloadKey(key: string): TSchema {
   if (key === "phase") return triggerPhase;
-  if (key === "outcome") return terminalOutcome;
   if (key === "decision") return reviewDecision;
   if (key === "revocation_epoch" || key.endsWith("_version")) {
     return boundedInteger;
@@ -333,7 +326,7 @@ export const OWNER_DURABLE_EVENT_CONTRACTS_V1 = Object.freeze({
     "trigger_process.outcome_finalized": triggerEvent([
       "trigger_process_id",
       "outcome",
-    ]),
+    ], { outcome: TerminalOutcomeV1Schema }),
   }),
   action_runtime: Object.freeze({
     "runtime.run.started": runtimeEvent(["runtime_run_id"]),
@@ -423,7 +416,23 @@ export const OWNER_DURABLE_EVENT_CONTRACTS_V1 = Object.freeze({
     ]),
     "meta.feedback.required": metaEvent(["feedback_request_id"]),
     "meta.result.updated": metaEvent(["meta_job_id"]),
-    "meta.result.finalized": metaEvent(["meta_job_id", "outcome"]),
+    "meta.result.finalized": metaEvent(
+      [
+        "meta_result_id",
+        "meta_job_id",
+        "result_version",
+        "result_status",
+        "finalized_at",
+      ],
+      triggerProcessorConsumer,
+      {
+        result_version: boundedInteger,
+        result_status: Type.Union([
+          Type.Literal("complete"),
+          Type.Literal("partial_failed"),
+        ]),
+      },
+    ),
     "meta.job.completed": metaEvent(["meta_job_id"]),
     "meta.job.failed": metaEvent(["meta_job_id", "error_code"]),
   }),
@@ -460,7 +469,45 @@ export const OWNER_DURABLE_EVENT_CONTRACTS_V1 = Object.freeze({
     "memory.series.updated": memoryEvent(["series_id"]),
     "memory.conflict.detected": memoryEvent(["conflict_id"]),
     "memory.conflict.updated": memoryEvent(["conflict_id"]),
-    "memory.integration.finished": memoryEvent(["integration_job_id", "outcome"]),
+    "memory.integration.finished": eventContract(
+      "memory_event.v1",
+      [
+        "integration_job_id",
+        "aggregate_id",
+        "aggregate_version",
+        "aggregate_type",
+        "mode",
+        "status",
+        "checkpoint_ref",
+        "applied_counts",
+        "failure_refs",
+      ],
+      metaConsumer,
+      {
+        fields: {
+          status: Type.Union([
+            Type.Literal("completed"),
+            Type.Literal("partial_failed"),
+            Type.Literal("failed"),
+          ]),
+          aggregate_version: Type.Integer({
+            minimum: 1,
+            maximum: 9_007_199_254_740_991,
+          }),
+          aggregate_type: Type.Literal("integration_job"),
+          checkpoint_ref: Type.Optional(nonEmptyPayloadString),
+          applied_counts: Type.Record(
+            Type.String({ pattern: "^[a-z][a-z0-9_]*$" }),
+            boundedInteger,
+            { additionalProperties: false },
+          ),
+          failure_refs: Type.Array(TypedEvidenceRefV1Schema, {
+            maxItems: 1_000,
+            uniqueItems: true,
+          }),
+        },
+      },
+    ),
   }),
 } as const satisfies OwnerDurableEventContractMapV1);
 
@@ -533,6 +580,16 @@ export function assertOwnerDurableEventEnvelopeV1(
           (issue) =>
             `/payload${issue.path || ""}: ${issue.message}`,
         ),
+      );
+    } else if (
+      value.event_type === "memory.integration.finished" &&
+      typeof value.payload === "object" &&
+      value.payload !== null &&
+      (value.payload as Readonly<Record<string, unknown>>).aggregate_id !==
+        (value.payload as Readonly<Record<string, unknown>>).integration_job_id
+    ) {
+      issues.push(
+        "/payload/aggregate_id: must equal integration_job_id for the integration aggregate",
       );
     }
   }

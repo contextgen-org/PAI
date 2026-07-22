@@ -1041,17 +1041,30 @@
               "type": "string"
             },
             "outcome": {
+              "$id": "urn:pai:trigger-processor:terminal-outcome:v1",
               "anyOf": [
                 {
-                  "const": "completed",
+                  "const": "executed",
+                  "type": "string"
+                },
+                {
+                  "const": "merged_and_executed",
+                  "type": "string"
+                },
+                {
+                  "const": "superseded_by_later_trigger",
+                  "type": "string"
+                },
+                {
+                  "const": "deferred_then_executed",
+                  "type": "string"
+                },
+                {
+                  "const": "expired_with_audit_record",
                   "type": "string"
                 },
                 {
                   "const": "cancelled_with_reason",
-                  "type": "string"
-                },
-                {
-                  "const": "interrupted_with_reason",
                   "type": "string"
                 },
                 {
@@ -1063,7 +1076,7 @@
                   "type": "string"
                 },
                 {
-                  "const": "superseded_by_later_trigger",
+                  "const": "interrupted_with_reason",
                   "type": "string"
                 }
               ]
@@ -6730,8 +6743,11 @@
             "owner_agent_id",
             "deployment_environment",
             "release_channel",
+            "meta_result_id",
             "meta_job_id",
-            "outcome"
+            "result_version",
+            "result_status",
+            "finalized_at"
           ],
           "properties": {
             "scope_kind": {
@@ -6787,38 +6803,38 @@
                 }
               ]
             },
+            "meta_result_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
             "meta_job_id": {
               "minLength": 1,
               "maxLength": 512,
               "type": "string"
             },
-            "outcome": {
+            "result_version": {
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "result_status": {
               "anyOf": [
                 {
-                  "const": "completed",
+                  "const": "complete",
                   "type": "string"
                 },
                 {
-                  "const": "cancelled_with_reason",
-                  "type": "string"
-                },
-                {
-                  "const": "interrupted_with_reason",
-                  "type": "string"
-                },
-                {
-                  "const": "failed_with_reason",
-                  "type": "string"
-                },
-                {
-                  "const": "preempted_and_handed_off",
-                  "type": "string"
-                },
-                {
-                  "const": "superseded_by_later_trigger",
+                  "const": "partial_failed",
                   "type": "string"
                 }
               ]
+            },
+            "finalized_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
             }
           }
         }
@@ -10044,7 +10060,13 @@
             "deployment_environment",
             "release_channel",
             "integration_job_id",
-            "outcome"
+            "aggregate_id",
+            "aggregate_version",
+            "aggregate_type",
+            "mode",
+            "status",
+            "applied_counts",
+            "failure_refs"
           ],
           "properties": {
             "scope_kind": {
@@ -10105,33 +10127,67 @@
               "maxLength": 512,
               "type": "string"
             },
-            "outcome": {
+            "aggregate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "aggregate_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "aggregate_type": {
+              "const": "integration_job",
+              "type": "string"
+            },
+            "mode": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "status": {
               "anyOf": [
                 {
                   "const": "completed",
                   "type": "string"
                 },
                 {
-                  "const": "cancelled_with_reason",
+                  "const": "partial_failed",
                   "type": "string"
                 },
                 {
-                  "const": "interrupted_with_reason",
-                  "type": "string"
-                },
-                {
-                  "const": "failed_with_reason",
-                  "type": "string"
-                },
-                {
-                  "const": "preempted_and_handed_off",
-                  "type": "string"
-                },
-                {
-                  "const": "superseded_by_later_trigger",
+                  "const": "failed",
                   "type": "string"
                 }
               ]
+            },
+            "checkpoint_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "applied_counts": {
+              "additionalProperties": false,
+              "type": "object",
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                }
+              }
+            },
+            "failure_refs": {
+              "maxItems": 1000,
+              "uniqueItems": true,
+              "type": "array",
+              "items": {
+                "$id": "urn:pai:shared:typed-evidence-ref:v1",
+                "minLength": 3,
+                "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+                "type": "string"
+              }
             }
           }
         }

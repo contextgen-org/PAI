@@ -247,7 +247,7 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
       arguments: [
         ["p_outbox_id", "text"], ["p_claim_token", "text"],
         ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"],
-        ["p_error", "jsonb"], ["p_now", "timestamptz"],
+        ["p_error", "jsonb"], ["p_transport_ref", "text"], ["p_transport_epoch", "text"], ["p_now", "timestamptz"],
       ],
       reads_tables: ["timer_event_outbox"],
       writes_tables: ["timer_event_outbox", "timer_event_dlq"],

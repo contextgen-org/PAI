@@ -42,9 +42,10 @@ describe("Redis Stream transport V1", () => {
       deployment_environment: "dev",
       release_channel: "canary",
       owner_service: "timer_trigger_app",
+      stream_epoch: "epoch_20260722",
     });
     expect(namespacedRedisKeyV1(namespace, "stream:timer_events")).toBe(
-      "pai:dev:canary:timer_trigger_app:v1:stream:timer_events",
+      "pai:dev:canary:timer_trigger_app:v1:epoch_20260722:stream:timer_events",
     );
     expect(() => namespacedRedisKeyV1(namespace, "../escape")).toThrow();
     expect(() =>
@@ -52,6 +53,7 @@ describe("Redis Stream transport V1", () => {
         deployment_environment: "dev:escape",
         release_channel: "canary",
         owner_service: "timer_trigger_app",
+        stream_epoch: "epoch_20260722",
       } as never),
     ).toThrow(/namespace identity/);
   });
@@ -126,6 +128,7 @@ describe("Redis Stream transport V1", () => {
       deployment_environment: "dev",
       release_channel: "stable",
       owner_service: "memory",
+      stream_epoch: "epoch_20260722",
     });
     await expect(
       openVerifiedRedisStreamCompositionV1({
@@ -164,6 +167,12 @@ describe("Redis Stream transport V1", () => {
   });
 
   it("reads, reclaims and acknowledges through Redis consumer-group commands", async () => {
+    const namespace = createRedisNamespaceV1({
+      deployment_environment: "dev",
+      release_channel: "stable",
+      owner_service: "timer_trigger_app",
+      stream_epoch: "epoch_20260722",
+    });
     const commands: string[][] = [];
     const client = {
       async sendCommand(args: readonly string[]): Promise<unknown> {
@@ -174,7 +183,7 @@ describe("Redis Stream transport V1", () => {
         if (args[0] === "XREADGROUP") {
           return [
             [
-              "pai:dev:stable:timer_trigger_app:v1:stream:timer_events",
+              "pai:dev:stable:timer_trigger_app:v1:epoch_20260722:stream:timer_events",
               [
                 [
                   "1-0",
@@ -186,9 +195,9 @@ describe("Redis Stream transport V1", () => {
         }
         if (args[0] === "XAUTOCLAIM") {
           return [
-            "0-0",
+            "5-0",
             [["1-0", Object.entries(buildRedisStreamMessageV1(envelope)).flat()]],
-            [],
+            ["0-9"],
           ];
         }
         if (args[0] === "XACK") return 1;
@@ -196,13 +205,20 @@ describe("Redis Stream transport V1", () => {
       },
     };
     const consumer = createRedisStreamConsumerGroupPortV1(client, {
-      stream: "pai:dev:stable:timer_trigger_app:v1:stream:timer_events",
+      stream: "pai:dev:stable:timer_trigger_app:v1:epoch_20260722:stream:timer_events",
       group: "trigger_processor",
       consumer: "worker_001",
+      namespace,
     });
     await expect(consumer.ensureGroup()).resolves.toBeUndefined();
     await expect(consumer.readNew({ count: 10, block_ms: 0 })).resolves.toEqual([
-      { delivery_id: "1-0", envelope },
+      {
+        kind: "event",
+        delivery_id: "1-0",
+        delivery_ref:
+          "pai:dev:stable:timer_trigger_app:v1:epoch_20260722:stream:timer_events#1-0",
+        envelope,
+      },
     ]);
     await expect(
       consumer.reclaimPending({
@@ -210,7 +226,17 @@ describe("Redis Stream transport V1", () => {
         count: 10,
         start_id: "0-0",
       }),
-    ).resolves.toEqual([{ delivery_id: "1-0", envelope }]);
+    ).resolves.toEqual({
+      next_start_id: "5-0",
+      deliveries: [{
+        kind: "event",
+        delivery_id: "1-0",
+        delivery_ref:
+          "pai:dev:stable:timer_trigger_app:v1:epoch_20260722:stream:timer_events#1-0",
+        envelope,
+      }],
+      deleted_ids: ["0-9"],
+    });
     await expect(
       consumer.acknowledge({ delivery_ids: ["1-0"] }),
     ).resolves.toEqual({ acknowledged: 1 });
@@ -220,5 +246,79 @@ describe("Redis Stream transport V1", () => {
       "XAUTOCLAIM",
       "XACK",
     ]);
+  });
+
+  it("materializes malformed and valid Redis siblings independently", async () => {
+    const namespace = createRedisNamespaceV1({
+      deployment_environment: "dev",
+      release_channel: "stable",
+      owner_service: "timer_trigger_app",
+      stream_epoch: "epoch_20260722",
+    });
+    const validFields = Object.entries(buildRedisStreamMessageV1(envelope)).flat();
+    const invalidFields = [...validFields];
+    invalidFields[invalidFields.indexOf("payload") + 1] = "{";
+    const duplicateFields = [...validFields];
+    duplicateFields[0] = "payload";
+    const wrongScopeFields = Object.entries(
+      buildRedisStreamMessageV1({
+        ...envelope,
+        event_id: "evt_timer_scope_drift",
+        payload: {
+          ...envelope.payload,
+          deployment_environment: "prod",
+          release_channel: "canary",
+        },
+      }),
+    ).flat();
+    const consumer = createRedisStreamConsumerGroupPortV1(
+      {
+        async sendCommand(args) {
+          if (args[0] === "XREADGROUP") {
+            return [[
+              namespacedRedisKeyV1(namespace, "stream:timer_events"),
+              [
+                ["1-0", invalidFields],
+                ["2-0", validFields],
+                ["3-0", wrongScopeFields],
+                ["4-0", duplicateFields],
+              ],
+            ]];
+          }
+          if (args[0] === "XACK") return args.length - 3;
+          return "OK";
+        },
+      },
+      {
+        stream: namespacedRedisKeyV1(namespace, "stream:timer_events"),
+        group: "trigger_processor",
+        consumer: "worker_001",
+        namespace,
+      },
+    );
+    const deliveries = await consumer.readNew({ count: 10, block_ms: 0 });
+    expect(deliveries).toHaveLength(4);
+    expect(deliveries[0]).toMatchObject({
+      kind: "invalid",
+      delivery_id: "1-0",
+      error_code: "invalid_json",
+    });
+    expect(deliveries[1]).toEqual({
+      kind: "event",
+      delivery_id: "2-0",
+      delivery_ref:
+        "pai:dev:stable:timer_trigger_app:v1:epoch_20260722:stream:timer_events#2-0",
+      envelope,
+    });
+    expect(deliveries[2]).toMatchObject({
+      kind: "invalid",
+      delivery_id: "3-0",
+      error_code: "namespace_mismatch",
+    });
+    expect(deliveries[3]).toMatchObject({
+      kind: "invalid",
+      delivery_id: "4-0",
+      error_code: "malformed_stream_fields",
+    });
   });
 });

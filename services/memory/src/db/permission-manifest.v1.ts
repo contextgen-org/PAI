@@ -499,7 +499,7 @@ export const MEMORY_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
       function_name: "ack_memory_event_outbox_v1",
       primary_table: "memory_event_outbox",
       writer_kind: "outbox_claim_ack",
-      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_now", "timestamptz"]], reads_tables: ["memory_event_outbox"], writes_tables: ["memory_event_outbox", "memory_event_dlq"], returns: "jsonb",
+      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_transport_ref", "text"], ["p_transport_epoch", "text"], ["p_now", "timestamptz"]], reads_tables: ["memory_event_outbox"], writes_tables: ["memory_event_outbox", "memory_event_dlq"], returns: "jsonb",
       effects: [
         { table_name: "memory_event_outbox", operation: "ack", concurrency_control: "lease_fence" },
         { table_name: "memory_event_dlq", operation: "append", concurrency_control: "idempotency_key" },
@@ -518,7 +518,7 @@ export const MEMORY_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
       function_name: "ack_memory_command_outbox_v1",
       primary_table: "memory_command_outbox",
       writer_kind: "outbox_claim_ack",
-      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_now", "timestamptz"]], reads_tables: ["memory_command_outbox"], writes_tables: ["memory_command_outbox", "memory_command_dlq"], returns: "jsonb",
+      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_transport_ref", "text"], ["p_transport_epoch", "text"], ["p_now", "timestamptz"]], reads_tables: ["memory_command_outbox"], writes_tables: ["memory_command_outbox", "memory_command_dlq"], returns: "jsonb",
       effects: [
         { table_name: "memory_command_outbox", operation: "ack", concurrency_control: "lease_fence" },
         { table_name: "memory_command_dlq", operation: "append", concurrency_control: "idempotency_key" },

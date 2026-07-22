@@ -1,22 +1,37 @@
 import { Pool } from "pg";
+import { createClient } from "redis";
 import { afterAll, describe, expect, it } from "vitest";
 
 import {
   defineOwnerRepositoryContractV1,
   openVerifiedOwnerPostgresCompositionV1,
   ownerFunctionSignatureV1,
+  ownerWriterArtifactV1,
 } from "@pai/persistence";
 
 import {
   canonicalDurableEventEnvelopeSemanticHashV1,
   canonicalPayloadHashV1,
   durableEventScopeFingerprintV1,
+  createDurableEventConsumerWorkerV1,
+  createDurableInboxConsumerV1,
   createDurableOutboxDispatcherV1,
+  createDurableSentOutboxRedriverV1,
   createPostgresOwnerOutboxStoreV1,
+  createRedisNamespaceV1,
+  createRedisStreamConsumerGroupPortV1,
+  namespacedRedisKeyV1,
+  openVerifiedRedisStreamCompositionV1,
+  type DurableEventDeliveryConsumerPortV1,
+  type ClaimedSentOutboxRecordV1,
+  type DurableSentOutboxRedriveStorePortV1,
   type DurableEventTransportPortV1,
 } from "../src/index.js";
 
 const databaseUrl = process.env.PAI_TEST_DATABASE_URL;
+const redisUrl = process.env.PAI_TEST_REDIS_URL;
+const itPostgresRedis =
+  databaseUrl === undefined || redisUrl === undefined ? it.skip : it;
 
 function eventingColumn<const TTable extends string>(
   table_name: TTable,
@@ -36,7 +51,7 @@ function eventingColumn<const TTable extends string>(
   };
 }
 
-const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
+const EVENTING_CONTRACT_INPUT = {
   contract_version: "owner_repository_contract.v1",
   owner_service: "skill_registry",
   schema: "skill_registry",
@@ -74,6 +89,13 @@ const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
         "claim_token",
         "locked_until",
         "last_error",
+        "transport_ref",
+        "transport_epoch",
+        "sent_at",
+        "redrive_claimed_by",
+        "redrive_claim_token",
+        "redrive_claim_generation",
+        "redrive_locked_until",
         "created_at",
         "updated_at",
       ],
@@ -152,6 +174,9 @@ const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
     "claim_eventing_outbox_v1",
     "ack_eventing_outbox_v1",
     "consume_eventing_inbox_v1",
+    "record_eventing_consumer_dlq_v1",
+    "claim_sent_eventing_outbox_redrive_v1",
+    "ack_sent_eventing_outbox_redrive_v1",
   ],
   function_signatures: [
     ownerFunctionSignatureV1({
@@ -208,6 +233,8 @@ const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
         ["p_outcome", "text"],
         ["p_next_retry_at", "timestamptz"],
         ["p_error", "jsonb"],
+        ["p_transport_ref", "text"],
+        ["p_transport_epoch", "text"],
         ["p_now", "timestamptz"],
       ],
       reads_tables: ["eventing_outbox"],
@@ -255,6 +282,85 @@ const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
           table_name: "eventing_audit",
           operation: "append",
           concurrency_control: "idempotency_key",
+        },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "skill_registry",
+      function_name: "record_eventing_consumer_dlq_v1",
+      primary_table: "eventing_dlq",
+      writer_kind: "immutable_append",
+      arguments: [
+        ["p_delivery_id", "text"],
+        ["p_delivery_ref", "text"],
+        ["p_consumer_service", "text"],
+        ["p_failure_code", "text"],
+        ["p_failure_message", "text"],
+        ["p_raw_fields", "jsonb"],
+        ["p_envelope", "jsonb"],
+        ["p_now", "timestamptz"],
+      ],
+      reads_tables: ["eventing_dlq"],
+      writes_tables: ["eventing_dlq", "eventing_audit"],
+      effects: [
+        {
+          table_name: "eventing_dlq",
+          operation: "append",
+          concurrency_control: "idempotency_key",
+        },
+        {
+          table_name: "eventing_audit",
+          operation: "append",
+          concurrency_control: "idempotency_key",
+        },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "skill_registry",
+      function_name: "claim_sent_eventing_outbox_redrive_v1",
+      primary_table: "eventing_outbox",
+      writer_kind: "outbox_claim_ack",
+      arguments: [
+        ["p_worker_id", "text"],
+        ["p_limit", "integer"],
+        ["p_lease_seconds", "integer"],
+        ["p_now", "timestamptz"],
+        ["p_sent_after", "timestamptz"],
+        ["p_current_transport_epoch", "text"],
+      ],
+      reads_tables: ["eventing_outbox"],
+      writes_tables: ["eventing_outbox"],
+      effects: [
+        {
+          table_name: "eventing_outbox",
+          operation: "redrive_claim",
+          concurrency_control: "lease_fence",
+        },
+      ],
+      returns: "setof jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "skill_registry",
+      function_name: "ack_sent_eventing_outbox_redrive_v1",
+      primary_table: "eventing_outbox",
+      writer_kind: "outbox_claim_ack",
+      arguments: [
+        ["p_outbox_id", "text"],
+        ["p_claim_token", "text"],
+        ["p_previous_transport_epoch", "text"],
+        ["p_transport_ref", "text"],
+        ["p_transport_epoch", "text"],
+        ["p_now", "timestamptz"],
+      ],
+      reads_tables: ["eventing_outbox"],
+      writes_tables: ["eventing_outbox"],
+      effects: [
+        {
+          table_name: "eventing_outbox",
+          operation: "redrive_ack",
+          concurrency_control: "lease_fence",
         },
       ],
       returns: "jsonb",
@@ -343,6 +449,29 @@ const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
       false,
     ),
     eventingColumn("eventing_outbox", "last_error", "jsonb", false),
+    eventingColumn("eventing_outbox", "transport_ref", "text", false),
+    eventingColumn("eventing_outbox", "transport_epoch", "text", false),
+    eventingColumn(
+      "eventing_outbox",
+      "sent_at",
+      "timestamp with time zone",
+      false,
+    ),
+    eventingColumn("eventing_outbox", "redrive_claimed_by", "text", false),
+    eventingColumn("eventing_outbox", "redrive_claim_token", "text", false),
+    eventingColumn(
+      "eventing_outbox",
+      "redrive_claim_generation",
+      "bigint",
+      true,
+      "0",
+    ),
+    eventingColumn(
+      "eventing_outbox",
+      "redrive_locked_until",
+      "timestamp with time zone",
+      false,
+    ),
     eventingColumn(
       "eventing_outbox",
       "created_at",
@@ -538,7 +667,7 @@ const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
   inbox_tables: ["eventing_inbox"],
   dlq_tables: ["eventing_dlq"],
   object_metadata_tables: [],
-} as const);
+} as const;
 
 const setupSql = `
 DO $$ BEGIN
@@ -585,6 +714,13 @@ CREATE TABLE skill_registry.eventing_outbox (
   claim_token text,
   locked_until timestamptz,
   last_error jsonb,
+  transport_ref text,
+  transport_epoch text,
+  sent_at timestamptz,
+  redrive_claimed_by text,
+  redrive_claim_token text,
+  redrive_claim_generation bigint NOT NULL DEFAULT 0,
+  redrive_locked_until timestamptz,
   created_at timestamptz NOT NULL,
   updated_at timestamptz NOT NULL
 );
@@ -717,6 +853,8 @@ CREATE FUNCTION skill_registry.ack_eventing_outbox_v1(
   p_outcome text,
   p_next_retry_at timestamptz,
   p_error jsonb,
+  p_transport_ref text,
+  p_transport_epoch text,
   p_now timestamptz
 ) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER
@@ -724,10 +862,23 @@ SET search_path = skill_registry, pg_temp
 AS $$
 DECLARE current_event skill_registry.eventing_outbox%ROWTYPE;
 BEGIN
+  IF p_outcome NOT IN ('sent', 'retry_wait', 'failed')
+     OR ((p_outcome = 'sent') <> (
+       p_transport_ref IS NOT NULL AND btrim(p_transport_ref) <> '' AND
+       p_transport_epoch IS NOT NULL AND btrim(p_transport_epoch) <> ''
+     ))
+     OR ((p_outcome = 'retry_wait') <> (p_next_retry_at IS NOT NULL))
+     OR (p_outcome = 'sent' AND p_error IS NOT NULL)
+     OR (p_outcome <> 'sent' AND p_error IS NULL) THEN
+    RAISE EXCEPTION 'invalid outbox acknowledgement outcome';
+  END IF;
   UPDATE skill_registry.eventing_outbox
      SET status = p_outcome,
          next_retry_at = p_next_retry_at,
          last_error = p_error,
+         transport_ref = p_transport_ref,
+         transport_epoch = p_transport_epoch,
+         sent_at = CASE WHEN p_outcome = 'sent' THEN p_now ELSE sent_at END,
          claimed_by = NULL,
          claim_token = NULL,
          locked_until = NULL,
@@ -811,19 +962,189 @@ BEGIN
   RETURN jsonb_build_object('status', 'replayed');
 END;
 $$;
+CREATE FUNCTION skill_registry.record_eventing_consumer_dlq_v1(
+  p_delivery_id text,
+  p_delivery_ref text,
+  p_consumer_service text,
+  p_failure_code text,
+  p_failure_message text,
+  p_raw_fields jsonb,
+  p_envelope jsonb,
+  p_now timestamptz
+) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = skill_registry, pg_temp
+AS $$
+DECLARE inserted_id text;
+BEGIN
+  IF p_delivery_id IS NULL OR btrim(p_delivery_id) = ''
+     OR p_delivery_ref IS NULL OR btrim(p_delivery_ref) = ''
+     OR p_consumer_service IS NULL OR btrim(p_consumer_service) = ''
+     OR p_failure_code IS NULL OR btrim(p_failure_code) = '' THEN
+    RAISE EXCEPTION 'invalid durable consumer DLQ identity';
+  END IF;
+  INSERT INTO skill_registry.eventing_dlq(
+    id, source_event_id, event_type, payload, last_error, failed_at, resolved_at
+  ) VALUES (
+    'consumer-dlq:' || p_consumer_service || ':' || p_delivery_ref,
+    p_delivery_id,
+    'consumer.delivery.invalid',
+    jsonb_build_object('raw_fields', p_raw_fields, 'envelope', p_envelope),
+    jsonb_build_object('code', p_failure_code, 'message', p_failure_message),
+    p_now,
+    NULL
+  )
+  ON CONFLICT (id) DO NOTHING
+  RETURNING id INTO inserted_id;
+  INSERT INTO skill_registry.eventing_audit(
+    id, inbox_id, event_id, semantic_hash, created_at
+  ) VALUES (
+    'audit:consumer-dlq:' || p_consumer_service || ':' || p_delivery_ref,
+    'consumer-dlq:' || p_consumer_service || ':' || p_delivery_ref,
+    p_delivery_id,
+    p_failure_code,
+    p_now
+  ) ON CONFLICT (id) DO NOTHING;
+  RETURN jsonb_build_object(
+    'status', CASE WHEN inserted_id IS NULL THEN 'replayed' ELSE 'recorded' END
+  );
+END;
+$$;
+CREATE FUNCTION skill_registry.claim_sent_eventing_outbox_redrive_v1(
+  p_worker_id text,
+  p_limit integer,
+  p_lease_seconds integer,
+  p_now timestamptz,
+  p_sent_after timestamptz,
+  p_current_transport_epoch text
+) RETURNS SETOF jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = skill_registry, pg_temp
+AS $$
+BEGIN
+  RETURN QUERY
+  WITH candidates AS (
+    SELECT id
+      FROM skill_registry.eventing_outbox
+     WHERE status = 'sent'
+       AND sent_at >= p_sent_after
+       AND transport_epoch IS DISTINCT FROM p_current_transport_epoch
+       AND (redrive_locked_until IS NULL OR redrive_locked_until <= p_now)
+     ORDER BY sent_at, id
+     FOR UPDATE SKIP LOCKED
+     LIMIT p_limit
+  ), claimed AS (
+    UPDATE skill_registry.eventing_outbox outbox
+       SET redrive_claimed_by = p_worker_id,
+           redrive_claim_generation = outbox.redrive_claim_generation + 1,
+           redrive_claim_token = p_worker_id || ':' || outbox.id || ':' ||
+             (outbox.redrive_claim_generation + 1)::text || ':' || p_current_transport_epoch,
+           redrive_locked_until = p_now + make_interval(secs => p_lease_seconds),
+           updated_at = p_now
+      FROM candidates
+     WHERE outbox.id = candidates.id
+     RETURNING outbox.*
+  )
+  SELECT jsonb_build_object(
+    'outbox_id', id,
+    'claim_token', redrive_claim_token,
+    'attempt_count', attempt_count,
+    'target', target,
+    'payload_hash', payload_hash,
+    'sent_at', sent_at,
+    'transport_ref', transport_ref,
+    'transport_epoch', transport_epoch,
+    'envelope', jsonb_build_object(
+      'event_id', id,
+      'event_type', event_type,
+      'schema_version', schema_version,
+      'producer', producer,
+      'occurred_at', to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      'idempotency_key', idempotency_key,
+      'trace_id', trace_id,
+      'payload', payload
+    )
+  ) FROM claimed;
+END;
+$$;
+CREATE FUNCTION skill_registry.ack_sent_eventing_outbox_redrive_v1(
+  p_outbox_id text,
+  p_claim_token text,
+  p_previous_transport_epoch text,
+  p_transport_ref text,
+  p_transport_epoch text,
+  p_now timestamptz
+) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = skill_registry, pg_temp
+AS $$
+DECLARE updated_id text;
+BEGIN
+  IF p_transport_ref IS NULL OR btrim(p_transport_ref) = ''
+     OR p_transport_epoch IS NULL OR btrim(p_transport_epoch) = ''
+     OR p_transport_epoch = p_previous_transport_epoch THEN
+    RAISE EXCEPTION 'invalid sent outbox redrive receipt';
+  END IF;
+  UPDATE skill_registry.eventing_outbox
+     SET transport_ref = p_transport_ref,
+         transport_epoch = p_transport_epoch,
+         redrive_claimed_by = NULL,
+         redrive_claim_token = NULL,
+         redrive_locked_until = NULL,
+         updated_at = p_now
+   WHERE id = p_outbox_id
+     AND status = 'sent'
+     AND redrive_claim_token = p_claim_token
+     AND transport_epoch = p_previous_transport_epoch
+   RETURNING id INTO updated_id;
+  IF updated_id IS NULL THEN
+    RAISE EXCEPTION 'stale sent outbox redrive claim';
+  END IF;
+  RETURN jsonb_build_object('outbox_id', updated_id, 'status', 'sent');
+END;
+$$;
 RESET ROLE;
 REVOKE ALL ON ALL TABLES IN SCHEMA skill_registry FROM PUBLIC, anon, authenticated, pai_skill_registry_app, pai_skill_registry_eventing_test;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA skill_registry FROM PUBLIC, anon, authenticated, pai_skill_registry_app, pai_skill_registry_eventing_test;
-GRANT SELECT (${EVENTING_CONTRACT.table_permissions[0]!.select_columns.join(", ")}) ON skill_registry.eventing_outbox TO pai_skill_registry_app;
-GRANT SELECT (${EVENTING_CONTRACT.table_permissions[1]!.select_columns.join(", ")}) ON skill_registry.eventing_inbox TO pai_skill_registry_app;
-GRANT SELECT (${EVENTING_CONTRACT.table_permissions[2]!.select_columns.join(", ")}) ON skill_registry.eventing_dlq TO pai_skill_registry_app;
-GRANT SELECT (${EVENTING_CONTRACT.table_permissions[3]!.select_columns.join(", ")}) ON skill_registry.eventing_projection TO pai_skill_registry_app;
-GRANT SELECT (${EVENTING_CONTRACT.table_permissions[4]!.select_columns.join(", ")}) ON skill_registry.eventing_audit TO pai_skill_registry_app;
+GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[0]!.select_columns.join(", ")}) ON skill_registry.eventing_outbox TO pai_skill_registry_app;
+GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[1]!.select_columns.join(", ")}) ON skill_registry.eventing_inbox TO pai_skill_registry_app;
+GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[2]!.select_columns.join(", ")}) ON skill_registry.eventing_dlq TO pai_skill_registry_app;
+GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[3]!.select_columns.join(", ")}) ON skill_registry.eventing_projection TO pai_skill_registry_app;
+GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[4]!.select_columns.join(", ")}) ON skill_registry.eventing_audit TO pai_skill_registry_app;
 GRANT EXECUTE ON FUNCTION skill_registry.enqueue_eventing_outbox_v1(jsonb, text, text) TO pai_skill_registry_app;
 GRANT EXECUTE ON FUNCTION skill_registry.claim_eventing_outbox_v1(text, integer, integer, timestamptz) TO pai_skill_registry_app;
-GRANT EXECUTE ON FUNCTION skill_registry.ack_eventing_outbox_v1(text, text, text, timestamptz, jsonb, timestamptz) TO pai_skill_registry_app;
+GRANT EXECUTE ON FUNCTION skill_registry.ack_eventing_outbox_v1(text, text, text, timestamptz, jsonb, text, text, timestamptz) TO pai_skill_registry_app;
 GRANT EXECUTE ON FUNCTION skill_registry.consume_eventing_inbox_v1(jsonb, text, text, text, text) TO pai_skill_registry_app;
+GRANT EXECUTE ON FUNCTION skill_registry.record_eventing_consumer_dlq_v1(text, text, text, text, text, jsonb, jsonb, timestamptz) TO pai_skill_registry_app;
+GRANT EXECUTE ON FUNCTION skill_registry.claim_sent_eventing_outbox_redrive_v1(text, integer, integer, timestamptz, timestamptz, text) TO pai_skill_registry_app;
+GRANT EXECUTE ON FUNCTION skill_registry.ack_sent_eventing_outbox_redrive_v1(text, text, text, text, text, timestamptz) TO pai_skill_registry_app;
 `;
+
+function generatedWriterBody(functionName: string): string {
+  const functionStart = setupSql.indexOf(
+    `CREATE FUNCTION skill_registry.${functionName}(`,
+  );
+  const bodyMarker = setupSql.indexOf("AS $$", functionStart);
+  const bodyStart = setupSql.indexOf("\n", bodyMarker) + 1;
+  const bodyEnd = setupSql.indexOf("\n$$;", bodyStart);
+  if (functionStart < 0 || bodyMarker < 0 || bodyStart <= 0 || bodyEnd < 0) {
+    throw new Error(`missing generated fixture writer body: ${functionName}`);
+  }
+  return setupSql.slice(bodyStart, bodyEnd);
+}
+
+const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
+  ...EVENTING_CONTRACT_INPUT,
+  writer_artifacts: EVENTING_CONTRACT_INPUT.function_signatures.map(
+    (signature) =>
+      ownerWriterArtifactV1({
+        signature,
+        generator_source:
+          "pai-infra/supabase/generated/permissions/0450_skill_registry.sql",
+        function_body: generatedWriterBody(signature.function_name),
+      }),
+  ),
+});
 
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;
 
@@ -904,7 +1225,7 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     const transport: DurableEventTransportPortV1 = {
       async publish({ envelope: event }) {
         published.push(event.event_id);
-        return { transport_ref: "redis_stream:1-0" };
+        return { transport_ref: "redis_stream:1-0", transport_epoch: "epoch_1" };
       },
     };
     const dispatcher = createDurableOutboxDispatcherV1(
@@ -993,12 +1314,459 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
       "SELECT count(*)::text AS count FROM skill_registry.eventing_audit",
     );
     expect(audit.rows).toEqual([{ count: "1" }]);
-    const persisted = await admin.query<{ status: string; attempt_count: number }>(
-      "SELECT status, attempt_count FROM skill_registry.eventing_outbox WHERE id = $1",
+    const persisted = await admin.query<{
+      status: string;
+      attempt_count: number;
+      transport_ref: string;
+      transport_epoch: string;
+    }>(
+      "SELECT status, attempt_count, transport_ref, transport_epoch FROM skill_registry.eventing_outbox WHERE id = $1",
       [envelope.event_id],
     );
-    expect(persisted.rows).toEqual([{ status: "sent", attempt_count: 1 }]);
+    expect(persisted.rows).toEqual([{
+      status: "sent",
+      attempt_count: 1,
+      transport_ref: "redis_stream:1-0",
+      transport_epoch: "epoch_1",
+    }]);
     await secondProcess.close();
+  });
+
+  itPostgresRedis("redrives retained sent rows after real Redis loss and dedupes the PostgreSQL inbox", async () => {
+    await reset();
+    const composition = await openVerifiedOwnerPostgresCompositionV1(
+      EVENTING_CONTRACT,
+      runtimeUrl(),
+    );
+    if (redisUrl === undefined) throw new Error("PAI_TEST_REDIS_URL is required");
+    const reader = createClient({ url: redisUrl });
+    reader.on("error", () => undefined);
+    await reader.connect();
+    let oldRedis:
+      | Awaited<ReturnType<typeof openVerifiedRedisStreamCompositionV1>>
+      | undefined;
+    let newRedis:
+      | Awaited<ReturnType<typeof openVerifiedRedisStreamCompositionV1>>
+      | undefined;
+    let oldPhysicalStream: string | undefined;
+    let newPhysicalStream: string | undefined;
+    try {
+    const envelope = {
+      event_id: "evt_epoch_redrive_001",
+      event_type: "skill.version.published",
+      schema_version: "skill_registry_event.v1",
+      producer: "skill_registry",
+      occurred_at: "2026-07-21T05:00:00.000Z",
+      idempotency_key: "skill_version_redrive_001:published",
+      trace_id: "trace_epoch_redrive_001",
+      payload: {
+        scope_kind: "bot",
+        workspace_id: "workspace_001",
+        bot_id: "bot_001",
+        owner_agent_id: "owner_agent_001",
+        deployment_environment: "dev",
+        release_channel: "stable",
+        skill_version_id: "skill_version_redrive_001",
+      },
+    } as const;
+    const oldNamespace = createRedisNamespaceV1({
+      deployment_environment: "dev",
+      release_channel: "stable",
+      owner_service: "skill_registry",
+      stream_epoch: "epoch_old",
+    });
+    const newNamespace = createRedisNamespaceV1({
+      deployment_environment: "dev",
+      release_channel: "stable",
+      owner_service: "skill_registry",
+      stream_epoch: "epoch_new",
+    });
+    const target = "trigger_processor.runtime_event_append";
+    const logicalStream = "stream:skill_events";
+    oldPhysicalStream = namespacedRedisKeyV1(oldNamespace, logicalStream);
+    newPhysicalStream = namespacedRedisKeyV1(newNamespace, logicalStream);
+    await reader.del(oldPhysicalStream, newPhysicalStream);
+    oldRedis = await openVerifiedRedisStreamCompositionV1({
+      url: redisUrl,
+      namespace: oldNamespace,
+      routes: { [target]: logicalStream },
+    });
+    newRedis = await openVerifiedRedisStreamCompositionV1({
+      url: redisUrl,
+      namespace: newNamespace,
+      routes: { [target]: logicalStream },
+    });
+    await composition.unit_of_work.withTransaction(
+      {
+        operation: "enqueue_redrive_fixture",
+        idempotency_key: envelope.idempotency_key,
+        trace_id: envelope.trace_id,
+        isolation: "read_committed",
+        retry: "none",
+      },
+      async (transaction, repositories) =>
+        repositories.owner.executeWriter(transaction, {
+          writer: "enqueue_eventing_outbox_v1",
+          arguments: {
+            p_event: envelope,
+            p_idempotency_key: envelope.idempotency_key,
+            p_payload_hash: canonicalPayloadHashV1(envelope.payload),
+          },
+          expected_rows: 1,
+        }),
+    );
+    const dispatcher = createDurableOutboxDispatcherV1(
+      createPostgresOwnerOutboxStoreV1(composition.outbox, "eventing_outbox"),
+      oldRedis.transport,
+      {
+        owner_service: "skill_registry",
+        worker_id: "publisher_old",
+        batch_size: 10,
+        lease_seconds: 30,
+        max_attempts: 3,
+        retry_base_delay_ms: 100,
+        retry_max_delay_ms: 1_000,
+        retry_jitter: "none",
+      },
+      { now: () => new Date("2026-07-21T05:00:01.000Z") },
+    );
+    await expect(dispatcher.dispatchBatch()).resolves.toMatchObject({ sent: 1 });
+
+    const redisCommandClient = {
+      async sendCommand(args: readonly string[]): Promise<unknown> {
+        return reader.sendCommand([...args]);
+      },
+    };
+    const oldConsumer = createRedisStreamConsumerGroupPortV1(
+      redisCommandClient,
+      {
+        stream: oldPhysicalStream,
+        group: "trigger_processor",
+        consumer: "old_worker",
+        namespace: oldNamespace,
+      },
+    );
+    await oldConsumer.ensureGroup();
+
+    const inbox = createDurableInboxConsumerV1(
+      {
+        async apply(request) {
+          return composition.unit_of_work.withTransaction(
+            {
+              operation: "consume_redrive_fixture",
+              idempotency_key: request.idempotency_key,
+              trace_id: request.envelope.trace_id,
+              isolation: "read_committed",
+              retry: "none",
+            },
+            async (transaction, repositories) =>
+              repositories.owner.executeWriter<
+                Readonly<{ status: "processed" | "replayed" }>,
+                "consume_eventing_inbox_v1"
+              >(transaction, {
+                writer: "consume_eventing_inbox_v1",
+                arguments: {
+                  p_event: request.envelope,
+                  p_idempotency_key: request.idempotency_key,
+                  p_payload_hash: request.payload_hash,
+                  p_semantic_hash: request.semantic_hash,
+                  p_scope_fingerprint: request.scope_fingerprint,
+                },
+                expected_rows: 1,
+              }),
+          );
+        },
+      },
+      { consumer_service: "trigger_processor" },
+    );
+    const oldDeliveries = await oldConsumer.readNew({ count: 10, block_ms: 0 });
+    expect(oldDeliveries).toHaveLength(1);
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    const reclaimed = await oldConsumer.reclaimPending({
+      min_idle_ms: 1,
+      count: 10,
+      start_id: "0-0",
+    });
+    expect(reclaimed.next_start_id).toBe("0-0");
+    expect(reclaimed.deleted_ids).toEqual([]);
+    expect(reclaimed.deliveries).toHaveLength(1);
+    if (reclaimed.deliveries[0]?.kind !== "event") {
+      throw new Error("expected the original Redis delivery");
+    }
+    await expect(inbox.consume(reclaimed.deliveries[0].envelope)).resolves.toEqual({
+      status: "processed",
+    });
+    await expect(
+      oldConsumer.acknowledge({
+        delivery_ids: [reclaimed.deliveries[0].delivery_id],
+      }),
+    ).resolves.toEqual({ acknowledged: 1 });
+
+    await reader.del(oldPhysicalStream);
+    const postgresRedriveStore: DurableSentOutboxRedriveStorePortV1 = {
+      async claimSentForRedrive(request) {
+        return composition.unit_of_work.withTransaction(
+          {
+            operation: "claim_sent_redrive",
+            idempotency_key: `${request.worker_id}:${request.current_transport_epoch}`,
+            trace_id: "trace_claim_sent_redrive",
+            isolation: "read_committed",
+            retry: "none",
+          },
+          async (transaction, repositories) =>
+            repositories.owner.executeWriter<
+              readonly ClaimedSentOutboxRecordV1[],
+              "claim_sent_eventing_outbox_redrive_v1"
+            >(transaction, {
+              writer: "claim_sent_eventing_outbox_redrive_v1",
+              arguments: {
+                p_worker_id: request.worker_id,
+                p_limit: request.limit,
+                p_lease_seconds: request.lease_seconds,
+                p_now: request.now,
+                p_sent_after: request.sent_after,
+                p_current_transport_epoch: request.current_transport_epoch,
+              },
+              expected_rows: "one_or_more",
+            }),
+        );
+      },
+      async acknowledgeSentRedrive(request) {
+        await composition.unit_of_work.withTransaction(
+          {
+            operation: "ack_sent_redrive",
+            idempotency_key: request.outbox_id,
+            trace_id: "trace_ack_sent_redrive",
+            isolation: "read_committed",
+            retry: "none",
+          },
+          async (transaction, repositories) =>
+            repositories.owner.executeWriter(transaction, {
+              writer: "ack_sent_eventing_outbox_redrive_v1",
+              arguments: {
+                p_outbox_id: request.outbox_id,
+                p_claim_token: request.claim_token,
+                p_previous_transport_epoch: request.previous_transport_epoch,
+                p_transport_ref: request.transport_ref,
+                p_transport_epoch: request.transport_epoch,
+                p_now: request.now,
+              },
+              expected_rows: 1,
+            }),
+        );
+      },
+    };
+    const redriveClaimTokens: string[] = [];
+    let injectCommitDisconnect = true;
+    const redriveStore: DurableSentOutboxRedriveStorePortV1 = {
+      claimSentForRedrive: (request) =>
+        postgresRedriveStore.claimSentForRedrive(request),
+      async acknowledgeSentRedrive(request) {
+        redriveClaimTokens.push(request.claim_token);
+        if (injectCommitDisconnect) {
+          injectCommitDisconnect = false;
+          throw new Error("simulated redrive acknowledgement disconnect");
+        }
+        await postgresRedriveStore.acknowledgeSentRedrive(request);
+      },
+    };
+    const redriver = (at: string) => createDurableSentOutboxRedriverV1(
+      redriveStore,
+      newRedis.transport,
+      {
+        owner_service: "skill_registry",
+        worker_id: "redrive_worker",
+        batch_size: 10,
+        lease_seconds: 30,
+        current_transport_epoch: "epoch_new",
+        sent_after: "2026-07-01T00:00:00.000Z",
+      },
+      { now: () => new Date(at) },
+    );
+    await expect(
+      redriver("2026-07-22T04:00:00.000Z").redriveBatch(),
+    ).resolves.toEqual({
+      claimed: 1,
+      redriven: 0,
+      retryable_failures: 1,
+      permanent_failures: 0,
+    });
+    await expect(
+      redriver("2026-07-22T04:01:00.000Z").redriveBatch(),
+    ).resolves.toEqual({
+      claimed: 1,
+      redriven: 1,
+      retryable_failures: 0,
+      permanent_failures: 0,
+    });
+    expect(redriveClaimTokens).toHaveLength(2);
+    expect(redriveClaimTokens[0]).not.toBe(redriveClaimTokens[1]);
+    await expect(
+      postgresRedriveStore.acknowledgeSentRedrive({
+        outbox_id: envelope.event_id,
+        claim_token: redriveClaimTokens[0]!,
+        previous_transport_epoch: "epoch_old",
+        transport_ref: "redis_stream:stale:1-0",
+        transport_epoch: "epoch_new",
+        now: "2026-07-22T04:01:01.000Z",
+      }),
+    ).rejects.toThrow(/stale sent outbox redrive claim/u);
+
+    const newConsumer = createRedisStreamConsumerGroupPortV1(
+      redisCommandClient,
+      {
+        stream: newPhysicalStream,
+        group: "trigger_processor",
+        consumer: "new_worker",
+        namespace: newNamespace,
+      },
+    );
+    await newConsumer.ensureGroup();
+    const redrivenDeliveries = await newConsumer.readNew({
+      count: 10,
+      block_ms: 0,
+    });
+    expect(redrivenDeliveries).toHaveLength(2);
+    for (const delivery of redrivenDeliveries) {
+      if (delivery.kind !== "event") {
+        throw new Error("expected the redriven Redis delivery");
+      }
+      await expect(inbox.consume(delivery.envelope)).resolves.toEqual({
+        status: "replayed",
+      });
+    }
+    await expect(
+      newConsumer.acknowledge({
+        delivery_ids: redrivenDeliveries.map(({ delivery_id }) => delivery_id),
+      }),
+    ).resolves.toEqual({ acknowledged: 2 });
+    if (admin === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
+    const persisted = await admin.query<{
+      transport_ref: string;
+      transport_epoch: string;
+      projection_count: number;
+    }>(
+      `SELECT outbox.transport_ref, outbox.transport_epoch,
+              projection.applied_count AS projection_count
+         FROM skill_registry.eventing_outbox outbox
+         JOIN skill_registry.eventing_projection projection
+           ON projection.id = $2
+        WHERE outbox.id = $1`,
+      [
+        envelope.event_id,
+        `${envelope.producer}:${durableEventScopeFingerprintV1(envelope)}:${envelope.idempotency_key}`,
+      ],
+    );
+    expect(persisted.rows).toEqual([{
+      transport_ref: expect.stringMatching(
+        /^redis_stream:pai:dev:stable:skill_registry:v1:epoch_new:stream:skill_events:\d+-\d+$/u,
+      ),
+      transport_epoch: "epoch_new",
+      projection_count: 1,
+    }]);
+    } finally {
+      await oldRedis?.close();
+      await newRedis?.close();
+      if (oldPhysicalStream !== undefined && newPhysicalStream !== undefined) {
+        await reader.del(oldPhysicalStream, newPhysicalStream);
+      }
+      if (reader.isOpen) await reader.close();
+      await composition.close();
+    }
+  });
+
+  it("commits a durable consumer DLQ record before XACK and replays idempotently", async () => {
+    await reset();
+    const composition = await openVerifiedOwnerPostgresCompositionV1(
+      EVENTING_CONTRACT,
+      runtimeUrl(),
+    );
+    const acknowledged: string[] = [];
+    const delivery: DurableEventDeliveryConsumerPortV1 = {
+      async readNew() {
+        return [{
+          kind: "invalid",
+          delivery_id: "poison-1-0",
+          delivery_ref: "stream:consumer_poison#poison-1-0",
+          error_code: "invalid_json",
+          error_message: "payload is malformed",
+          raw_fields: ["payload", "{"],
+        }];
+      },
+      async reclaimPending() {
+        return { next_start_id: "0-0", deliveries: [], deleted_ids: [] };
+      },
+      async acknowledge(request) {
+        if (admin === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
+        const durable = await admin.query<{
+          dlq_count: string;
+          audit_count: string;
+        }>(
+          `SELECT
+             (SELECT count(*)::text FROM skill_registry.eventing_dlq
+               WHERE source_event_id = $1) AS dlq_count,
+             (SELECT count(*)::text FROM skill_registry.eventing_audit
+               WHERE event_id = $1 AND id LIKE 'audit:consumer-dlq:%') AS audit_count`,
+          [request.delivery_ids[0]],
+        );
+        expect(durable.rows).toEqual([{ dlq_count: "1", audit_count: "1" }]);
+        acknowledged.push(...request.delivery_ids);
+        return { acknowledged: request.delivery_ids.length };
+      },
+    };
+    const worker = createDurableEventConsumerWorkerV1(
+      delivery,
+      { async apply() { return { status: "processed" }; } },
+      {
+        consumer_service: "trigger_processor",
+        dead_letter: {
+          async recordPermanentFailure(request) {
+            return composition.unit_of_work.withTransaction(
+              {
+                operation: "record_consumer_dlq",
+                idempotency_key: request.delivery_ref,
+                trace_id: `trace:${request.delivery_ref}`,
+                isolation: "read_committed",
+                retry: "none",
+              },
+              async (transaction, repositories) =>
+                repositories.owner.executeWriter<
+                  Readonly<{ status: "recorded" | "replayed" }>,
+                  "record_eventing_consumer_dlq_v1"
+                >(transaction, {
+                  writer: "record_eventing_consumer_dlq_v1",
+                  arguments: {
+                    p_delivery_id: request.delivery_id,
+                    p_delivery_ref: request.delivery_ref,
+                    p_consumer_service: request.consumer_service,
+                    p_failure_code: request.failure_code,
+                    p_failure_message: request.failure_message,
+                    p_raw_fields: request.raw_fields,
+                    p_envelope: request.envelope,
+                    p_now: "2026-07-22T04:00:00.000Z",
+                  },
+                  expected_rows: 1,
+                }),
+            );
+          },
+        },
+      },
+    );
+    await expect(worker.consumeNewBatch({ count: 10, block_ms: 0 })).resolves
+      .toMatchObject({ dead_lettered: 1, acknowledged: 1, failed: 0 });
+    await expect(worker.consumeNewBatch({ count: 10, block_ms: 0 })).resolves
+      .toMatchObject({ dead_lettered: 1, acknowledged: 1, failed: 0 });
+    expect(acknowledged).toEqual(["poison-1-0", "poison-1-0"]);
+    if (admin === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
+    const dlq = await admin.query<{ dlq_count: string; audit_count: string }>(
+      `SELECT
+         (SELECT count(*)::text FROM skill_registry.eventing_dlq
+           WHERE source_event_id = 'poison-1-0') AS dlq_count,
+         (SELECT count(*)::text FROM skill_registry.eventing_audit
+           WHERE event_id = 'poison-1-0' AND id LIKE 'audit:consumer-dlq:%') AS audit_count`,
+    );
+    expect(dlq.rows).toEqual([{ dlq_count: "1", audit_count: "1" }]);
+    await composition.close();
   });
 
   it("rejects a widened owner event union before exposing runtime capabilities", async () => {

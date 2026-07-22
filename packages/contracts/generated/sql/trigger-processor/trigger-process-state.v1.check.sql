@@ -1,5 +1,5 @@
 CHECK ((status = 'waiting') = (wait_reason IS NOT NULL)),
-CHECK ((phase = 'closed') = (terminal_reason IS NOT NULL AND terminal_reason <> '')),
+CHECK (((phase = 'closed') = (terminal_reason IS NOT NULL)) AND (terminal_reason IS NULL OR terminal_reason <> '')),
 CHECK (meta_enqueue_reason IS NULL OR meta_enqueue_reason IN ('cooldown_expired', 'user_retracted', 'system_interrupted', 'failed_with_learnable_snapshot')),
 CHECK ((phase = 'meta_enqueued') = (meta_enqueue_reason IS NOT NULL)),
 CHECK (

@@ -18,6 +18,7 @@ describeRedis("locked Redis 8.8 Stream integration", () => {
     deployment_environment: "local",
     release_channel: "stable",
     owner_service: "timer_trigger_app",
+    stream_epoch: "epoch_20260722",
   });
   const target = "trigger_processor.timer_submit";
   const logicalStream = "stream:timer_events";
@@ -77,6 +78,7 @@ describeRedis("locked Redis 8.8 Stream integration", () => {
       payload_hash: canonicalPayloadHashV1(envelope.payload),
     });
     expect(published.transport_ref).toMatch(/^redis_stream:/);
+    expect(published.transport_epoch).toBe("epoch_20260722");
     await expect(composition!.checkReadiness()).resolves.toBeUndefined();
     expect(composition!.baseline).toMatchObject({ server_version: "8.8.0" });
 
@@ -99,6 +101,58 @@ describeRedis("locked Redis 8.8 Stream integration", () => {
     expect(await reader!.info("commandstats")).toMatch(
       /cmdstat_waitaof:calls=[1-9]\d*/u,
     );
+  });
+
+  it("rejects environment or release-channel scope drift before XADD", async () => {
+    const before = await reader!.xLen(physicalStream);
+    const baseEnvelope = {
+      event_id: "evt_scope_drift_001",
+      event_type: "timer.occurrence.due",
+      schema_version: "timer_event.v1",
+      producer: "timer_trigger_app",
+      occurred_at: "2026-07-21T05:00:00.000Z",
+      idempotency_key: "scope_drift_001:due",
+      trace_id: "trace_scope_drift_001",
+      payload: {
+        scope_kind: "bot",
+        workspace_id: "workspace_live_001",
+        bot_id: "bot_live_001",
+        owner_agent_id: "owner_agent_live_001",
+        deployment_environment: "prod",
+        release_channel: "stable",
+        occurrence_id: "scope_drift_001",
+        schedule_id: "scope_schedule_001",
+        scheduled_fire_at: "2026-07-21T05:00:00.000Z",
+        effective_fire_at: "2026-07-21T05:00:00.000Z",
+        dedupe_key: "timer:scope_drift_001",
+        is_catch_up: false,
+      },
+    } as const;
+    await expect(
+      composition!.transport.publish({
+        target,
+        envelope: baseEnvelope,
+        payload_hash: canonicalPayloadHashV1(baseEnvelope.payload),
+      }),
+    ).rejects.toThrow(/environment\/channel namespace/u);
+    const channelDrift = {
+      ...baseEnvelope,
+      event_id: "evt_scope_drift_002",
+      idempotency_key: "scope_drift_002:due",
+      payload: {
+        ...baseEnvelope.payload,
+        deployment_environment: "local",
+        release_channel: "canary",
+      },
+    } as const;
+    await expect(
+      composition!.transport.publish({
+        target,
+        envelope: channelDrift,
+        payload_hash: canonicalPayloadHashV1(channelDrift.payload),
+      }),
+    ).rejects.toThrow(/environment\/channel namespace/u);
+    expect(await reader!.xLen(physicalStream)).toBe(before);
   });
 
   it("rejects a cross-owner or unknown event before XADD", async () => {

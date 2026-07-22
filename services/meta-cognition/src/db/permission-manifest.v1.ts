@@ -278,7 +278,7 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       function_name: "ack_meta_event_outbox_v1",
       primary_table: "meta_event_outbox",
       writer_kind: "outbox_claim_ack",
-      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_now", "timestamptz"]],
+      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_transport_ref", "text"], ["p_transport_epoch", "text"], ["p_now", "timestamptz"]],
       reads_tables: ["meta_event_outbox"], writes_tables: ["meta_event_outbox", "meta_event_dlq"],
       effects: [
         { table_name: "meta_event_outbox", operation: "ack", concurrency_control: "lease_fence" },
@@ -299,7 +299,7 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       function_name: "ack_meta_command_outbox_v1",
       primary_table: "meta_command_outbox",
       writer_kind: "outbox_claim_ack",
-      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_now", "timestamptz"]],
+      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_transport_ref", "text"], ["p_transport_epoch", "text"], ["p_now", "timestamptz"]],
       reads_tables: ["meta_command_outbox"], writes_tables: ["meta_command_outbox", "meta_event_dlq"],
       effects: [
         { table_name: "meta_command_outbox", operation: "ack", concurrency_control: "lease_fence" },

@@ -233,7 +233,7 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
       function_name: "ack_knowthat_event_outbox_v1",
       primary_table: "knowthat_event_outbox",
       writer_kind: "outbox_claim_ack",
-      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_now", "timestamptz"]], reads_tables: ["knowthat_event_outbox"], writes_tables: ["knowthat_event_outbox", "knowthat_event_dlq"],
+      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_transport_ref", "text"], ["p_transport_epoch", "text"], ["p_now", "timestamptz"]], reads_tables: ["knowthat_event_outbox"], writes_tables: ["knowthat_event_outbox", "knowthat_event_dlq"],
       effects: [
         { table_name: "knowthat_event_outbox", operation: "ack", concurrency_control: "lease_fence" },
         { table_name: "knowthat_event_dlq", operation: "append", concurrency_control: "idempotency_key" },
@@ -254,7 +254,7 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
       function_name: "ack_knowthat_memory_command_outbox_v1",
       primary_table: "knowthat_memory_command_outbox",
       writer_kind: "outbox_claim_ack",
-      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_now", "timestamptz"]], reads_tables: ["knowthat_memory_command_outbox"], writes_tables: ["knowthat_memory_command_outbox"],
+      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_transport_ref", "text"], ["p_transport_epoch", "text"], ["p_now", "timestamptz"]], reads_tables: ["knowthat_memory_command_outbox"], writes_tables: ["knowthat_memory_command_outbox"],
       effects: [{ table_name: "knowthat_memory_command_outbox", operation: "ack", concurrency_control: "lease_fence" }],
       returns: "jsonb",
     }),

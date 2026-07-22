@@ -2,15 +2,69 @@ import { randomUUID } from "node:crypto";
 
 import { Pool } from "pg";
 import { afterAll, describe, expect, it } from "vitest";
+import { TRIGGER_PROCESS_STATE_V1_DATABASE_CHECK } from "@pai/contracts";
 
 import {
   defineOwnerRepositoryContractV1,
   openVerifiedOwnerPostgresCompositionV1,
   ownerFunctionSignatureV1,
+  ownerWriterArtifactV1,
   verifyOwnerRepositoryDeploymentFromPostgresV1,
 } from "../src/index.js";
 
 const databaseUrl = process.env.PAI_TEST_DATABASE_URL;
+
+const POSTGRES_WRITER_SIGNATURE = ownerFunctionSignatureV1({
+  schema: "timer",
+  function_name: "write_contract_child_v1",
+  primary_table: "contract_children",
+  writer_kind: "state_transition",
+  arguments: [
+    ["p_parent_key", "text"],
+    ["p_expected_parent_version", "bigint"],
+    ["p_child_id", "text"],
+    ["p_payload", "jsonb"],
+  ],
+  reads_tables: ["contract_parents"],
+  writes_tables: [
+    "contract_parents",
+    "contract_children",
+    "contract_audits",
+  ],
+  effects: [
+    { table_name: "contract_parents", operation: "append", concurrency_control: "expected_version" },
+    { table_name: "contract_children", operation: "append", concurrency_control: "idempotency_key" },
+    { table_name: "contract_audits", operation: "append", concurrency_control: "idempotency_key" },
+  ],
+  returns: "jsonb",
+});
+
+const POSTGRES_WRITER_BODY = `
+DECLARE
+  current_version bigint;
+  next_version bigint;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended(p_parent_key, 0));
+  SELECT parent_version INTO current_version
+    FROM timer.contract_parents WHERE parent_key = p_parent_key
+    ORDER BY parent_version DESC LIMIT 1 FOR UPDATE;
+  current_version := COALESCE(current_version, 0);
+  IF current_version <> p_expected_parent_version THEN
+    RAISE EXCEPTION 'stale parent version';
+  END IF;
+  next_version := current_version + 1;
+  INSERT INTO timer.contract_parents(parent_key, parent_version)
+    VALUES (p_parent_key, next_version);
+  INSERT INTO timer.contract_children(child_id, parent_key, parent_version, payload)
+    VALUES (p_child_id, p_parent_key, next_version, p_payload);
+  INSERT INTO timer.contract_audits(audit_id, child_id, created_at)
+    VALUES ('audit-' || p_child_id, p_child_id, clock_timestamp());
+  IF p_payload ? 'force_failure' THEN
+    RAISE EXCEPTION 'forced writer failure';
+  END IF;
+  RETURN jsonb_build_object('parent_version', next_version, 'child_id', p_child_id);
+END;
+`;
 
 const POSTGRES_CONTRACT = defineOwnerRepositoryContractV1({
   contract_version: "owner_repository_contract.v1",
@@ -50,30 +104,13 @@ const POSTGRES_CONTRACT = defineOwnerRepositoryContractV1({
     },
   ],
   mutable_writers: ["write_contract_child_v1"],
-  function_signatures: [
-    ownerFunctionSignatureV1({
-      schema: "timer",
-      function_name: "write_contract_child_v1",
-      primary_table: "contract_children",
-      writer_kind: "state_transition",
-      arguments: [
-        ["p_parent_key", "text"],
-        ["p_expected_parent_version", "bigint"],
-        ["p_child_id", "text"],
-        ["p_payload", "jsonb"],
-      ],
-      reads_tables: ["contract_parents"],
-      writes_tables: [
-        "contract_parents",
-        "contract_children",
-        "contract_audits",
-      ],
-      effects: [
-        { table_name: "contract_parents", operation: "append", concurrency_control: "expected_version" },
-        { table_name: "contract_children", operation: "append", concurrency_control: "idempotency_key" },
-        { table_name: "contract_audits", operation: "append", concurrency_control: "idempotency_key" },
-      ],
-      returns: "jsonb",
+  function_signatures: [POSTGRES_WRITER_SIGNATURE],
+  writer_artifacts: [
+    ownerWriterArtifactV1({
+      signature: POSTGRES_WRITER_SIGNATURE,
+      generator_source:
+        "pai-infra/supabase/generated/permissions/0300_timer.sql",
+      function_body: POSTGRES_WRITER_BODY,
     }),
   ],
   foreign_key_snapshot: {
@@ -308,30 +345,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = timer, pg_temp
 AS $$
-DECLARE
-  current_version bigint;
-  next_version bigint;
-BEGIN
-  PERFORM pg_advisory_xact_lock(hashtextextended(p_parent_key, 0));
-  SELECT parent_version INTO current_version
-    FROM timer.contract_parents WHERE parent_key = p_parent_key
-    ORDER BY parent_version DESC LIMIT 1 FOR UPDATE;
-  current_version := COALESCE(current_version, 0);
-  IF current_version <> p_expected_parent_version THEN
-    RAISE EXCEPTION 'stale parent version';
-  END IF;
-  next_version := current_version + 1;
-  INSERT INTO timer.contract_parents(parent_key, parent_version)
-    VALUES (p_parent_key, next_version);
-  INSERT INTO timer.contract_children(child_id, parent_key, parent_version, payload)
-    VALUES (p_child_id, p_parent_key, next_version, p_payload);
-  INSERT INTO timer.contract_audits(audit_id, child_id, created_at)
-    VALUES ('audit-' || p_child_id, p_child_id, clock_timestamp());
-  IF p_payload ? 'force_failure' THEN
-    RAISE EXCEPTION 'forced writer failure';
-  END IF;
-  RETURN jsonb_build_object('parent_version', next_version, 'child_id', p_child_id);
-END;
+${POSTGRES_WRITER_BODY}
 $$;
 RESET ROLE;
 REVOKE ALL ON ALL TABLES IN SCHEMA timer FROM PUBLIC, anon, authenticated, pai_timer_app, pai_timer_runtime, pai_runtime_bridge, pai_memory_app;
@@ -429,6 +443,72 @@ describePostgres("PostgreSQL owner deployment verification", () => {
     expect(verified).toMatchObject({ owner_service: "timer_trigger_app" });
     expect(verified.contract_fingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(verified.database_fingerprint).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("executes the Trigger Process terminal/meta truth table in PostgreSQL", async () => {
+    const postgres = await reset();
+    await postgres.query(`
+      CREATE TEMP TABLE trigger_process_state_parity (
+        phase text NOT NULL,
+        status text NOT NULL,
+        wait_reason text,
+        terminal_reason text,
+        meta_enqueue_reason text,
+        ${TRIGGER_PROCESS_STATE_V1_DATABASE_CHECK}
+      )
+    `);
+    const validStates = [
+      ["admission", "running", null, null, null],
+      ["context", "running", null, null, null],
+      ["intent", "running", null, null, null],
+      ["execution", "running", null, null, null],
+      ["cooldown", "waiting", "cooldown_until", null, null],
+      [
+        "meta_enqueued",
+        "waiting",
+        "meta_enqueue_wait",
+        null,
+        "cooldown_expired",
+      ],
+      ["closed", "completed", null, "completed", null],
+    ] as const;
+    for (const values of validStates) {
+      await expect(
+        postgres.query(
+          `INSERT INTO trigger_process_state_parity
+             (phase, status, wait_reason, terminal_reason, meta_enqueue_reason)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [...values],
+        ),
+      ).resolves.toBeDefined();
+    }
+    for (const terminalReason of [""] as const) {
+      await expect(
+        postgres.query(
+          `INSERT INTO trigger_process_state_parity
+             (phase, status, wait_reason, terminal_reason, meta_enqueue_reason)
+           VALUES ('admission', 'running', NULL, $1, NULL)`,
+          [terminalReason],
+        ),
+      ).rejects.toThrow();
+    }
+    for (const terminalReason of [null, ""] as const) {
+      await expect(
+        postgres.query(
+          `INSERT INTO trigger_process_state_parity
+             (phase, status, wait_reason, terminal_reason, meta_enqueue_reason)
+           VALUES ('closed', 'completed', NULL, $1, NULL)`,
+          [terminalReason],
+        ),
+      ).rejects.toThrow();
+    }
+    await expect(
+      postgres.query(`
+        INSERT INTO trigger_process_state_parity
+          (phase, status, wait_reason, terminal_reason, meta_enqueue_reason)
+        VALUES ('execution', 'running', NULL, NULL, 'system_interrupted')
+      `),
+    ).rejects.toThrow();
   });
 
   it("binds the verified capability to the executable repository and unit of work", async () => {
@@ -635,6 +715,37 @@ describePostgres("PostgreSQL owner deployment verification", () => {
           END IF;
         `,
       }),
+    ],
+    [
+      "proof hidden behind a CAST constant-false branch",
+      replacementWriterSql({
+        beforeExpectedVersionCheck: `
+          IF CAST(2 AS integer) = 3 THEN
+            INSERT INTO timer.contract_audits(audit_id, child_id, created_at)
+            VALUES ('unreachable-cast-' || p_child_id, p_child_id, clock_timestamp());
+          END IF;
+        `,
+      }),
+    ],
+    [
+      "CAS proof read from an unrelated row",
+      replacementWriterSql({
+        extraDeclare: "unrelated_version bigint;",
+        beforeExpectedVersionCheck: `
+          SELECT parent_version INTO unrelated_version
+            FROM timer.contract_parents
+           ORDER BY parent_key, parent_version
+           LIMIT 1;
+          PERFORM p_expected_parent_version = unrelated_version;
+        `,
+      }),
+    ],
+    [
+      "fail-closed RAISE swallowed by an exception handler",
+      replacementWriterSql().replace(
+        "RAISE EXCEPTION 'stale parent version';",
+        "BEGIN RAISE EXCEPTION 'stale parent version'; EXCEPTION WHEN OTHERS THEN NULL; END;",
+      ),
     ],
     [
       "proof hidden inside a nested dollar-quoted string literal",

@@ -389,7 +389,7 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
       function_name: "ack_runtime_event_outbox_v1",
       primary_table: "runtime_event_outbox",
       writer_kind: "outbox_claim_ack",
-      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_now", "timestamptz"]],
+      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_transport_ref", "text"], ["p_transport_epoch", "text"], ["p_now", "timestamptz"]],
       reads_tables: ["runtime_event_outbox"],
       writes_tables: ["runtime_event_outbox", "runtime_event_dlq"],
       effects: [

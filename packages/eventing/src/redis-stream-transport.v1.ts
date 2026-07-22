@@ -21,11 +21,24 @@ import { canonicalJsonV1, canonicalPayloadHashV1 } from "./canonical-json.v1.js"
 import {
   EventTransportErrorV1,
   type DurableEventDeliveryConsumerPortV1,
-  type DurableEventDeliveryMessageV1,
+  type DurableEventDeliveryV1,
+  type DurableEventInvalidDeliveryV1,
+  type DurableEventReclaimBatchV1,
   type DurableEventTransportPortV1,
 } from "./durable-eventing.v1.js";
 
 const redisSegmentPattern = /^[a-z][a-z0-9_]{0,63}$/;
+const redisStreamIdPattern = /^\d+-\d+$/u;
+const redisEnvelopeFields = new Set([
+  "event_id",
+  "event_type",
+  "schema_version",
+  "producer",
+  "occurred_at",
+  "idempotency_key",
+  "trace_id",
+  "payload",
+]);
 
 export interface RedisRuntimeConfigV1 {
   readonly url: string;
@@ -208,6 +221,7 @@ export interface RedisNamespaceV1 {
   readonly deployment_environment: DeploymentEnvironmentV1;
   readonly release_channel: ReleaseChannelV1;
   readonly owner_service: ServiceIdV1;
+  readonly stream_epoch: string;
   readonly schema_version: "v1";
   readonly prefix: string;
 }
@@ -216,11 +230,13 @@ export function createRedisNamespaceV1(input: Readonly<{
   deployment_environment: DeploymentEnvironmentV1;
   release_channel: ReleaseChannelV1;
   owner_service: ServiceIdV1;
+  stream_epoch: string;
 }>): RedisNamespaceV1 {
   if (
     !DEPLOYMENT_ENVIRONMENTS.includes(input.deployment_environment) ||
     !RELEASE_CHANNELS.includes(input.release_channel) ||
-    !SERVICE_IDS.includes(input.owner_service)
+    !SERVICE_IDS.includes(input.owner_service) ||
+    !redisSegmentPattern.test(input.stream_epoch)
   ) {
     throw new Error("invalid Redis namespace identity");
   }
@@ -228,6 +244,7 @@ export function createRedisNamespaceV1(input: Readonly<{
     deployment_environment: input.deployment_environment,
     release_channel: input.release_channel,
     owner_service: input.owner_service,
+    stream_epoch: input.stream_epoch,
     schema_version: "v1",
     prefix: [
       "pai",
@@ -235,6 +252,7 @@ export function createRedisNamespaceV1(input: Readonly<{
       input.release_channel,
       input.owner_service,
       "v1",
+      input.stream_epoch,
     ].join(":"),
   });
 }
@@ -294,14 +312,57 @@ function assertPositiveBoundedInteger(
   }
 }
 
-function redisMessageToEnvelope(
+function envelopeMatchesRedisNamespaceV1(
+  envelope: DurableEventEnvelopeV1,
+  namespace: RedisNamespaceV1,
+): boolean {
+  if (
+    typeof envelope.payload !== "object" ||
+    envelope.payload === null ||
+    Array.isArray(envelope.payload)
+  ) {
+    return false;
+  }
+  const payload = envelope.payload as Readonly<Record<string, unknown>>;
+  return (
+    envelope.producer === namespace.owner_service &&
+    payload.deployment_environment === namespace.deployment_environment &&
+    payload.release_channel === namespace.release_channel
+  );
+}
+
+function invalidRedisDelivery(
   deliveryId: string,
+  deliverySource: string,
   rawFields: unknown,
-): DurableEventDeliveryMessageV1 {
-  if (!Array.isArray(rawFields) || rawFields.length % 2 !== 0) {
-    throw new EventTransportErrorV1(
-      "transport_rejected",
-      false,
+  errorCode: DurableEventInvalidDeliveryV1["error_code"],
+  message: string,
+): DurableEventInvalidDeliveryV1 {
+  return Object.freeze({
+    kind: "invalid" as const,
+    delivery_id: deliveryId,
+    delivery_ref: `${deliverySource}#${deliveryId}`,
+    error_code: errorCode,
+    error_message: message,
+    raw_fields: Object.freeze(Array.isArray(rawFields) ? [...rawFields] : []),
+  });
+}
+
+function redisMessageToDelivery(
+  deliveryId: string,
+  deliverySource: string,
+  rawFields: unknown,
+  namespace: RedisNamespaceV1,
+): DurableEventDeliveryV1 {
+  if (
+    !Array.isArray(rawFields) ||
+    rawFields.length !== redisEnvelopeFields.size * 2
+  ) {
+    return invalidRedisDelivery(
+      deliveryId,
+      deliverySource,
+      rawFields,
+      "malformed_stream_fields",
       "Redis Stream message fields are malformed",
     );
   }
@@ -309,21 +370,42 @@ function redisMessageToEnvelope(
   for (let index = 0; index < rawFields.length; index += 2) {
     const key = rawFields[index];
     const value = rawFields[index + 1];
-    if (typeof key !== "string" || typeof value !== "string") {
-      throw new EventTransportErrorV1(
-        "transport_rejected",
-        false,
-        "Redis Stream message fields must be strings",
+    if (
+      typeof key !== "string" ||
+      typeof value !== "string" ||
+      !redisEnvelopeFields.has(key) ||
+      fields.has(key)
+    ) {
+      return invalidRedisDelivery(
+        deliveryId,
+        deliverySource,
+        rawFields,
+        "malformed_stream_fields",
+        "Redis Stream message must contain each canonical string field exactly once",
       );
     }
     fields.set(key, value);
   }
   const payload = fields.get("payload");
   if (payload === undefined) {
-    throw new EventTransportErrorV1(
-      "transport_rejected",
-      false,
+    return invalidRedisDelivery(
+      deliveryId,
+      deliverySource,
+      rawFields,
+      "malformed_stream_fields",
       "Redis Stream message is missing payload",
+    );
+  }
+  let parsedPayload: unknown;
+  try {
+    parsedPayload = JSON.parse(payload) as unknown;
+  } catch {
+    return invalidRedisDelivery(
+      deliveryId,
+      deliverySource,
+      rawFields,
+      "invalid_json",
+      "Redis Stream payload is not valid JSON",
     );
   }
   const envelope = {
@@ -334,30 +416,73 @@ function redisMessageToEnvelope(
     occurred_at: fields.get("occurred_at"),
     idempotency_key: fields.get("idempotency_key"),
     trace_id: fields.get("trace_id"),
-    payload: JSON.parse(payload) as unknown,
+    payload: parsedPayload,
   };
-  assertOwnerDurableEventEnvelopeV1(envelope);
-  return Object.freeze({ delivery_id: deliveryId, envelope });
+  try {
+    assertOwnerDurableEventEnvelopeV1(envelope);
+  } catch (error) {
+    return invalidRedisDelivery(
+      deliveryId,
+      deliverySource,
+      rawFields,
+      "invalid_envelope",
+      error instanceof Error ? error.message : "Redis envelope is invalid",
+    );
+  }
+  if (!envelopeMatchesRedisNamespaceV1(envelope, namespace)) {
+    return invalidRedisDelivery(
+      deliveryId,
+      deliverySource,
+      rawFields,
+      "namespace_mismatch",
+      "Redis envelope scope does not match its verified namespace",
+    );
+  }
+  return Object.freeze({
+    kind: "event" as const,
+    delivery_id: deliveryId,
+    delivery_ref: `${deliverySource}#${deliveryId}`,
+    envelope,
+  });
 }
 
 function parseXReadGroupResponse(
   value: unknown,
-): readonly DurableEventDeliveryMessageV1[] {
+  namespace: RedisNamespaceV1,
+  expectedStream: string,
+): readonly DurableEventDeliveryV1[] {
   if (value === null) return [];
-  if (!Array.isArray(value)) {
+  const streamEntries = Array.isArray(value)
+    ? value
+    : typeof value === "object" && value !== null
+      ? Object.entries(value)
+      : undefined;
+  if (streamEntries === undefined) {
     throw new EventTransportErrorV1(
       "transport_rejected",
       false,
       "Redis XREADGROUP response is malformed",
     );
   }
-  const messages: DurableEventDeliveryMessageV1[] = [];
-  for (const streamEntry of value) {
-    if (!Array.isArray(streamEntry) || !Array.isArray(streamEntry[1])) continue;
+  const messages: DurableEventDeliveryV1[] = [];
+  for (const streamEntry of streamEntries) {
+    if (
+      !Array.isArray(streamEntry) ||
+      streamEntry.length !== 2 ||
+      streamEntry[0] !== expectedStream ||
+      !Array.isArray(streamEntry[1])
+    ) {
+      throw new EventTransportErrorV1(
+        "transport_rejected",
+        false,
+        "Redis XREADGROUP stream response is malformed",
+      );
+    }
     for (const rawMessage of streamEntry[1]) {
       if (
         !Array.isArray(rawMessage) ||
-        typeof rawMessage[0] !== "string"
+        typeof rawMessage[0] !== "string" ||
+        !redisStreamIdPattern.test(rawMessage[0])
       ) {
         throw new EventTransportErrorV1(
           "transport_rejected",
@@ -365,7 +490,14 @@ function parseXReadGroupResponse(
           "Redis Stream delivery is malformed",
         );
       }
-      messages.push(redisMessageToEnvelope(rawMessage[0], rawMessage[1]));
+      messages.push(
+        redisMessageToDelivery(
+          rawMessage[0],
+          expectedStream,
+          rawMessage[1],
+          namespace,
+        ),
+      );
     }
   }
   return messages;
@@ -373,23 +505,58 @@ function parseXReadGroupResponse(
 
 function parseXAutoClaimResponse(
   value: unknown,
-): readonly DurableEventDeliveryMessageV1[] {
-  if (!Array.isArray(value) || !Array.isArray(value[1])) {
+  namespace: RedisNamespaceV1,
+  expectedStream: string,
+): DurableEventReclaimBatchV1 {
+  if (
+    !Array.isArray(value) ||
+    typeof value[0] !== "string" ||
+    !redisStreamIdPattern.test(value[0]) ||
+    !Array.isArray(value[1]) ||
+    (value[2] !== undefined && !Array.isArray(value[2]))
+  ) {
     throw new EventTransportErrorV1(
       "transport_rejected",
       false,
       "Redis XAUTOCLAIM response is malformed",
     );
   }
-  return value[1].map((rawMessage: unknown) => {
-    if (!Array.isArray(rawMessage) || typeof rawMessage[0] !== "string") {
+  const deliveries = value[1].map((rawMessage: unknown) => {
+    if (
+      !Array.isArray(rawMessage) ||
+      typeof rawMessage[0] !== "string" ||
+      !redisStreamIdPattern.test(rawMessage[0])
+    ) {
       throw new EventTransportErrorV1(
         "transport_rejected",
         false,
         "Redis pending delivery is malformed",
       );
     }
-    return redisMessageToEnvelope(rawMessage[0], rawMessage[1]);
+    return redisMessageToDelivery(
+      rawMessage[0],
+      expectedStream,
+      rawMessage[1],
+      namespace,
+    );
+  });
+  const deletedIds = value[2] ?? [];
+  if (
+    deletedIds.some(
+      (id: unknown) =>
+        typeof id !== "string" || !redisStreamIdPattern.test(id),
+    )
+  ) {
+    throw new EventTransportErrorV1(
+      "transport_rejected",
+      false,
+      "Redis XAUTOCLAIM deleted delivery ids are malformed",
+    );
+  }
+  return Object.freeze({
+    next_start_id: value[0],
+    deliveries: Object.freeze(deliveries),
+    deleted_ids: Object.freeze([...deletedIds]) as readonly string[],
   });
 }
 
@@ -399,10 +566,11 @@ export function createRedisStreamConsumerGroupPortV1(
     stream: string;
     group: string;
     consumer: string;
+    namespace: RedisNamespaceV1;
   }>,
 ): RedisStreamConsumerGroupPortV1 {
-  if (options.stream.trim().length === 0) {
-    throw new Error("Redis consumer stream must be non-empty");
+  if (!options.stream.startsWith(`${options.namespace.prefix}:`)) {
+    throw new Error("Redis consumer stream must belong to the verified namespace");
   }
   assertRedisConsumerName(options.group, "Redis consumer group");
   assertRedisConsumerName(options.consumer, "Redis consumer name");
@@ -443,7 +611,7 @@ export function createRedisStreamConsumerGroupPortV1(
         options.stream,
         ">",
       ]);
-      return parseXReadGroupResponse(response);
+      return parseXReadGroupResponse(response, options.namespace, options.stream);
     },
     async reclaimPending(
       request: Readonly<{
@@ -458,8 +626,8 @@ export function createRedisStreamConsumerGroupPortV1(
         86_400_000,
       );
       assertPositiveBoundedInteger(request.count, "Redis XAUTOCLAIM count", 1_000);
-      if (request.start_id.trim().length === 0) {
-        throw new Error("Redis XAUTOCLAIM start_id must be non-empty");
+      if (!redisStreamIdPattern.test(request.start_id)) {
+        throw new Error("Redis XAUTOCLAIM start_id must be a stream id");
       }
       const response = await client.sendCommand([
         "XAUTOCLAIM",
@@ -471,12 +639,16 @@ export function createRedisStreamConsumerGroupPortV1(
         "COUNT",
         String(request.count),
       ]);
-      return parseXAutoClaimResponse(response);
+      return parseXAutoClaimResponse(response, options.namespace, options.stream);
     },
     async acknowledge(request: Readonly<{ delivery_ids: readonly string[] }>) {
       if (request.delivery_ids.length === 0) return { acknowledged: 0 };
-      if (request.delivery_ids.some((deliveryId: string) => deliveryId.trim().length === 0)) {
-        throw new Error("Redis XACK delivery id must be non-empty");
+      if (
+        request.delivery_ids.some(
+          (deliveryId: string) => !redisStreamIdPattern.test(deliveryId),
+        )
+      ) {
+        throw new Error("Redis XACK delivery id must be a stream id");
       }
       const acknowledged = await client.sendCommand([
         "XACK",
@@ -743,6 +915,13 @@ export async function openVerifiedRedisStreamCompositionV1(options: Readonly<{
             "event producer or type is outside the Redis owner namespace",
           );
         }
+        if (!envelopeMatchesRedisNamespaceV1(request.envelope, options.namespace)) {
+          throw new EventTransportErrorV1(
+            "transport_rejected",
+            false,
+            "event scope does not match the Redis environment/channel namespace",
+          );
+        }
         if (!isDurableEventTargetAllowedV1(request.envelope, request.target)) {
           throw new EventTransportErrorV1(
             "transport_rejected",
@@ -789,7 +968,10 @@ export async function openVerifiedRedisStreamCompositionV1(options: Readonly<{
             );
           }
           dependencyMonitor.recordSuccess();
-          return { transport_ref: `redis_stream:${streamId}` };
+          return {
+            transport_ref: `redis_stream:${stream}:${streamId}`,
+            transport_epoch: options.namespace.stream_epoch,
+          };
         } catch (error) {
           dependencyMonitor.recordFailure();
           if (error instanceof EventTransportErrorV1) throw error;

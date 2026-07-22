@@ -9,6 +9,7 @@ import {
   isDurableEventTargetAllowedV1,
   SERVICE_IDS,
   isOwnerDurableEventTypeV1,
+  TERMINAL_OUTCOMES_V1,
 } from "../../src/index.js";
 
 function botScope() {
@@ -172,6 +173,118 @@ describe("owner durable event type unions V1", () => {
         },
       }),
     ).toThrow(/payload/u);
+  });
+
+  it("uses each owner domain's canonical terminal status union", () => {
+    const triggerEnvelope = {
+      event_id: "evt_trigger_terminal_001",
+      event_type: "trigger_process.outcome_finalized",
+      schema_version: "trigger_processor_event.v1",
+      producer: "trigger_processor",
+      occurred_at: "2026-07-22T04:00:00.000Z",
+      idempotency_key: "trigger_process_001:terminal",
+      trace_id: "trace_trigger_terminal_001",
+      payload: {
+        ...botScope(),
+        trigger_process_id: "trigger_process_001",
+        outcome: "executed",
+      },
+    } as const;
+    for (const outcome of TERMINAL_OUTCOMES_V1) {
+      expect(() =>
+        assertOwnerDurableEventEnvelopeV1({
+          ...triggerEnvelope,
+          payload: { ...triggerEnvelope.payload, outcome },
+        }),
+      ).not.toThrow();
+    }
+    expect(() =>
+      assertOwnerDurableEventEnvelopeV1({
+        ...triggerEnvelope,
+        payload: { ...triggerEnvelope.payload, outcome: "completed" },
+      }),
+    ).toThrow(/payload/u);
+
+    const metaEnvelope = {
+      event_id: "evt_meta_terminal_001",
+      event_type: "meta.result.finalized",
+      schema_version: "meta_cognition_event.v1",
+      producer: "meta_cognition",
+      occurred_at: "2026-07-22T04:00:00.000Z",
+      idempotency_key: "meta_result_001:v3:finalized",
+      trace_id: "trace_meta_terminal_001",
+      payload: {
+        ...botScope(),
+        meta_result_id: "meta_result_001",
+        meta_job_id: "meta_job_001",
+        result_version: 3,
+        result_status: "complete",
+        finalized_at: "2026-07-22T04:00:00.000Z",
+      },
+    } as const;
+    expect(() => assertOwnerDurableEventEnvelopeV1(metaEnvelope)).not.toThrow();
+    expect(() =>
+      assertOwnerDurableEventEnvelopeV1({
+        ...metaEnvelope,
+        payload: { ...metaEnvelope.payload, result_status: "partial_pending" },
+      }),
+    ).toThrow(/payload/u);
+
+    const memoryEnvelope = {
+      event_id: "evt_memory_terminal_001",
+      event_type: "memory.integration.finished",
+      schema_version: "memory_event.v1",
+      producer: "memory",
+      occurred_at: "2026-07-22T04:00:00.000Z",
+      idempotency_key: "integration_001:v4",
+      trace_id: "trace_memory_terminal_001",
+      payload: {
+        ...botScope(),
+        integration_job_id: "integration_001",
+        aggregate_id: "integration_001",
+        aggregate_version: 4,
+        aggregate_type: "integration_job",
+        mode: "full",
+        status: "partial_failed",
+        checkpoint_ref: "checkpoint:integration_001:4",
+        applied_counts: { points: 10 },
+        failure_refs: ["artifact:failure_001"],
+      },
+    } as const;
+    expect(() => assertOwnerDurableEventEnvelopeV1(memoryEnvelope)).not.toThrow();
+    expect(() =>
+      assertOwnerDurableEventEnvelopeV1({
+        ...memoryEnvelope,
+        payload: { ...memoryEnvelope.payload, status: "cancelled" },
+      }),
+    ).toThrow(/payload/u);
+    expect(() =>
+      assertOwnerDurableEventEnvelopeV1({
+        ...memoryEnvelope,
+        payload: {
+          ...memoryEnvelope.payload,
+          aggregate_type: "memory_series",
+        },
+      }),
+    ).toThrow(/payload/u);
+    expect(() =>
+      assertOwnerDurableEventEnvelopeV1({
+        ...memoryEnvelope,
+        payload: {
+          ...memoryEnvelope.payload,
+          failure_refs: ["untyped_failure"],
+        },
+      }),
+    ).toThrow(/payload/u);
+    expect(() =>
+      assertOwnerDurableEventEnvelopeV1({
+        ...memoryEnvelope,
+        payload: {
+          ...memoryEnvelope.payload,
+          aggregate_id: "another_integration_job",
+        },
+      }),
+    ).toThrow(/aggregate_id/u);
   });
 
   it("binds durable events to explicit consumer services and route targets", () => {
