@@ -2423,12 +2423,18 @@ function matchesIntegerRange(
   max: number,
 ): boolean {
   const terms = splitCheckConjunction(expression);
+  const postgresIntegerLiteralPattern = (value: number): string => {
+    const literal = escapeRegularExpression(String(value));
+    return `(?:${literal}|'${literal}'\\s*::\\s*(?:pg_catalog\\.)?(?:bigint|int8|integer|int4|smallint|int2|numeric))`;
+  };
+  const minLiteral = postgresIntegerLiteralPattern(min);
+  const maxLiteral = postgresIntegerLiteralPattern(max);
   const minPattern = new RegExp(
-    `^(?:\\b${column}\\b\\s*>=\\s*${min}|${min}\\s*<=\\s*\\b${column}\\b)$`,
+    `^(?:\\b${column}\\b\\s*>=\\s*${minLiteral}|${minLiteral}\\s*<=\\s*\\b${column}\\b)$`,
     "iu",
   );
   const maxPattern = new RegExp(
-    `^(?:\\b${column}\\b\\s*<=\\s*${max}|${max}\\s*>=\\s*\\b${column}\\b)$`,
+    `^(?:\\b${column}\\b\\s*<=\\s*${maxLiteral}|${maxLiteral}\\s*>=\\s*\\b${column}\\b)$`,
     "iu",
   );
   return (

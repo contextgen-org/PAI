@@ -537,7 +537,7 @@ export const MEMORY_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
       table_name: "eventing_transport_epochs",
       required_definition_fragments: [
         "active_generation >= 1",
-        "active_generation <= 9007199254740991",
+        "9007199254740991",
       ],
       semantic_constraint: {
         kind: "integer_range",

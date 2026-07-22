@@ -470,6 +470,12 @@ describe("owner repository contracts", () => {
     expect(() =>
       verifyOwnerDatabaseCheckDefinitionV1(
         generationExpectation,
+        "CHECK (slot_generation >= 0 AND slot_generation <= '9007199254740991'::bigint)",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        generationExpectation,
         "CHECK (((slot_generation >= 0) AND (slot_generation <= 9007199254740991)) OR true)",
       ),
     ).toThrow(/CHECK constraint drift/u);
