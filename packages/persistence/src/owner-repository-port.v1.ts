@@ -1,7 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { isIP } from "node:net";
+import { checkServerIdentity } from "node:tls";
 
 import type { ServiceIdV1 } from "@pai/contracts";
-import { Pool, type PoolClient } from "pg";
+import { Pool, type PoolClient, type PoolConfig } from "pg";
+
+import { checkOwnerPostgresReadinessV1 } from "./owner-postgres-readiness.v1.js";
 
 export const OWNER_DATABASE_TARGETS_V1 = {
   trigger_processor: {
@@ -24,6 +29,12 @@ export const OWNER_DATABASE_TARGETS_V1 = {
   knowthat: { schema: "knowthat", app_role: "pai_knowthat_app" },
   memory: { schema: "memory", app_role: "pai_memory_app" },
 } as const;
+
+const OWNER_DATABASE_SCHEMAS_V1 = Object.freeze([
+  ...new Set(
+    Object.values(OWNER_DATABASE_TARGETS_V1).map(({ schema }) => schema),
+  ),
+]);
 
 export type OwnerDatabaseServiceIdV1 = keyof typeof OWNER_DATABASE_TARGETS_V1;
 export type OwnerSchemaV1 =
@@ -58,6 +69,8 @@ export interface OwnerFunctionArgumentV1 {
   readonly argument_name: string;
   readonly postgres_type: OwnerPostgresTypeV1;
   readonly mode: "in";
+  /** Omitted metadata is fail-closed and therefore equivalent to false. */
+  readonly nullable?: boolean | undefined;
 }
 
 export interface OwnerFunctionEffectV1<TTable extends string = string> {
@@ -71,14 +84,19 @@ export interface OwnerFunctionEffectV1<TTable extends string = string> {
     | "claim"
     | "ack"
     | "redrive_claim"
-    | "redrive_ack";
+    | "redrive_ack"
+    | "reconcile_mark_missing"
+    | "reconcile_claim"
+    | "reconcile_ack_present"
+    | "reconcile_ack_rematerialized";
   readonly concurrency_control:
     | "idempotency_key"
     | "expected_state_version"
     | "expected_version"
     | "generation_fence"
     | "slot_and_process_state_fence"
-    | "lease_fence";
+    | "lease_fence"
+    | "reconciliation_fence";
 }
 
 export interface OwnerFunctionSignatureV1<
@@ -330,6 +348,15 @@ export type OwnerForeignKeySnapshotV1 =
       reason: string;
     }>;
 
+export interface OwnerDlqResolutionBindingV1<
+  TTable extends string = string,
+  TWriter extends string = string,
+> {
+  readonly dlq_table: TTable;
+  readonly resolution_table: TTable;
+  readonly resolve_writer: TWriter;
+}
+
 export interface OwnerRepositoryContractV1<
   TService extends OwnerDatabaseServiceIdV1 = OwnerDatabaseServiceIdV1,
   TTable extends string = string,
@@ -366,6 +393,14 @@ export interface OwnerRepositoryContractV1<
   readonly outbox_tables: readonly TTable[];
   readonly inbox_tables: readonly TTable[];
   readonly dlq_tables: readonly TTable[];
+  /**
+   * Optional during migration. Once present it must cover every DLQ exactly
+   * once and each binding is validated as an immutable resolution fact.
+   */
+  readonly dlq_resolutions?: readonly OwnerDlqResolutionBindingV1<
+    TTable,
+    TWriter
+  >[];
   readonly object_metadata_tables: readonly TTable[];
 }
 
@@ -379,12 +414,112 @@ export const OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1 =
 export const OWNER_EVENTING_TRANSPORT_EPOCH_WRITER_V1 =
   "activate_eventing_transport_epoch_v1" as const;
 export const OWNER_SAFE_BIGINT_MAX_V1 = Number.MAX_SAFE_INTEGER;
+export const OWNER_OUTBOX_BATCH_MAX_V1 = 16;
 const ownerEventingTransportEpochColumnsV1 = Object.freeze([
   "transport_name",
   "active_epoch",
   "active_generation",
   "activated_at",
 ] as const);
+const ownerEventingReconciliationRequiredExistingColumnsV1 = Object.freeze([
+  "id",
+  "status",
+  "attempt_count",
+  "transport_ref",
+  "transport_epoch",
+  "transport_generation",
+  "sent_at",
+  "updated_at",
+] as const);
+const ownerEventingReconciliationAddedColumnsV1 = Object.freeze([
+  "reconciliation_missing_at",
+  "reconciliation_missing_reporter",
+  "reconciliation_next_probe_at",
+  "reconciliation_claimed_by",
+  "reconciliation_claim_token",
+  "reconciliation_claim_generation",
+  "reconciliation_locked_until",
+] as const);
+export const OWNER_EVENTING_RECONCILIATION_NEXT_PROBE_SEMANTICS_V1 =
+  Object.freeze({
+    clock_authority: "postgres_clock_timestamp" as const,
+    claim_lease: "database_now_plus_bounded_lease_seconds" as const,
+    acknowledgment_schedule:
+      "database_now_plus_bounded_probe_interval_ms" as const,
+    null_next_probe: "due_immediately" as const,
+    previous_generation:
+      "due_immediately_regardless_of_next_probe" as const,
+    reported_missing:
+      "due_immediately_regardless_of_next_probe" as const,
+    current_generation: "due_when_next_probe_at_lte_now" as const,
+    deleted_ref_update:
+      "least_existing_or_observed_at_with_null_as_observed_at" as const,
+  });
+
+export type OwnerEventingReconciliationWriterNameV1<
+  TOutboxTable extends string = string,
+> =
+  | `record_${TOutboxTable}_deleted_transport_refs_v1`
+  | `claim_${TOutboxTable}_reconciliation_v1`
+  | `ack_${TOutboxTable}_transport_present_v1`
+  | `ack_${TOutboxTable}_rematerialized_v1`;
+
+export interface OwnerEventingReconciliationContractV1<
+  TSchema extends OwnerSchemaV1 = OwnerSchemaV1,
+  TOutboxTable extends string = string,
+> {
+  readonly outbox_table: TOutboxTable;
+  /** Physical prerequisites; these are not app_role SELECT grants. */
+  readonly required_existing_columns: readonly string[];
+  readonly database_columns: readonly OwnerDatabaseColumnV1<TOutboxTable>[];
+  readonly database_checks: readonly OwnerDatabaseCheckV1<TOutboxTable>[];
+  readonly database_indexes: readonly OwnerDatabaseIndexV1<TOutboxTable>[];
+  readonly mutable_writers: readonly OwnerEventingReconciliationWriterNameV1<TOutboxTable>[];
+  readonly function_signatures: readonly OwnerFunctionSignatureV1<
+    TSchema,
+    TOutboxTable | typeof OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1,
+    OwnerEventingReconciliationWriterNameV1<TOutboxTable>
+  >[];
+  readonly next_probe_semantics: typeof OWNER_EVENTING_RECONCILIATION_NEXT_PROBE_SEMANTICS_V1;
+}
+
+export type OwnerDlqResolutionTableNameV1<TDlqTable extends string = string> =
+  `${TDlqTable}_resolutions`;
+export type OwnerDlqResolutionWriterNameV1<TDlqTable extends string = string> =
+  `resolve_${TDlqTable}_v1`;
+
+export interface OwnerDlqResolutionContractV1<
+  TSchema extends OwnerSchemaV1 = OwnerSchemaV1,
+  TDlqTable extends string = string,
+> {
+  readonly binding: Readonly<{
+    dlq_table: TDlqTable;
+    resolution_table: OwnerDlqResolutionTableNameV1<TDlqTable>;
+    resolve_writer: OwnerDlqResolutionWriterNameV1<TDlqTable>;
+  }>;
+  readonly resolution_table: OwnerDlqResolutionTableNameV1<TDlqTable>;
+  readonly table_permission: OwnerTablePermissionV1<
+    OwnerDlqResolutionTableNameV1<TDlqTable>
+  >;
+  readonly database_columns: readonly OwnerDatabaseColumnV1<
+    OwnerDlqResolutionTableNameV1<TDlqTable>
+  >[];
+  readonly foreign_keys: readonly OwnerForeignKeyV1<
+    TDlqTable | OwnerDlqResolutionTableNameV1<TDlqTable>
+  >[];
+  readonly database_unique_constraints: readonly OwnerDatabaseUniqueConstraintV1<
+    OwnerDlqResolutionTableNameV1<TDlqTable>
+  >[];
+  readonly database_indexes: readonly OwnerDatabaseIndexV1<
+    OwnerDlqResolutionTableNameV1<TDlqTable>
+  >[];
+  readonly mutable_writers: readonly OwnerDlqResolutionWriterNameV1<TDlqTable>[];
+  readonly function_signatures: readonly OwnerFunctionSignatureV1<
+    TSchema,
+    TDlqTable | OwnerDlqResolutionTableNameV1<TDlqTable>,
+    OwnerDlqResolutionWriterNameV1<TDlqTable>
+  >[];
+}
 
 function assertUniqueIdentifiers(label: string, values: readonly string[]): void {
   if (
@@ -405,7 +540,9 @@ const writerKinds = new Set<OwnerWriterKindV1>([
 ]);
 const effectOperations = new Set<OwnerFunctionEffectV1["operation"]>([
   "append", "upsert", "transition", "cas", "enqueue", "claim", "ack",
-  "redrive_claim", "redrive_ack",
+  "redrive_claim", "redrive_ack", "reconcile_mark_missing",
+  "reconcile_claim", "reconcile_ack_present",
+  "reconcile_ack_rematerialized",
 ]);
 const concurrencyControls = new Set<
   OwnerFunctionEffectV1["concurrency_control"]
@@ -416,6 +553,7 @@ const concurrencyControls = new Set<
   "generation_fence",
   "slot_and_process_state_fence",
   "lease_fence",
+  "reconciliation_fence",
 ]);
 
 const operationsByWriterKind: Readonly<
@@ -432,14 +570,57 @@ const operationsByWriterKind: Readonly<
     "ack",
     "redrive_claim",
     "redrive_ack",
+    "reconcile_mark_missing",
+    "reconcile_claim",
+    "reconcile_ack_present",
+    "reconcile_ack_rematerialized",
   ]),
 };
+
+function reconciliationFenceArgumentNames(
+  operation: OwnerFunctionEffectV1["operation"],
+): readonly string[] {
+  if (operation === "reconcile_mark_missing") {
+    return [
+      "p_observed_transport_epoch",
+      "p_observed_transport_generation",
+    ];
+  }
+  if (operation === "reconcile_claim") {
+    return [
+      "p_worker_id",
+      "p_lease_seconds",
+      "p_current_transport_epoch",
+      "p_current_transport_generation",
+    ];
+  }
+  if (
+    operation === "reconcile_ack_present" ||
+    operation === "reconcile_ack_rematerialized"
+  ) {
+    return [
+      "p_outbox_id",
+      "p_claim_token",
+      "p_previous_transport_ref",
+      "p_previous_transport_epoch",
+      "p_previous_transport_generation",
+      "p_current_transport_epoch",
+      "p_current_transport_generation",
+    ];
+  }
+  return [];
+}
 
 function hasConcurrencyArgument(
   signature: OwnerFunctionSignatureV1,
   control: OwnerFunctionEffectV1["concurrency_control"],
+  operation: OwnerFunctionEffectV1["operation"],
 ): boolean {
   const names = signature.arguments.map(({ argument_name }) => argument_name);
+  if (control === "reconciliation_fence") {
+    const required = reconciliationFenceArgumentNames(operation);
+    return required.length > 0 && required.every((name) => names.includes(name));
+  }
   if (control === "slot_and_process_state_fence") {
     return (
       names.includes("p_admission_precondition") ||
@@ -473,20 +654,54 @@ function hasConcurrencyArgument(
   );
 }
 
+const OWNER_OUTBOX_ACK_NULLABLE_ARGUMENT_NAMES_V1 = Object.freeze([
+  "p_next_retry_at",
+  "p_error",
+  "p_transport_ref",
+  "p_transport_epoch",
+  "p_transport_generation",
+] as const);
+
+type OwnerOutboxAckNullableArgumentNameV1 =
+  (typeof OWNER_OUTBOX_ACK_NULLABLE_ARGUMENT_NAMES_V1)[number];
+
+type OwnerImplicitNullableArgumentNamesV1<
+  TWriterKind extends OwnerWriterKindV1,
+  TEffects extends readonly OwnerFunctionEffectV1[],
+> = TWriterKind extends "outbox_claim_ack"
+  ? Extract<TEffects[number], { operation: "ack" }> extends never
+    ? never
+    : OwnerOutboxAckNullableArgumentNameV1
+  : never;
+
 type OwnerFunctionArgumentsFromTuplesV1<
   TArguments extends readonly (
-    readonly [argument_name: string, postgres_type: OwnerPostgresTypeV1]
+    readonly [
+      argument_name: string,
+      postgres_type: OwnerPostgresTypeV1,
+      options?: Readonly<{ nullable?: boolean }>,
+    ]
   )[],
+  TImplicitNullableNames extends string = never,
 > = {
   readonly [TIndex in keyof TArguments]: TArguments[TIndex] extends readonly [
     infer TName extends string,
     infer TType extends OwnerPostgresTypeV1,
+    ...infer TRest,
   ]
-    ? Readonly<{
-        argument_name: TName;
-        postgres_type: TType;
-        mode: "in";
-      }>
+    ? Readonly<
+        {
+          argument_name: TName;
+          postgres_type: TType;
+          mode: "in";
+        } & (TName extends TImplicitNullableNames
+          ? { nullable: true }
+          : TRest extends readonly [infer TOptions]
+            ? TOptions extends Readonly<{ nullable: true }>
+              ? { nullable: true }
+              : { nullable?: false }
+            : { nullable?: false })
+      >
     : never;
 };
 
@@ -494,36 +709,56 @@ export function ownerFunctionSignatureV1<
   const TSchema extends OwnerSchemaV1,
   const TTable extends string,
   const TWriter extends string,
+  const TWriterKind extends OwnerWriterKindV1,
   const TArguments extends readonly (
-    readonly [argument_name: string, postgres_type: OwnerPostgresTypeV1]
+    readonly [
+      argument_name: string,
+      postgres_type: OwnerPostgresTypeV1,
+      options?: Readonly<{ nullable?: boolean }>,
+    ]
   )[],
+  const TEffects extends readonly OwnerFunctionEffectV1<TTable>[],
 >(input: {
   readonly schema: TSchema;
   readonly function_name: TWriter;
   readonly primary_table: TTable;
-  readonly writer_kind: OwnerWriterKindV1;
+  readonly writer_kind: TWriterKind;
   readonly arguments: TArguments;
   readonly reads_tables: readonly TTable[];
   readonly writes_tables: readonly TTable[];
-  readonly effects: readonly OwnerFunctionEffectV1<TTable>[];
+  readonly effects: TEffects;
   readonly returns: "jsonb" | "setof jsonb";
 }): OwnerFunctionSignatureV1<
   TSchema,
   TTable,
   TWriter,
-  OwnerFunctionArgumentsFromTuplesV1<TArguments>
+  OwnerFunctionArgumentsFromTuplesV1<
+    TArguments,
+    OwnerImplicitNullableArgumentNamesV1<TWriterKind, TEffects>
+  >
 > {
+  const usesStandardOutboxAckNullability =
+    input.writer_kind === "outbox_claim_ack" &&
+    input.effects.some(({ operation }) => operation === "ack");
   const signature = {
     schema: input.schema,
     function_name: input.function_name,
     primary_table: input.primary_table,
     writer_kind: input.writer_kind,
-    arguments: input.arguments.map(([argument_name, postgres_type]) =>
-      Object.freeze({
-        argument_name,
-        postgres_type,
-        mode: "in" as const,
-      }),
+    arguments: input.arguments.map(
+      ([argument_name, postgres_type, options]) =>
+        Object.freeze({
+          argument_name,
+          postgres_type,
+          mode: "in" as const,
+          ...(options?.nullable === true ||
+          (usesStandardOutboxAckNullability &&
+            OWNER_OUTBOX_ACK_NULLABLE_ARGUMENT_NAMES_V1.includes(
+              argument_name as OwnerOutboxAckNullableArgumentNameV1,
+            ))
+            ? { nullable: true as const }
+            : {}),
+        }),
     ),
     reads_tables: [...input.reads_tables],
     writes_tables: [...input.writes_tables],
@@ -535,7 +770,10 @@ export function ownerFunctionSignatureV1<
     TSchema,
     TTable,
     TWriter,
-    OwnerFunctionArgumentsFromTuplesV1<TArguments>
+    OwnerFunctionArgumentsFromTuplesV1<
+      TArguments,
+      OwnerImplicitNullableArgumentNamesV1<TWriterKind, TEffects>
+    >
   >;
   Object.freeze(signature.arguments);
   Object.freeze(signature.reads_tables);
@@ -590,6 +828,443 @@ export function ownerEventingTransportEpochActivationSignatureV1<
     ],
     returns: "jsonb",
   });
+}
+
+/**
+ * Canonical immutable DLQ-resolution fact. Resolution never updates the
+ * original dead-letter row: one unique append records the terminal action and
+ * its audit context, while idempotency_key makes retries deterministic.
+ */
+export function ownerDlqResolutionContractV1<
+  const TSchema extends OwnerSchemaV1,
+  const TDlqTable extends string,
+>(
+  schema: TSchema,
+  dlqTable: TDlqTable,
+): OwnerDlqResolutionContractV1<TSchema, TDlqTable> {
+  if (!sqlIdentifierPattern.test(dlqTable)) {
+    throw new Error("DLQ resolution source must be a SQL identifier");
+  }
+  const resolutionTable =
+    `${dlqTable}_resolutions` as OwnerDlqResolutionTableNameV1<TDlqTable>;
+  const resolveWriter =
+    `resolve_${dlqTable}_v1` as OwnerDlqResolutionWriterNameV1<TDlqTable>;
+  const primaryKeyName = `${resolutionTable}_pkey` as const;
+  const dlqUniqueName = `${resolutionTable}_dlq_id_key` as const;
+  const idempotencyUniqueName =
+    `${resolutionTable}_idempotency_key_key` as const;
+  const foreignKeyName = `${resolutionTable}_dlq_id_fkey` as const;
+  for (const identifier of [
+    resolutionTable,
+    resolveWriter,
+    primaryKeyName,
+    dlqUniqueName,
+    idempotencyUniqueName,
+    foreignKeyName,
+  ]) {
+    if (!sqlIdentifierPattern.test(identifier) || identifier.length > 63) {
+      throw new Error(
+        `DLQ resolution identifier exceeds PostgreSQL limits: ${identifier}`,
+      );
+    }
+  }
+
+  const columnNames = Object.freeze([
+    "resolution_id",
+    "dlq_id",
+    "idempotency_key",
+    "resolution_kind",
+    "resolution_payload",
+    "resolved_by",
+    "resolved_at",
+  ] as const);
+  const databaseColumns = Object.freeze(
+    (
+      [
+        ["resolution_id", "text"],
+        ["dlq_id", "text"],
+        ["idempotency_key", "text"],
+        ["resolution_kind", "text"],
+        ["resolution_payload", "jsonb"],
+        ["resolved_by", "text"],
+        ["resolved_at", "timestamp with time zone"],
+      ] as const
+    ).map(([column_name, postgres_type]) =>
+      Object.freeze({
+        table_name: resolutionTable,
+        column_name,
+        postgres_type,
+        not_null: true,
+        default_expression: null,
+        identity: "" as const,
+        generated: "" as const,
+      }),
+    ),
+  );
+  const tablePermission = Object.freeze({
+    table_name: resolutionTable,
+    select_columns: columnNames,
+    insert_columns: Object.freeze([] as const),
+    update_columns: Object.freeze([] as const),
+    delete_allowed: false as const,
+    writer_kind: "immutable_append" as const,
+  });
+  const foreignKeys = Object.freeze([
+    ownerForeignKeyV1<
+      TSchema,
+      TDlqTable | OwnerDlqResolutionTableNameV1<TDlqTable>
+    >({
+      schema,
+      constraint_name: foreignKeyName,
+      table_name: resolutionTable,
+      columns: ["dlq_id"],
+      referenced_table: dlqTable,
+      referenced_columns: ["id"],
+    }),
+  ]);
+  const databaseUniqueConstraints = Object.freeze(
+    (
+      [
+        [primaryKeyName, "resolution_id", "primary_key"],
+        [dlqUniqueName, "dlq_id", "unique"],
+        [idempotencyUniqueName, "idempotency_key", "unique"],
+      ] as const
+    ).map(([constraint_name, column, kind]) =>
+      Object.freeze({
+        constraint_name,
+        table_name: resolutionTable,
+        columns: Object.freeze([column]),
+        kind,
+        deferrable: false,
+        initially_deferred: false,
+        validated: true,
+      }),
+    ),
+  );
+  const databaseIndexes = Object.freeze(
+    databaseUniqueConstraints.map((constraint) =>
+      Object.freeze({
+        index_name: constraint.constraint_name,
+        table_name: resolutionTable,
+        definition:
+          `CREATE UNIQUE INDEX ${constraint.constraint_name} ON ${schema}.${resolutionTable} ` +
+          `USING btree (${constraint.columns[0]})`,
+        unique: true,
+        primary: constraint.kind === "primary_key",
+        valid: true,
+      }),
+    ),
+  );
+  const signature = ownerFunctionSignatureV1({
+    schema,
+    function_name: resolveWriter,
+    primary_table: resolutionTable,
+    writer_kind: "immutable_append",
+    arguments: [
+      ["p_resolution_id", "text"],
+      ["p_dlq_id", "text"],
+      ["p_idempotency_key", "text"],
+      ["p_resolution_kind", "text"],
+      ["p_resolution_payload", "jsonb"],
+      ["p_resolved_by", "text"],
+      ["p_resolved_at", "timestamptz"],
+    ],
+    reads_tables: [dlqTable, resolutionTable],
+    writes_tables: [resolutionTable],
+    effects: [
+      {
+        table_name: resolutionTable,
+        operation: "append",
+        concurrency_control: "idempotency_key",
+      },
+    ],
+    returns: "jsonb",
+  });
+  const binding = Object.freeze({
+    dlq_table: dlqTable,
+    resolution_table: resolutionTable,
+    resolve_writer: resolveWriter,
+  });
+  return Object.freeze({
+    binding,
+    resolution_table: resolutionTable,
+    table_permission: tablePermission,
+    database_columns: databaseColumns,
+    foreign_keys: foreignKeys,
+    database_unique_constraints: databaseUniqueConstraints,
+    database_indexes: databaseIndexes,
+    mutable_writers: Object.freeze([resolveWriter]),
+    function_signatures: Object.freeze([signature]),
+  }) as OwnerDlqResolutionContractV1<TSchema, TDlqTable>;
+}
+
+/**
+ * Canonical physical and writer fragment for durable sent-outbox
+ * reconciliation. The returned physical columns deliberately do not modify
+ * table_permissions.select_columns: claim tokens and leases stay reachable
+ * only through verified SECURITY DEFINER writers.
+ */
+export function ownerEventingReconciliationContractV1<
+  const TSchema extends OwnerSchemaV1,
+  const TOutboxTable extends string,
+>(
+  schema: TSchema,
+  outboxTable: TOutboxTable,
+): OwnerEventingReconciliationContractV1<TSchema, TOutboxTable> {
+  if (!sqlIdentifierPattern.test(outboxTable)) {
+    throw new Error("eventing reconciliation outbox must be a SQL identifier");
+  }
+  const recordDeletedWriterName =
+    `record_${outboxTable}_deleted_transport_refs_v1` as const;
+  const claimWriterName =
+    `claim_${outboxTable}_reconciliation_v1` as const;
+  const acknowledgePresentWriterName =
+    `ack_${outboxTable}_transport_present_v1` as const;
+  const acknowledgeRematerializedWriterName =
+    `ack_${outboxTable}_rematerialized_v1` as const;
+  const writerNames = Object.freeze([
+    recordDeletedWriterName,
+    claimWriterName,
+    acknowledgePresentWriterName,
+    acknowledgeRematerializedWriterName,
+  ] as const);
+  const indexNames = Object.freeze([
+    `${outboxTable}_reconciliation_transport_ref_idx`,
+    `${outboxTable}_reconciliation_due_idx`,
+    `${outboxTable}_reconciliation_generation_idx`,
+  ] as const);
+  const checkNames = Object.freeze([
+    `${outboxTable}_reconciliation_generation_check`,
+    `${outboxTable}_sent_transport_ref_check`,
+    `${outboxTable}_sent_transport_epoch_check`,
+    `${outboxTable}_sent_transport_generation_check`,
+    `${outboxTable}_sent_at_check`,
+  ] as const);
+  for (const identifier of [...writerNames, ...indexNames, ...checkNames]) {
+    if (!sqlIdentifierPattern.test(identifier) || identifier.length > 63) {
+      throw new Error(
+        `eventing reconciliation identifier exceeds PostgreSQL limits: ${identifier}`,
+      );
+    }
+  }
+
+  const databaseColumns = Object.freeze(
+    [
+      ["reconciliation_missing_at", "timestamp with time zone", false, null],
+      ["reconciliation_missing_reporter", "text", false, null],
+      ["reconciliation_next_probe_at", "timestamp with time zone", false, null],
+      ["reconciliation_claimed_by", "text", false, null],
+      ["reconciliation_claim_token", "text", false, null],
+      ["reconciliation_claim_generation", "bigint", true, "0"],
+      ["reconciliation_locked_until", "timestamp with time zone", false, null],
+    ].map(([column_name, postgres_type, not_null, default_expression]) =>
+      Object.freeze({
+        table_name: outboxTable,
+        column_name: column_name as string,
+        postgres_type: postgres_type as string,
+        not_null: not_null as boolean,
+        default_expression: default_expression as string | null,
+        identity: "" as const,
+        generated: "" as const,
+      }),
+    ),
+  );
+  const databaseChecks = Object.freeze([
+    Object.freeze({
+      constraint_name: checkNames[0],
+      table_name: outboxTable,
+      required_definition_fragments: Object.freeze([
+        "reconciliation_claim_generation",
+        "0",
+        String(OWNER_SAFE_BIGINT_MAX_V1),
+      ]),
+      semantic_constraint: Object.freeze({
+        kind: "integer_range" as const,
+        column_name: "reconciliation_claim_generation",
+        min: 0,
+        max: OWNER_SAFE_BIGINT_MAX_V1,
+      }),
+    }),
+    ...(
+      [
+        [checkNames[1], "transport_ref"],
+        [checkNames[2], "transport_epoch"],
+        [checkNames[3], "transport_generation"],
+        [checkNames[4], "sent_at"],
+      ] as const
+    ).map(([constraint_name, column_name]) =>
+      Object.freeze({
+        constraint_name,
+        table_name: outboxTable,
+        required_definition_fragments: Object.freeze([
+          "status",
+          "sent",
+          column_name,
+        ]),
+        semantic_constraint: Object.freeze({
+          kind: "implies_not_null" as const,
+          column_name,
+          condition_column_name: "status",
+          condition_equals: "sent",
+        }),
+      }),
+    ),
+  ]);
+  const databaseIndexes = Object.freeze([
+    Object.freeze({
+      index_name: indexNames[0],
+      table_name: outboxTable,
+      definition:
+        `CREATE INDEX ${indexNames[0]} ON ${schema}.${outboxTable} USING btree ` +
+        `(transport_ref, transport_epoch, transport_generation) ` +
+        `WHERE ((status = 'sent'::text) AND (transport_ref IS NOT NULL))`,
+      unique: false,
+      primary: false,
+      valid: true,
+    }),
+    Object.freeze({
+      index_name: indexNames[1],
+      table_name: outboxTable,
+      definition:
+        `CREATE INDEX ${indexNames[1]} ON ${schema}.${outboxTable} USING btree ` +
+        `(reconciliation_next_probe_at NULLS FIRST, sent_at, id) ` +
+        `WHERE (status = 'sent'::text)`,
+      unique: false,
+      primary: false,
+      valid: true,
+    }),
+    Object.freeze({
+      index_name: indexNames[2],
+      table_name: outboxTable,
+      definition:
+        `CREATE INDEX ${indexNames[2]} ON ${schema}.${outboxTable} USING btree ` +
+        `(transport_epoch, transport_generation, sent_at, id) ` +
+        `WHERE (status = 'sent'::text)`,
+      unique: false,
+      primary: false,
+      valid: true,
+    }),
+  ]);
+
+  const functionSignatures = Object.freeze([
+    ownerFunctionSignatureV1({
+      schema,
+      function_name: recordDeletedWriterName,
+      primary_table: outboxTable,
+      writer_kind: "outbox_claim_ack",
+      arguments: [
+        ["p_consumer_service", "text"],
+        ["p_transport_refs", "jsonb"],
+        ["p_observed_transport_epoch", "text"],
+        ["p_observed_transport_generation", "bigint"],
+        ["p_observed_at", "timestamptz"],
+      ],
+      reads_tables: [outboxTable, OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1],
+      writes_tables: [outboxTable],
+      effects: [
+        {
+          table_name: outboxTable,
+          operation: "reconcile_mark_missing",
+          concurrency_control: "reconciliation_fence",
+        },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema,
+      function_name: claimWriterName,
+      primary_table: outboxTable,
+      writer_kind: "outbox_claim_ack",
+      arguments: [
+        ["p_worker_id", "text"],
+        ["p_limit", "integer"],
+        ["p_lease_seconds", "integer"],
+        ["p_current_transport_epoch", "text"],
+        ["p_current_transport_generation", "bigint"],
+      ],
+      reads_tables: [outboxTable, OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1],
+      writes_tables: [outboxTable],
+      effects: [
+        {
+          table_name: outboxTable,
+          operation: "reconcile_claim",
+          concurrency_control: "reconciliation_fence",
+        },
+      ],
+      returns: "setof jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema,
+      function_name: acknowledgePresentWriterName,
+      primary_table: outboxTable,
+      writer_kind: "outbox_claim_ack",
+      arguments: [
+        ["p_outbox_id", "text"],
+        ["p_claim_token", "text"],
+        ["p_previous_transport_ref", "text"],
+        ["p_previous_transport_epoch", "text"],
+        ["p_previous_transport_generation", "bigint", { nullable: true }],
+        ["p_current_transport_epoch", "text"],
+        ["p_current_transport_generation", "bigint"],
+        ["p_probe_interval_ms", "integer"],
+      ],
+      reads_tables: [outboxTable, OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1],
+      writes_tables: [outboxTable],
+      effects: [
+        {
+          table_name: outboxTable,
+          operation: "reconcile_ack_present",
+          concurrency_control: "reconciliation_fence",
+        },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema,
+      function_name: acknowledgeRematerializedWriterName,
+      primary_table: outboxTable,
+      writer_kind: "outbox_claim_ack",
+      arguments: [
+        ["p_outbox_id", "text"],
+        ["p_claim_token", "text"],
+        ["p_previous_transport_ref", "text"],
+        ["p_previous_transport_epoch", "text"],
+        ["p_previous_transport_generation", "bigint", { nullable: true }],
+        ["p_transport_ref", "text"],
+        ["p_transport_epoch", "text"],
+        ["p_transport_generation", "bigint"],
+        ["p_current_transport_epoch", "text"],
+        ["p_current_transport_generation", "bigint"],
+        ["p_probe_interval_ms", "integer"],
+      ],
+      reads_tables: [outboxTable, OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1],
+      writes_tables: [outboxTable],
+      effects: [
+        {
+          table_name: outboxTable,
+          operation: "reconcile_ack_rematerialized",
+          concurrency_control: "reconciliation_fence",
+        },
+      ],
+      returns: "jsonb",
+    }),
+  ]);
+
+  return Object.freeze({
+    outbox_table: outboxTable,
+    required_existing_columns:
+      ownerEventingReconciliationRequiredExistingColumnsV1,
+    database_columns: databaseColumns,
+    database_checks: databaseChecks,
+    database_indexes: databaseIndexes,
+    mutable_writers: writerNames,
+    function_signatures: functionSignatures,
+    next_probe_semantics:
+      OWNER_EVENTING_RECONCILIATION_NEXT_PROBE_SEMANTICS_V1,
+  }) as unknown as OwnerEventingReconciliationContractV1<
+    TSchema,
+    TOutboxTable
+  >;
 }
 
 /**
@@ -687,10 +1362,17 @@ export function defineOwnerRepositoryContractV1<
       );
     }
   }
-  const selectColumnsByTable = new Map(
+  const physicalColumnsByTable = new Map(
     contract.table_permissions.map(({ table_name, select_columns }) => [
       table_name,
-      new Set<string>(select_columns),
+      new Set<string>(
+        [
+          ...select_columns,
+          ...(contract.database_columns ?? [])
+            .filter((column) => column.table_name === table_name)
+            .map(({ column_name }) => column_name),
+        ],
+      ),
     ]),
   );
   assertUniqueIdentifiers(
@@ -715,8 +1397,8 @@ export function defineOwnerRepositoryContractV1<
   }
   Object.freeze(contract.foreign_key_snapshot);
   for (const foreignKey of contract.foreign_keys ?? []) {
-    const sourceColumns = selectColumnsByTable.get(foreignKey.table_name);
-    const referencedColumns = selectColumnsByTable.get(
+    const sourceColumns = physicalColumnsByTable.get(foreignKey.table_name);
+    const referencedColumns = physicalColumnsByTable.get(
       foreignKey.referenced_table,
     );
     assertUniqueIdentifiers(
@@ -753,7 +1435,7 @@ export function defineOwnerRepositoryContractV1<
   );
   for (const check of contract.database_checks ?? []) {
     const semantic = check.semantic_constraint;
-    const tableColumns = selectColumnsByTable.get(check.table_name);
+    const tableColumns = physicalColumnsByTable.get(check.table_name);
     let invalidSemantic =
       semantic === undefined ||
       !sqlIdentifierPattern.test(semantic.column_name) ||
@@ -868,6 +1550,7 @@ export function defineOwnerRepositoryContractV1<
   const databaseColumnKeys = (contract.database_columns ?? []).map(
     ({ table_name, column_name }) => `${table_name}.${column_name}`,
   );
+  const databaseColumnKeySet = new Set(databaseColumnKeys);
   if (
     new Set(databaseColumnKeys).size !== databaseColumnKeys.length ||
     (contract.database_columns ?? []).some(
@@ -878,15 +1561,9 @@ export function defineOwnerRepositoryContractV1<
   ) {
     throw new Error("database_columns must contain unique SQL identifiers");
   }
-  const declaredSelectColumns = new Set(
-    contract.table_permissions.flatMap(({ table_name, select_columns }) =>
-      select_columns.map((column) => `${table_name}.${column}`),
-    ),
-  );
   for (const column of contract.database_columns ?? []) {
     if (
       !tableSet.has(column.table_name) ||
-      !declaredSelectColumns.has(`${column.table_name}.${column.column_name}`) ||
       column.postgres_type.trim().length === 0 ||
       (column.default_expression !== null &&
         column.default_expression.trim().length === 0) ||
@@ -899,6 +1576,23 @@ export function defineOwnerRepositoryContractV1<
     }
     Object.freeze(column);
   }
+  const completeDatabaseColumnSnapshot =
+    contract.database_columns !== undefined &&
+    contract.tables.every((table) =>
+      contract.database_columns?.some(({ table_name }) => table_name === table),
+    );
+  if (
+    completeDatabaseColumnSnapshot &&
+    contract.table_permissions.some(({ table_name, select_columns }) =>
+      select_columns.some(
+        (column) => !databaseColumnKeySet.has(`${table_name}.${column}`),
+      ),
+    )
+  ) {
+    throw new Error(
+      "table_permissions.select_columns must be a subset of database_columns",
+    );
+  }
   assertUniqueIdentifiers(
     "database_unique_constraints.constraint_name",
     (contract.database_unique_constraints ?? []).map(
@@ -906,7 +1600,7 @@ export function defineOwnerRepositoryContractV1<
     ),
   );
   for (const constraint of contract.database_unique_constraints ?? []) {
-    const sourceColumns = selectColumnsByTable.get(constraint.table_name);
+    const sourceColumns = physicalColumnsByTable.get(constraint.table_name);
     if (
       !tableSet.has(constraint.table_name) ||
       constraint.columns.length === 0 ||
@@ -973,7 +1667,12 @@ export function defineOwnerRepositoryContractV1<
       signature.search_path[0] !== contract.schema ||
       signature.search_path[1] !== "pg_temp" ||
       signature.arguments.length === 0 ||
-      signature.arguments.some((argument) => argument.mode !== "in") ||
+      signature.arguments.some(
+        (argument) =>
+          argument.mode !== "in" ||
+          (argument.nullable !== undefined &&
+            typeof argument.nullable !== "boolean"),
+      ) ||
       signature.reads_tables.length === 0 ||
       signature.writes_tables.length === 0 ||
       !signature.writes_tables.includes(signature.primary_table) ||
@@ -1003,12 +1702,37 @@ export function defineOwnerRepositoryContractV1<
       new Set(effectTables).size !== effectTables.length ||
       effects.some(({ table_name, operation, concurrency_control }) => {
         const tableWriterKind = permissionByTable.get(table_name)?.writer_kind;
+        const concurrencyArguments = concurrencyArgumentNames(
+          signature,
+          concurrency_control,
+          operation,
+        );
+        const nullableFenceArguments = concurrencyArguments.filter(
+          (argumentName) =>
+            signature.arguments.find(
+              ({ argument_name }) => argument_name === argumentName,
+            )?.nullable === true,
+        );
+        const nullableFenceDrift =
+          concurrency_control === "reconciliation_fence"
+            ? nullableFenceArguments.some(
+                (argumentName) =>
+                  argumentName !== "p_previous_transport_generation",
+              ) ||
+              ((operation === "reconcile_ack_present" ||
+                operation === "reconcile_ack_rematerialized") &&
+                signature.arguments.find(
+                  ({ argument_name }) =>
+                    argument_name === "p_previous_transport_generation",
+                )?.nullable !== true)
+            : nullableFenceArguments.length > 0;
         return (
           !effectOperations.has(operation) ||
           !concurrencyControls.has(concurrency_control) ||
           tableWriterKind === undefined ||
           !operationsByWriterKind[tableWriterKind].has(operation) ||
-          !hasConcurrencyArgument(signature, concurrency_control)
+          !hasConcurrencyArgument(signature, concurrency_control, operation) ||
+          nullableFenceDrift
         );
       }) ||
       sorted(effectTables).join("\u0000") !==
@@ -1071,7 +1795,7 @@ export function defineOwnerRepositoryContractV1<
   }
   const checks = contract.database_checks ?? [];
   for (const outboxTable of contract.outbox_tables) {
-    const columns = selectColumnsByTable.get(outboxTable) ?? new Set<string>();
+    const columns = physicalColumnsByTable.get(outboxTable) ?? new Set<string>();
     if (columns.has("event_type")) {
       const eventTypeChecks = checks.filter(
         ({ table_name, semantic_constraint }) =>
@@ -1172,6 +1896,188 @@ export function defineOwnerRepositoryContractV1<
       writer_kind,
     ]),
   );
+  const dlqResolutions = contract.dlq_resolutions;
+  if (dlqResolutions !== undefined) {
+    const mappedDlqs = dlqResolutions.map(({ dlq_table }) => dlq_table);
+    const resolutionTables = dlqResolutions.map(
+      ({ resolution_table }) => resolution_table,
+    );
+    const resolveWriters = dlqResolutions.map(
+      ({ resolve_writer }) => resolve_writer,
+    );
+    if (
+      dlqResolutions.length !== contract.dlq_tables.length ||
+      new Set(mappedDlqs).size !== mappedDlqs.length ||
+      new Set(resolutionTables).size !== resolutionTables.length ||
+      new Set(resolveWriters).size !== resolveWriters.length ||
+      mappedDlqs.some((table) => !contract.dlq_tables.includes(table)) ||
+      contract.dlq_tables.some((table) => !mappedDlqs.includes(table))
+    ) {
+      throw new Error(
+        `${contract.owner_service} dlq_resolutions must cover every DLQ exactly once`,
+      );
+    }
+    for (const binding of dlqResolutions) {
+      const expected = ownerDlqResolutionContractV1(
+        contract.schema,
+        binding.dlq_table,
+      );
+      const resolutionTable = binding.resolution_table;
+      if (
+        binding.resolution_table !== expected.binding.resolution_table ||
+        binding.resolve_writer !== expected.binding.resolve_writer ||
+        binding.dlq_table === resolutionTable ||
+        !tableSet.has(resolutionTable) ||
+        contract.dlq_tables.includes(resolutionTable) ||
+        !appendOnlySet.has(binding.dlq_table) ||
+        !appendOnlySet.has(resolutionTable) ||
+        permissionKinds.get(binding.dlq_table) !== "immutable_append" ||
+        permissionKinds.get(resolutionTable) !== "immutable_append"
+      ) {
+        throw new Error(
+          `${contract.owner_service}.${binding.dlq_table} must use a separate immutable canonical resolution table`,
+        );
+      }
+      if (
+        physicalColumnsByTable.get(binding.dlq_table)?.has("resolved_at") ===
+        true
+      ) {
+        throw new Error(
+          `${contract.owner_service}.${binding.dlq_table} cannot mutate resolved_at on immutable DLQ history`,
+        );
+      }
+      const expectedColumnNames = expected.database_columns.map(
+        ({ column_name }) => column_name,
+      );
+      const observedColumnNames = [
+        ...(physicalColumnsByTable.get(resolutionTable) ?? []),
+      ];
+      assertSameSet(
+        `${contract.owner_service}.${resolutionTable} resolution columns`,
+        observedColumnNames,
+        expectedColumnNames,
+      );
+      const selectedColumns =
+        contract.table_permissions.find(
+          ({ table_name }) => table_name === resolutionTable,
+        )?.select_columns ?? [];
+      assertSameSet(
+        `${contract.owner_service}.${resolutionTable} resolution SELECT columns`,
+        selectedColumns,
+        expected.table_permission.select_columns,
+      );
+      const columnShape = (column: OwnerDatabaseColumnV1): string =>
+        [
+          column.table_name,
+          column.column_name,
+          column.postgres_type,
+          column.not_null,
+          column.default_expression,
+          column.identity,
+          column.generated,
+        ].join("\u0000");
+      assertSameSet(
+        `${contract.owner_service}.${resolutionTable} resolution physical schema`,
+        (contract.database_columns ?? [])
+          .filter(({ table_name }) => table_name === resolutionTable)
+          .map(columnShape),
+        expected.database_columns.map(columnShape),
+      );
+      const foreignKeyShape = (foreignKey: OwnerForeignKeyV1): string =>
+        JSON.stringify([
+          foreignKey.constraint_name,
+          foreignKey.table_name,
+          foreignKey.columns,
+          foreignKey.referenced_schema,
+          foreignKey.referenced_table,
+          foreignKey.referenced_columns,
+          foreignKey.match_type,
+          foreignKey.on_update,
+          foreignKey.on_delete,
+          foreignKey.deferrable,
+          foreignKey.initially_deferred,
+          foreignKey.validated,
+        ]);
+      assertSameSet(
+        `${contract.owner_service}.${resolutionTable} resolution foreign key`,
+        contract.foreign_keys
+          .filter(({ table_name }) => table_name === resolutionTable)
+          .map(foreignKeyShape),
+        expected.foreign_keys.map(foreignKeyShape),
+      );
+      const uniqueShape = (
+        constraint: OwnerDatabaseUniqueConstraintV1,
+      ): string =>
+        JSON.stringify([
+          constraint.constraint_name,
+          constraint.table_name,
+          constraint.columns,
+          constraint.kind,
+          constraint.deferrable,
+          constraint.initially_deferred,
+          constraint.validated,
+        ]);
+      assertSameSet(
+        `${contract.owner_service}.${resolutionTable} resolution uniqueness`,
+        (contract.database_unique_constraints ?? [])
+          .filter(({ table_name }) => table_name === resolutionTable)
+          .map(uniqueShape),
+        expected.database_unique_constraints.map(uniqueShape),
+      );
+      const indexShape = (index: OwnerDatabaseIndexV1): string =>
+        JSON.stringify([
+          index.index_name,
+          index.table_name,
+          index.definition,
+          index.unique,
+          index.primary,
+          index.valid,
+        ]);
+      assertSameSet(
+        `${contract.owner_service}.${resolutionTable} resolution indexes`,
+        (contract.database_indexes ?? [])
+          .filter(({ table_name }) => table_name === resolutionTable)
+          .map(indexShape),
+        expected.database_indexes.map(indexShape),
+      );
+      const signatureShape = (signature: OwnerFunctionSignatureV1): unknown => ({
+        schema: signature.schema,
+        function_name: signature.function_name,
+        primary_table: signature.primary_table,
+        writer_kind: signature.writer_kind,
+        arguments: signature.arguments.map((argument) => ({
+          argument_name: argument.argument_name,
+          postgres_type: argument.postgres_type,
+          mode: argument.mode,
+          nullable: argument.nullable === true,
+        })),
+        reads_tables: signature.reads_tables,
+        writes_tables: signature.writes_tables,
+        effects: signature.effects,
+        returns: signature.returns,
+        security_definer: signature.security_definer,
+        search_path: signature.search_path,
+      });
+      const resolutionWriters = contract.function_signatures.filter(
+        ({ writes_tables }) => writes_tables.includes(resolutionTable),
+      );
+      const observedWriter = resolutionWriters[0];
+      const expectedWriter = expected.function_signatures[0];
+      if (
+        resolutionWriters.length !== 1 ||
+        observedWriter === undefined ||
+        expectedWriter === undefined ||
+        observedWriter.function_name !== binding.resolve_writer ||
+        fingerprint(signatureShape(observedWriter)) !==
+          fingerprint(signatureShape(expectedWriter))
+      ) {
+        throw new Error(
+          `${contract.owner_service}.${binding.dlq_table} must declare one canonical idempotent resolve writer`,
+        );
+      }
+      Object.freeze(binding);
+    }
+  }
   if (
     contract.append_only_tables.some(
       (table) =>
@@ -1299,12 +2205,159 @@ export function defineOwnerRepositoryContractV1<
             postgres_type,
           ]),
         ) !== JSON.stringify(expectedArguments) ||
+        JSON.stringify(
+          signature.arguments
+            .filter(({ nullable }) => nullable === true)
+            .map(({ argument_name }) => argument_name),
+        ) !==
+          JSON.stringify(
+            operation === "ack"
+              ? OWNER_OUTBOX_ACK_NULLABLE_ARGUMENT_NAMES_V1
+              : [],
+          ) ||
         !signature.reads_tables.some(
           (table) => table === OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1,
         )
       ) {
         throw new Error(
           `${contract.owner_service}.${outboxTable} must declare exactly one standard ${operation} writer that reads the active eventing transport epoch`,
+        );
+      }
+    }
+  }
+  const reconciliationOperations = new Set<OwnerFunctionEffectV1["operation"]>([
+    "reconcile_mark_missing",
+    "reconcile_claim",
+    "reconcile_ack_present",
+    "reconcile_ack_rematerialized",
+  ]);
+  const reconciliationTables = new Set(
+    contract.function_signatures.flatMap((signature) =>
+      signature.effects.flatMap((effect) =>
+        reconciliationOperations.has(effect.operation)
+          ? [effect.table_name]
+          : [],
+      ),
+    ),
+  );
+  for (const outboxTable of reconciliationTables) {
+    if (!contract.outbox_tables.includes(outboxTable)) {
+      throw new Error(
+        `${contract.owner_service}.${outboxTable} reconciliation must target a registered outbox`,
+      );
+    }
+    const expected = ownerEventingReconciliationContractV1(
+      contract.schema,
+      outboxTable,
+    );
+    const actualSignatures = contract.function_signatures.filter(
+      ({ primary_table }) => primary_table === outboxTable,
+    );
+    for (const expectedSignature of expected.function_signatures) {
+      const expectedOperation = expectedSignature.effects[0]?.operation;
+      const matches = actualSignatures.filter((signature) =>
+        signature.effects.some(
+          (effect) => effect.operation === expectedOperation,
+        ),
+      );
+      const observed = matches[0];
+      const shape = (signature: OwnerFunctionSignatureV1): unknown => ({
+        schema: signature.schema,
+        function_name: signature.function_name,
+        primary_table: signature.primary_table,
+        writer_kind: signature.writer_kind,
+        arguments: signature.arguments.map((argument) => ({
+          argument_name: argument.argument_name,
+          postgres_type: argument.postgres_type,
+          mode: argument.mode,
+          nullable: argument.nullable === true,
+        })),
+        reads_tables: signature.reads_tables,
+        writes_tables: signature.writes_tables,
+        effects: signature.effects,
+        returns: signature.returns,
+        security_definer: signature.security_definer,
+        search_path: signature.search_path,
+      });
+      if (
+        expectedOperation === undefined ||
+        matches.length !== 1 ||
+        observed === undefined ||
+        fingerprint(shape(observed)) !== fingerprint(shape(expectedSignature))
+      ) {
+        throw new Error(
+          `${contract.owner_service}.${outboxTable} reconciliation writer ABI drift: ${expectedOperation ?? "unknown"}`,
+        );
+      }
+    }
+    const physicalColumns = new Set(
+      (contract.database_columns ?? [])
+        .filter(({ table_name }) => table_name === outboxTable)
+        .map(({ column_name }) => column_name),
+    );
+    if (
+      [
+        ...expected.required_existing_columns,
+        ...expected.database_columns.map(({ column_name }) => column_name),
+      ].some((column) => !physicalColumns.has(column))
+    ) {
+      throw new Error(
+        `${contract.owner_service}.${outboxTable} reconciliation physical column drift`,
+      );
+    }
+    const selectedColumns = new Set(
+      contract.table_permissions.find(
+        ({ table_name }) => table_name === outboxTable,
+      )?.select_columns ?? [],
+    );
+    if (
+      ownerEventingReconciliationAddedColumnsV1.some((column) =>
+        selectedColumns.has(column),
+      )
+    ) {
+      throw new Error(
+        `${contract.owner_service}.${outboxTable} reconciliation internal columns cannot be direct SELECT grants`,
+      );
+    }
+    for (const expectedColumn of expected.database_columns) {
+      const observed = contract.database_columns?.find(
+        ({ table_name, column_name }) =>
+          table_name === outboxTable &&
+          column_name === expectedColumn.column_name,
+      );
+      if (
+        observed === undefined ||
+        fingerprint(observed) !== fingerprint(expectedColumn)
+      ) {
+        throw new Error(
+          `${contract.owner_service}.${outboxTable} reconciliation column drift: ${expectedColumn.column_name}`,
+        );
+      }
+    }
+    for (const expectedCheck of expected.database_checks) {
+      const observed = contract.database_checks?.find(
+        ({ constraint_name }) =>
+          constraint_name === expectedCheck.constraint_name,
+      );
+      if (
+        observed === undefined ||
+        fingerprint(observed) !== fingerprint(expectedCheck)
+      ) {
+        throw new Error(
+          `${contract.owner_service}.${outboxTable} reconciliation CHECK drift: ${expectedCheck.constraint_name}`,
+        );
+      }
+    }
+    for (const expectedIndex of expected.database_indexes) {
+      const observed = contract.database_indexes?.find(
+        ({ index_name }) => index_name === expectedIndex.index_name,
+      );
+      if (
+        observed === undefined ||
+        fingerprint(observed) !== fingerprint(expectedIndex)
+      ) {
+        throw new Error(
+          `${contract.owner_service}.${outboxTable} reconciliation index drift: ${expectedIndex.index_name}`,
         );
       }
     }
@@ -1346,6 +2399,30 @@ export type OwnerWriterNameV1<TContract extends OwnerRepositoryContractV1> =
   TContract["mutable_writers"][number];
 
 const verifiedOwnerDeploymentBrand = Symbol("verifiedOwnerDeploymentV1");
+
+interface VerifiedOwnerDeploymentBindingV1 {
+  readonly catalog_postgres: PostgresQueryPortV1;
+  readonly runtime_postgres: PostgresQueryPortV1;
+  /**
+   * Set only by openVerifiedOwnerPostgresCompositionV1 after its module-private
+   * Pool has completed both catalog and runtime verification. Public verifier
+   * callers receive a read-only proof and cannot activate writer execution,
+   * even when they supply an instanceof-compatible object or Pool subclass.
+   */
+  readonly activation_pool?: Pool;
+  readonly contract_fingerprint: string;
+  readonly database_fingerprint: string;
+}
+
+/**
+ * A deployment value is only an application capability while this module can
+ * prove which live query ports produced it. Keeping the binding out of the
+ * serializable value also makes copies and caller-assembled lookalikes inert.
+ */
+const verifiedOwnerDeploymentBindingsV1 = new WeakMap<
+  object,
+  VerifiedOwnerDeploymentBindingV1
+>();
 
 export interface VerifiedOwnerRepositoryDeploymentV1<
   TService extends OwnerDatabaseServiceIdV1,
@@ -1657,8 +2734,12 @@ function allowedMutationVerbs(
 function concurrencyArgumentNames(
   signature: OwnerFunctionSignatureV1,
   control: OwnerFunctionEffectV1["concurrency_control"],
+  operation: OwnerFunctionEffectV1["operation"],
 ): readonly string[] {
   const names = signature.arguments.map(({ argument_name }) => argument_name);
+  if (control === "reconciliation_fence") {
+    return reconciliationFenceArgumentNames(operation);
+  }
   if (control === "slot_and_process_state_fence") {
     return names.filter(
       (name) =>
@@ -1704,6 +2785,7 @@ function assertConcurrencyFenceIsConsumed(
   const candidates = concurrencyArgumentNames(
     signature,
     effect.concurrency_control,
+    effect.operation,
   );
   const consumed = candidates.filter((name) =>
     new RegExp(`\\b${escapeRegularExpression(name)}\\b`, "i").test(executable),
@@ -1712,6 +2794,170 @@ function assertConcurrencyFenceIsConsumed(
     throw new Error(
       `PostgreSQL function fence drift: ${signature.schema}.${signature.function_name} does not consume ${effect.concurrency_control}`,
     );
+  }
+  if (effect.concurrency_control === "reconciliation_fence") {
+    const compare = (
+      argument: string,
+      column: string,
+      nullSafe = false,
+      allowLocal = false,
+    ): boolean => {
+      const argumentPattern = `\\b${escapeRegularExpression(argument)}\\b`;
+      const columnPattern = `(?:\\b[a-z][a-z0-9_]*\\.)?\\b${allowLocal ? "(?:v_)?" : ""}${escapeRegularExpression(column)}\\b`;
+      const operator = nullSafe
+        ? "is\\s+not\\s+distinct\\s+from"
+        : "(?:=|<>|is\\s+(?:not\\s+)?distinct\\s+from)";
+      return (
+        new RegExp(`${columnPattern}\\s*${operator}\\s*${argumentPattern}`, "i")
+          .test(executable) ||
+        new RegExp(`${argumentPattern}\\s*${operator}\\s*${columnPattern}`, "i")
+          .test(executable)
+      );
+    };
+    const statementRows = sqlStatementsWithOffsets(semantic);
+    const transportAuthorityLockIndex = statementRows.findIndex(
+      ({ statement }) =>
+        new RegExp(
+          `\\b(?:from|join)\\s+(?:only\\s+)?"?${escapeRegularExpression(signature.schema)}"?\\s*\\.\\s*"?${OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1}"?\\b`,
+          "i",
+        ).test(statement) &&
+        /\bfor\s+(?:no\s+key\s+)?update\b/iu.test(statement),
+    );
+    const transportAuthorityLocked = transportAuthorityLockIndex >= 0;
+    const activeEpochArgument =
+      effect.operation === "reconcile_mark_missing"
+        ? "p_observed_transport_epoch"
+        : "p_current_transport_epoch";
+    const activeGenerationArgument =
+      effect.operation === "reconcile_mark_missing"
+        ? "p_observed_transport_generation"
+        : "p_current_transport_generation";
+    const databaseClockVariable = semantic.match(
+      /\b(v_[a-z][a-z0-9_]*(?:now|clock)[a-z0-9_]*)\s*:=\s*(?:pg_catalog\s*\.\s*)?clock_timestamp\s*\(\s*\)/iu,
+    )?.[1];
+    const databaseClockPattern =
+      databaseClockVariable === undefined
+        ? undefined
+        : escapeRegularExpression(databaseClockVariable);
+    const databaseClockStatementIndex = statementRows.findIndex(
+      ({ statement }) =>
+        /\bv_[a-z][a-z0-9_]*(?:now|clock)[a-z0-9_]*\s*:=\s*(?:pg_catalog\s*\.\s*)?clock_timestamp\s*\(\s*\)/iu.test(
+          statement,
+        ),
+    );
+    const databaseClockCapturedAfterAuthorityLock =
+      databaseClockStatementIndex > transportAuthorityLockIndex;
+    const reconciliationAckUpdatedIdVariable = executable.match(
+      new RegExp(
+        `\\bupdate\\s+"?${escapeRegularExpression(signature.schema)}"?\\s*\\.\\s*"?${escapeRegularExpression(effect.table_name)}"?\\b[\\s\\S]{1,3000}?\\breturning\\s+(?:(?:[a-z][a-z0-9_]*)\\s*\\.\\s*)?id\\s+into\\s+(v_[a-z][a-z0-9_]*)\\s*;`,
+        "iu",
+      ),
+    )?.[1];
+    let operationFenceValid =
+      consumed.length === candidates.length &&
+      signature.reads_tables.includes(OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1) &&
+      transportAuthorityLocked &&
+      compare(activeEpochArgument, "active_epoch", false, true) &&
+      compare(activeGenerationArgument, "active_generation", false, true);
+
+    if (effect.operation === "reconcile_mark_missing") {
+      operationFenceValid =
+        operationFenceValid &&
+        /\bjsonb_typeof\s*\(\s*p_transport_refs\s*\)\s*(?:<>|!=|is\s+distinct\s+from)\s*'array'/iu.test(
+          executable,
+        ) &&
+        /\bjsonb_array_length\s*\(\s*p_transport_refs\s*\)\s*>\s*16\b/iu.test(
+          executable,
+        ) &&
+        /\braise\s+exception\b/iu.test(executable) &&
+        compare("p_observed_transport_epoch", "transport_epoch") &&
+        compare("p_observed_transport_generation", "transport_generation") &&
+        /\breconciliation_next_probe_at\b[\s\S]{0,240}?\b(?:least|case)\b/iu.test(
+          executable,
+        ) &&
+        /\bp_observed_at\b/iu.test(executable);
+    } else if (effect.operation === "reconcile_claim") {
+      operationFenceValid =
+        operationFenceValid &&
+        databaseClockPattern !== undefined &&
+        databaseClockCapturedAfterAuthorityLock &&
+        /\bfor\s+(?:no\s+key\s+)?update\s+skip\s+locked\b/iu.test(
+          executable,
+        ) &&
+        /\breconciliation_locked_until\s+is\s+null\b/iu.test(executable) &&
+        new RegExp(
+          `\\breconciliation_locked_until\\s*<=\\s*\\b${databaseClockPattern}\\b`,
+          "iu",
+        ).test(executable) &&
+        new RegExp(
+          `\\breconciliation_locked_until\\s*=\\s*\\b${databaseClockPattern}\\b[\\s\\S]{0,160}?\\bp_lease_seconds\\b`,
+          "iu",
+        ).test(executable) &&
+        new RegExp(
+          `\\bupdated_at\\s*=\\s*\\b${databaseClockPattern}\\b`,
+          "iu",
+        ).test(executable) &&
+        /\bp_lease_seconds\s*<\s*1\b/iu.test(executable) &&
+        /\bp_lease_seconds\s*>\s*3600\b/iu.test(executable) &&
+        /\bp_limit\s*<\s*1\b/iu.test(executable) &&
+        /\bp_limit\s*>\s*16\b/iu.test(executable) &&
+        /\braise\s+exception\b/iu.test(executable) &&
+        /\btransport_epoch\s+is\s+distinct\s+from\s+p_current_transport_epoch\b/iu.test(
+          executable,
+        ) &&
+        /\btransport_generation\s+is\s+distinct\s+from\s+p_current_transport_generation\b/iu.test(
+          executable,
+        ) &&
+        /\breconciliation_missing_at\s+is\s+not\s+null\b/iu.test(executable) &&
+        /\breconciliation_next_probe_at\s+is\s+null\b/iu.test(executable) &&
+        new RegExp(
+          `\\breconciliation_next_probe_at\\s*<=\\s*\\b${databaseClockPattern}\\b`,
+          "iu",
+        ).test(executable);
+    } else if (
+      effect.operation === "reconcile_ack_present" ||
+      effect.operation === "reconcile_ack_rematerialized"
+    ) {
+      operationFenceValid =
+        operationFenceValid &&
+        databaseClockPattern !== undefined &&
+        databaseClockCapturedAfterAuthorityLock &&
+        compare("p_outbox_id", "id") &&
+        compare("p_claim_token", "reconciliation_claim_token") &&
+        compare("p_previous_transport_ref", "transport_ref", true) &&
+        compare("p_previous_transport_epoch", "transport_epoch", true) &&
+        compare(
+          "p_previous_transport_generation",
+          "transport_generation",
+          true,
+        ) &&
+        new RegExp(
+          `\\breconciliation_next_probe_at\\s*=\\s*\\b${databaseClockPattern}\\b[\\s\\S]{0,200}?\\bp_probe_interval_ms\\b`,
+          "iu",
+        ).test(executable) &&
+        new RegExp(
+          `\\bupdated_at\\s*=\\s*\\b${databaseClockPattern}\\b`,
+          "iu",
+        ).test(executable) &&
+        /\bp_probe_interval_ms\s*<\s*1000\b/iu.test(executable) &&
+        /\bp_probe_interval_ms\s*>\s*86400000\b/iu.test(executable) &&
+        reconciliationAckUpdatedIdVariable !== undefined &&
+        new RegExp(
+          `\\bif\\s+${escapeRegularExpression(reconciliationAckUpdatedIdVariable)}\\s+is\\s+null\\s+then\\s+raise\\s+exception\\b`,
+          "iu",
+        ).test(executable);
+      if (effect.operation === "reconcile_ack_rematerialized") {
+        operationFenceValid =
+          operationFenceValid &&
+          compare("p_transport_epoch", "active_epoch", false, true) &&
+          compare("p_transport_generation", "active_generation", false, true);
+      }
+    }
+    if (!operationFenceValid) {
+      throw new Error(
+        `PostgreSQL function reconciliation fence drift: ${signature.schema}.${signature.function_name}`,
+      );
+    }
   }
   if (effect.concurrency_control === "slot_and_process_state_fence") {
     const statementRows = sqlStatementsWithOffsets(semantic);
@@ -1816,15 +3062,434 @@ function assertConcurrencyFenceIsConsumed(
         );
       },
     );
-    const foundCheckedAuthProof = statementRows.some(
-      ({ statement, end }) =>
-        referencesTable(statement, "bots") &&
-        referencesTable(statement, "bot_permission_bindings") &&
-        /\bwhere\b/i.test(statement) &&
-        !constantFalseWherePredicate(statement) &&
-        !hasUnboundConstantJoin(statement) &&
-        followedByFoundRaise(semantic, end),
-    );
+    const qualifiedColumn = (alias: string, column: string): string =>
+      `\\b"?${escapeRegularExpression(alias)}"?\\s*\\.\\s*"?${escapeRegularExpression(column)}"?\\b`;
+    const jsonTextField = (parameter: string, field: string): string =>
+      `\\b${escapeRegularExpression(parameter)}\\s*->>\\s*['"]${escapeRegularExpression(field)}['"]`;
+    const exactJsonFieldMatch = (
+      statement: string,
+      alias: string,
+      column: string,
+      parameter: string,
+      field: string,
+    ): boolean => {
+      const relationValue = qualifiedColumn(alias, column);
+      const jsonValue = jsonTextField(parameter, field);
+      return (
+        new RegExp(`${relationValue}\\s*=\\s*${jsonValue}`, "i").test(statement) ||
+        new RegExp(`${jsonValue}\\s*=\\s*${relationValue}`, "i").test(statement)
+      );
+    };
+    const exactColumnMatch = (
+      statement: string,
+      leftAlias: string,
+      leftColumn: string,
+      rightAlias: string,
+      rightColumn: string,
+    ): boolean => {
+      const left = qualifiedColumn(leftAlias, leftColumn);
+      const right = qualifiedColumn(rightAlias, rightColumn);
+      return (
+        new RegExp(`${left}\\s*=\\s*${right}`, "i").test(statement) ||
+        new RegExp(`${right}\\s*=\\s*${left}`, "i").test(statement)
+      );
+    };
+    const validatesAuthenticationKind = (statement: string): boolean => {
+      const authenticationKind = jsonTextField(
+        "p_authenticated_context",
+        "authentication_kind",
+      );
+      const principalType = jsonTextField(
+        "p_authenticated_context",
+        "principal_type",
+      );
+      type PredicateRange = Readonly<{ start: number; end: number }>;
+      const equalityRange = (
+        left: string,
+        literal: string,
+      ): PredicateRange | undefined => {
+        const match = new RegExp(
+          `${left}\\s*=\\s*['"]${escapeRegularExpression(literal)}['"]`,
+          "i",
+        ).exec(statement);
+        return match?.index === undefined
+          ? undefined
+          : { start: match.index, end: match.index + match[0].length };
+      };
+      const exactInRange = (
+        left: string,
+        expected: readonly string[],
+      ): PredicateRange | undefined => {
+        const pattern = new RegExp(`${left}\\s+in\\s*\\(([^)]*)\\)`, "gi");
+        for (const match of statement.matchAll(pattern)) {
+          const actual = [...(match[1] ?? "").matchAll(/['"]([^'"]+)['"]/g)]
+            .map((value) => value[1])
+            .filter((value): value is string => value !== undefined)
+            .sort();
+          if (
+            actual.length === expected.length &&
+            actual.every((value, index) => value === [...expected].sort()[index]) &&
+            match.index !== undefined
+          ) {
+            return { start: match.index, end: match.index + match[0].length };
+          }
+        }
+        return undefined;
+      };
+      const conjoinedPredicateRange = (
+        predicates: readonly (PredicateRange | undefined)[],
+      ): PredicateRange | undefined => {
+        if (predicates.some((predicate) => predicate === undefined)) {
+          return undefined;
+        }
+        const ordered = (predicates as readonly PredicateRange[])
+          .slice()
+          .sort((left, right) => left.start - right.start);
+        const conjoined = ordered.slice(0, -1).every((predicate, index) => {
+          const next = ordered[index + 1];
+          if (next === undefined) return false;
+          const connector = statement.slice(predicate.end, next.start);
+          return /\band\b/i.test(connector) && !/\bor\b/i.test(connector);
+        });
+        const first = ordered[0];
+        const last = ordered.at(-1);
+        return conjoined && first !== undefined && last !== undefined
+          ? { start: first.start, end: last.end }
+          : undefined;
+      };
+      const allSources = exactInRange("\\bp_source", [
+        "chat",
+        "notification",
+        "timer",
+      ]);
+      const workloadBranch = conjoinedPredicateRange([
+        equalityRange("\\bp_source", "timer"),
+        equalityRange(authenticationKind, "pai_workload_jwt"),
+        equalityRange(principalType, "service"),
+      ]);
+      const externalBranch = conjoinedPredicateRange([
+        exactInRange("\\bp_source", ["chat", "notification"]),
+        equalityRange(authenticationKind, "supabase_ingress"),
+        exactInRange(principalType, ["user", "developer", "agent"]),
+      ]);
+      const authenticationBranchesAreAlternatives = (() => {
+        if (workloadBranch === undefined || externalBranch === undefined) {
+          return false;
+        }
+        const [first, second] = [workloadBranch, externalBranch].sort(
+          (left, right) => left.start - right.start,
+        );
+        if (first === undefined || second === undefined) return false;
+        return /\bor\b/i.test(statement.slice(first.end, second.start));
+      })();
+      const permissionScope = jsonTextField(
+        "p_authenticated_context",
+        "permission_scope",
+      );
+      const derivesPermissionScope =
+        new RegExp(
+          `${permissionScope}\\s*=\\s*['"]trigger\\.submit\\.['"]\\s*\\|\\|\\s*p_source`,
+          "i",
+        ).test(statement) ||
+        new RegExp(
+          `['"]trigger\\.submit\\.['"]\\s*\\|\\|\\s*p_source\\s*=\\s*${permissionScope}`,
+          "i",
+        ).test(statement);
+      const hasExactBooleanBranchStructure = (): boolean => {
+        type BooleanParts = Readonly<{
+          terms: readonly string[];
+          operators: readonly ("and" | "or")[];
+        }>;
+        const parentheses = (value: string): readonly PredicateRange[] => {
+          const ranges: PredicateRange[] = [];
+          const stack: number[] = [];
+          let quote: "'" | '"' | undefined;
+          for (let index = 0; index < value.length; index += 1) {
+            const character = value[index];
+            if (quote !== undefined) {
+              if (character === quote) {
+                if (value[index + 1] === quote) index += 1;
+                else quote = undefined;
+              }
+              continue;
+            }
+            if (character === "'" || character === '"') quote = character;
+            else if (character === "(") stack.push(index);
+            else if (character === ")") {
+              const start = stack.pop();
+              if (start !== undefined) ranges.push({ start, end: index + 1 });
+            }
+          }
+          return ranges;
+        };
+        const splitTopLevel = (value: string): BooleanParts => {
+          const terms: string[] = [];
+          const operators: Array<"and" | "or"> = [];
+          let depth = 0;
+          let start = 0;
+          let quote: "'" | '"' | undefined;
+          for (let index = 0; index < value.length; index += 1) {
+            const character = value[index];
+            if (quote !== undefined) {
+              if (character === quote) {
+                if (value[index + 1] === quote) index += 1;
+                else quote = undefined;
+              }
+              continue;
+            }
+            if (character === "'" || character === '"') {
+              quote = character;
+              continue;
+            }
+            if (character === "(") {
+              depth += 1;
+              continue;
+            }
+            if (character === ")") {
+              depth -= 1;
+              continue;
+            }
+            if (
+              depth !== 0 ||
+              (index > 0 && /[a-z0-9_]/i.test(value[index - 1] ?? ""))
+            ) {
+              continue;
+            }
+            const operator = /^(and|or)\b/i.exec(value.slice(index))?.[1]
+              ?.toLowerCase();
+            if (operator !== "and" && operator !== "or") continue;
+            terms.push(value.slice(start, index).trim());
+            operators.push(operator);
+            index += operator.length - 1;
+            start = index + 1;
+          }
+          terms.push(value.slice(start).trim());
+          return { terms, operators };
+        };
+        const unwrap = (value: string): string => {
+          let result = value.trim();
+          while (result.startsWith("(") && result.endsWith(")")) {
+            if (
+              !parentheses(result).some(
+                (range) => range.start === 0 && range.end === result.length,
+              )
+            ) {
+              break;
+            }
+            result = result.slice(1, -1).trim();
+          }
+          return result;
+        };
+        const canonical = (value: string): string =>
+          unwrap(value).replace(/\s+/g, " ").trim().toLowerCase();
+        const equality = (left: string, literal: string) =>
+          (value: string): boolean =>
+            new RegExp(
+              `^${left}\\s*=\\s*['"]${escapeRegularExpression(literal)}['"]$`,
+              "i",
+            ).test(unwrap(value));
+        const exactIn = (left: string, expected: readonly string[]) =>
+          (value: string): boolean => {
+            const match = new RegExp(
+              `^${left}\\s+in\\s*\\(([^()]*)\\)$`,
+              "i",
+            ).exec(unwrap(value));
+            if (match?.[1] === undefined) return false;
+            const actual = match[1].split(",").map((entry) => {
+              const literal = entry.trim();
+              return (
+                /^'([^']+)'$/.exec(literal)?.[1] ??
+                /^"([^"]+)"$/.exec(literal)?.[1]
+              );
+            });
+            const sortedExpected = [...expected].sort();
+            return (
+              actual.every((entry): entry is string => entry !== undefined) &&
+              actual.length === sortedExpected.length &&
+              [...actual]
+                .sort()
+                .every((entry, index) => entry === sortedExpected[index])
+            );
+          };
+        type PredicateMatcher = (value: string) => boolean;
+        const findExactGroup = (
+          matchers: readonly PredicateMatcher[],
+          operator: "and" | "or",
+        ): PredicateRange | undefined =>
+          [...parentheses(statement)]
+            .sort(
+              (left, right) =>
+                left.end - left.start - (right.end - right.start),
+            )
+            .find((range) => {
+              const parts = splitTopLevel(
+                statement.slice(range.start + 1, range.end - 1),
+              );
+              if (
+                parts.terms.length !== matchers.length ||
+                parts.operators.length !== matchers.length - 1 ||
+                !parts.operators.every((actual) => actual === operator)
+              ) {
+                return false;
+              }
+              const unmatched = [...matchers];
+              for (const term of parts.terms) {
+                const matcherIndex = unmatched.findIndex((matcher) =>
+                  matcher(term),
+                );
+                if (matcherIndex < 0) return false;
+                unmatched.splice(matcherIndex, 1);
+              }
+              return unmatched.length === 0;
+            });
+        const exactWorkloadBranch = findExactGroup(
+          [
+            equality("\\bp_source", "timer"),
+            equality(authenticationKind, "pai_workload_jwt"),
+            equality(principalType, "service"),
+          ],
+          "and",
+        );
+        const exactExternalBranch = findExactGroup(
+          [
+            exactIn("\\bp_source", ["chat", "notification"]),
+            equality(authenticationKind, "supabase_ingress"),
+            exactIn(principalType, ["user", "developer", "agent"]),
+          ],
+          "and",
+        );
+        if (
+          exactWorkloadBranch === undefined ||
+          exactExternalBranch === undefined
+        ) {
+          return false;
+        }
+        const expectedBranches = [exactWorkloadBranch, exactExternalBranch]
+          .map((range) => canonical(statement.slice(range.start, range.end)))
+          .sort();
+        const exactAuthenticationGroup = [...parentheses(statement)]
+          .sort(
+            (left, right) => left.end - left.start - (right.end - right.start),
+          )
+          .find((range) => {
+            if (
+              range.start > exactWorkloadBranch.start ||
+              range.start > exactExternalBranch.start ||
+              range.end < exactWorkloadBranch.end ||
+              range.end < exactExternalBranch.end
+            ) {
+              return false;
+            }
+            const parts = splitTopLevel(
+              statement.slice(range.start + 1, range.end - 1),
+            );
+            return (
+              parts.operators.length === 1 &&
+              parts.operators[0] === "or" &&
+              parts.terms.length === 2 &&
+              parts.terms
+                .map(canonical)
+                .sort()
+                .every((term, index) => term === expectedBranches[index])
+            );
+          });
+        if (exactAuthenticationGroup === undefined) return false;
+        const root = splitTopLevel(
+          unwrap(statement.replace(/^\s*where\b/i, "")),
+        );
+        const exactGroupAtRoot = root.terms.some(
+          (term) =>
+            canonical(term) ===
+            canonical(
+              statement.slice(
+                exactAuthenticationGroup.start,
+                exactAuthenticationGroup.end,
+              ),
+            ),
+        );
+        return (
+          exactGroupAtRoot &&
+          root.operators.every((operator) => operator === "and") &&
+          [...statement.matchAll(/\bor\b/gi)].length === 1
+        );
+      };
+      return (
+        allSources !== undefined &&
+        authenticationBranchesAreAlternatives &&
+        derivesPermissionScope &&
+        hasExactBooleanBranchStructure() &&
+        workloadBranch !== undefined &&
+        externalBranch !== undefined
+      );
+    };
+    const foundCheckedAuthProof = statementRows.some(({ statement, end }) => {
+      const whereIndex = statement.search(/\bwhere\b/i);
+      const authorityPredicate =
+        whereIndex < 0 ? "" : statement.slice(whereIndex);
+      if (
+        !referencesTable(statement, "bots") ||
+        !referencesTable(statement, "bot_permission_bindings") ||
+        !/\bwhere\b/i.test(statement) ||
+        constantFalseWherePredicate(statement) ||
+        hasUnboundConstantJoin(statement) ||
+        !followedByFoundRaise(semantic, end) ||
+        !validatesAuthenticationKind(authorityPredicate)
+      ) {
+        return false;
+      }
+      return aliasesForTable(statement, "bots").some((botAlias) =>
+        aliasesForTable(statement, "bot_permission_bindings").some(
+          (bindingAlias) => {
+            const bindingStatus = qualifiedColumn(bindingAlias, "status");
+            return (
+              [
+                ["workspace_id", "workspace_id"],
+                ["id", "bot_id"],
+                ["owner_agent_id", "owner_agent_id"],
+                ["deployment_environment", "deployment_environment"],
+                ["release_channel", "release_channel"],
+              ].every(([column, field]) =>
+                exactJsonFieldMatch(
+                  statement,
+                  botAlias,
+                  column as string,
+                  "p_scope",
+                  field as string,
+                ),
+              ) &&
+              [
+                ["workspace_id", "workspace_id"],
+                ["bot_id", "id"],
+                ["deployment_environment", "deployment_environment"],
+                ["release_channel", "release_channel"],
+              ].every(([bindingColumn, botColumn]) =>
+                exactColumnMatch(
+                  statement,
+                  bindingAlias,
+                  bindingColumn as string,
+                  botAlias,
+                  botColumn as string,
+                ),
+              ) &&
+              ["principal_type", "principal_id", "permission_scope"].every(
+                (field) =>
+                  exactJsonFieldMatch(
+                    statement,
+                    bindingAlias,
+                    field,
+                    "p_authenticated_context",
+                    field,
+                  ),
+              ) &&
+              (new RegExp(`${bindingStatus}\\s*=\\s*['"]active['"]`, "i")
+                .test(statement) ||
+                new RegExp(`['"]active['"]\\s*=\\s*${bindingStatus}`, "i")
+                  .test(statement))
+            );
+          },
+        ),
+      );
+    });
     const recomputesServerSide =
       !usesCallerPrecondition &&
       signature.arguments.some(
@@ -1849,12 +3514,6 @@ function assertConcurrencyFenceIsConsumed(
       ].every((field) =>
         new RegExp(
           `\\bp_scope\\s*(?:->>|#>>?)\\s*(?:array\\s*\\[\\s*)?['"]${field}['"]`,
-          "i",
-        ).test(semantic),
-      ) &&
-      ["workload_subject", "capability"].every((field) =>
-        new RegExp(
-          `\\bp_authenticated_context\\s*(?:->>|#>>?)\\s*(?:array\\s*\\[\\s*)?['"]${field}['"]`,
           "i",
         ).test(semantic),
       ) &&
@@ -1959,6 +3618,25 @@ function assertFunctionEffectsInDefinition(
   const executable = semantic.replace(/'(?:''|[^'])*'/g, "''");
   const reachableSemantic = beforeFirstUnconditionalReturn(semantic);
   const reachableExecutable = beforeFirstUnconditionalReturn(executable);
+  const reconciliationAck = signature.effects.some(
+    ({ operation }) =>
+      operation === "reconcile_ack_present" ||
+      operation === "reconcile_ack_rematerialized",
+  );
+  const reconciliationAckReturns = [
+    ...semantic.matchAll(/\breturn\s+(?!next\b|query\b)([\s\S]*?);/giu),
+  ];
+  if (
+    reconciliationAck &&
+    (reconciliationAckReturns.length !== 1 ||
+      !/^jsonb_build_object\s*\(\s*'acknowledged'\s*,\s*true\s*\)$/iu.test(
+        reconciliationAckReturns[0]?.[1]?.trim() ?? "",
+      ))
+  ) {
+    throw new Error(
+      `PostgreSQL function reconciliation ACK result drift: ${signature.schema}.${signature.function_name}`,
+    );
+  }
   assertNoUnreachableProofScaffolding(
     signature,
     reachableSemantic,
@@ -2048,11 +3726,13 @@ function assertFunctionEffectsInDefinition(
   for (const match of executable.matchAll(readTargetPattern)) {
     const observedSchema = match[1];
     const observedTable = match[2];
+    const prefix = executable.slice(0, match.index ?? 0);
     const suffix = executable.slice((match.index ?? 0) + match[0].length);
     if (
       observedTable === undefined ||
       commonTableExpressions.has(observedTable) ||
-      /^\s*\(/u.test(suffix)
+      /^\s*\(/u.test(suffix) ||
+      /\bdistinct\s*$/iu.test(prefix)
     ) {
       continue;
     }
@@ -2071,6 +3751,8 @@ function assertFunctionEffectsInDefinition(
   const commaReadTargetPattern =
     /,\s*(?:only\s+)?(?:"?([a-z][a-z0-9_]*)"?\s*\.\s*)?"?([a-z][a-z0-9_]*)"?(?:\s+(?:as\s+)?(?!where\b|join\b|left\b|right\b|full\b|cross\b|inner\b|group\b|order\b|having\b|limit\b|offset\b|returning\b|for\b)(?:"?[a-z][a-z0-9_]*"?))?(?=\s*(?:,|\b(?:join|left|right|full|cross|inner|where|group|order|having|limit|offset|returning|for|union|intersect|except)\b|$))/gi;
   for (const fromClause of executable.matchAll(fromClausePattern)) {
+    const prefix = executable.slice(0, fromClause.index ?? 0);
+    if (/\bdistinct\s*$/iu.test(prefix)) continue;
     const relations = fromClause[1] ?? "";
     for (const match of relations.matchAll(commaReadTargetPattern)) {
       const observedSchema = match[1];
@@ -2708,11 +4390,29 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
   options: Readonly<{
     expected_schema_owner: string;
     runtime_postgres: PostgresQueryPortV1;
+    /**
+     * Independent deployment LOGIN roles that may explicitly SET ROLE to the
+     * NOLOGIN schema owner. Membership is exact and must be direct,
+     * NOINHERIT, SET TRUE and ADMIN FALSE. Omission remains fail-closed.
+     */
+    schema_owner_assume_principals?: readonly string[];
   }>,
 ): Promise<VerifiedOwnerRepositoryDeploymentV1<TContract["owner_service"]>> {
+  // The verifier is a public boundary; do not rely on callers having obtained
+  // the object from defineOwnerRepositoryContractV1 first.
+  defineOwnerRepositoryContractV1(contract);
   if (contract.foreign_key_snapshot.status === "pending") {
     throw new Error(
       `canonical PostgreSQL foreign-key snapshot is pending for ${contract.owner_service}: ${contract.foreign_key_snapshot.reason}`,
+    );
+  }
+  if (
+    contract.dlq_tables.length > 0 &&
+    (contract.dlq_resolutions === undefined ||
+      contract.dlq_resolutions.length !== contract.dlq_tables.length)
+  ) {
+    throw new Error(
+      `canonical immutable DLQ resolution mapping is required for live owner verification: ${contract.owner_service}`,
     );
   }
   if (contract.database_columns === undefined) {
@@ -2736,6 +4436,55 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
   ) {
     throw new Error(
       `version-pinned pai-infra writer artifacts are required for live owner verification: ${contract.owner_service}`,
+    );
+  }
+  const schemaOwnerAssumePrincipals = [
+    ...(options.schema_owner_assume_principals ?? []),
+  ];
+  if (
+    new Set(schemaOwnerAssumePrincipals).size !==
+      schemaOwnerAssumePrincipals.length ||
+    schemaOwnerAssumePrincipals.some(
+      (principal) =>
+        principal.trim().length === 0 ||
+        principal === options.expected_schema_owner ||
+        principal === contract.app_role,
+    )
+  ) {
+    throw new Error(
+      `invalid schema-owner assume principal allowlist for ${contract.owner_service}`,
+    );
+  }
+  const databaseIdentitySql = `SELECT current_database()::text AS database_name,
+                                      (pg_catalog.pg_control_system()).system_identifier::text
+                                        AS system_identifier`;
+  const [catalogDatabaseIdentityResult, runtimeDatabaseIdentityResult] =
+    await Promise.all([
+      postgres.query<{
+        database_name: string;
+        system_identifier: string;
+      }>(databaseIdentitySql),
+      options.runtime_postgres.query<{
+        database_name: string;
+        system_identifier: string;
+      }>(databaseIdentitySql),
+    ]);
+  const catalogDatabaseIdentity = catalogDatabaseIdentityResult.rows[0];
+  const runtimeDatabaseIdentity = runtimeDatabaseIdentityResult.rows[0];
+  if (
+    catalogDatabaseIdentityResult.rows.length !== 1 ||
+    runtimeDatabaseIdentityResult.rows.length !== 1 ||
+    catalogDatabaseIdentity === undefined ||
+    runtimeDatabaseIdentity === undefined ||
+    catalogDatabaseIdentity.database_name.length === 0 ||
+    catalogDatabaseIdentity.system_identifier.length === 0 ||
+    catalogDatabaseIdentity.database_name !==
+      runtimeDatabaseIdentity.database_name ||
+    catalogDatabaseIdentity.system_identifier !==
+      runtimeDatabaseIdentity.system_identifier
+  ) {
+    throw new Error(
+      `catalog and runtime PostgreSQL identities do not match for ${contract.owner_service}`,
     );
   }
   const schemaResult = await postgres.query<{
@@ -2815,6 +4564,11 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
   const schemaOwnerMemberResult = await postgres.query<{
     role_name: string;
     can_login: boolean;
+    is_superuser: boolean;
+    bypasses_rls: boolean;
+    can_create_role: boolean;
+    can_create_database: boolean;
+    can_replicate: boolean;
   }>(
     `WITH RECURSIVE owner_role_members(role_oid, path) AS (
        SELECT r.oid, ARRAY[r.oid]
@@ -2826,16 +4580,77 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
          JOIN owner_role_members ON owner_role_members.role_oid = m.roleid
         WHERE NOT m.member = ANY(owner_role_members.path)
      )
-     SELECT r.rolname AS role_name, r.rolcanlogin AS can_login
+     SELECT r.rolname AS role_name,
+            r.rolcanlogin AS can_login,
+            r.rolsuper AS is_superuser,
+            r.rolbypassrls AS bypasses_rls,
+            r.rolcreaterole AS can_create_role,
+            r.rolcreatedb AS can_create_database,
+            r.rolreplication AS can_replicate
        FROM owner_role_members
        JOIN pg_catalog.pg_roles r ON r.oid = owner_role_members.role_oid
       WHERE r.rolname <> $1
       ORDER BY r.rolname`,
     [options.expected_schema_owner],
   );
-  if (schemaOwnerMemberResult.rows.length > 0) {
+  assertSameSet(
+    `${options.expected_schema_owner} reverse members`,
+    schemaOwnerMemberResult.rows.map(({ role_name }) => role_name),
+    schemaOwnerAssumePrincipals,
+  );
+  if (
+    schemaOwnerMemberResult.rows.some(
+      ({
+        can_login,
+        is_superuser,
+        bypasses_rls,
+        can_create_role,
+        can_create_database,
+        can_replicate,
+      }) =>
+        !can_login ||
+        is_superuser ||
+        bypasses_rls ||
+        can_create_role ||
+        can_create_database ||
+        can_replicate,
+    )
+  ) {
     throw new Error(
-      `schema owner PostgreSQL role reverse membership drift for ${contract.owner_service}`,
+      `schema owner assume principal privilege drift for ${contract.owner_service}`,
+    );
+  }
+  const schemaOwnerMembershipOptionsResult = await postgres.query<{
+    role_name: string;
+    admin_option: boolean;
+    inherit_option: boolean;
+    set_option: boolean;
+  }>(
+    `SELECT member.rolname AS role_name,
+            membership.admin_option,
+            membership.inherit_option,
+            membership.set_option
+       FROM pg_catalog.pg_auth_members membership
+       JOIN pg_catalog.pg_roles owner_role
+         ON owner_role.oid = membership.roleid
+       JOIN pg_catalog.pg_roles member ON member.oid = membership.member
+      WHERE owner_role.rolname = $1
+      ORDER BY member.rolname`,
+    [options.expected_schema_owner],
+  );
+  assertSameSet(
+    `${options.expected_schema_owner} direct assume memberships`,
+    schemaOwnerMembershipOptionsResult.rows.map(({ role_name }) => role_name),
+    schemaOwnerAssumePrincipals,
+  );
+  if (
+    schemaOwnerMembershipOptionsResult.rows.some(
+      ({ admin_option, inherit_option, set_option }) =>
+        admin_option || inherit_option || !set_option,
+    )
+  ) {
+    throw new Error(
+      `schema owner assume membership option drift for ${contract.owner_service}`,
     );
   }
 
@@ -3007,6 +4822,146 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
   ) {
     throw new Error(
       `application PostgreSQL role reverse membership drift for ${contract.owner_service}`,
+    );
+  }
+
+  const otherOwnerSchemas = OWNER_DATABASE_SCHEMAS_V1.filter(
+    (schema) => schema !== contract.schema,
+  );
+  const crossOwnerRuntimeSchemaPrivilegeResult =
+    await options.runtime_postgres.query<{
+      schema_name: string;
+      can_use: boolean;
+      can_create: boolean;
+    }>(
+      `SELECT n.nspname AS schema_name,
+              pg_catalog.has_schema_privilege(current_user, n.oid, 'USAGE') AS can_use,
+              pg_catalog.has_schema_privilege(current_user, n.oid, 'CREATE') AS can_create
+         FROM pg_catalog.pg_namespace n
+        WHERE n.nspname = ANY($1::text[])
+        ORDER BY n.nspname`,
+      [otherOwnerSchemas],
+    );
+  if (
+    crossOwnerRuntimeSchemaPrivilegeResult.rows.some(
+      ({ can_use, can_create }) => can_use || can_create,
+    )
+  ) {
+    throw new Error(
+      `cross-owner effective runtime schema privilege drift for ${contract.owner_service}`,
+    );
+  }
+
+  const crossOwnerRuntimeTablePrivilegeResult =
+    await options.runtime_postgres.query<{
+      schema_name: string;
+      relation_name: string;
+      can_select: boolean;
+      can_insert: boolean;
+      can_update: boolean;
+      can_delete: boolean;
+      can_truncate: boolean;
+      can_references: boolean;
+      can_trigger: boolean;
+    }>(
+      `SELECT n.nspname AS schema_name, c.relname AS relation_name,
+              pg_catalog.has_table_privilege(current_user, c.oid, 'SELECT') AS can_select,
+              pg_catalog.has_table_privilege(current_user, c.oid, 'INSERT') AS can_insert,
+              pg_catalog.has_table_privilege(current_user, c.oid, 'UPDATE') AS can_update,
+              pg_catalog.has_table_privilege(current_user, c.oid, 'DELETE') AS can_delete,
+              pg_catalog.has_table_privilege(current_user, c.oid, 'TRUNCATE') AS can_truncate,
+              pg_catalog.has_table_privilege(current_user, c.oid, 'REFERENCES') AS can_references,
+              pg_catalog.has_table_privilege(current_user, c.oid, 'TRIGGER') AS can_trigger
+         FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = ANY($1::text[])
+          AND c.relkind IN ('r','p','v','m','f')
+        ORDER BY n.nspname, c.relname`,
+      [otherOwnerSchemas],
+    );
+  if (
+    crossOwnerRuntimeTablePrivilegeResult.rows.some(
+      ({
+        can_select,
+        can_insert,
+        can_update,
+        can_delete,
+        can_truncate,
+        can_references,
+        can_trigger,
+      }) =>
+        can_select ||
+        can_insert ||
+        can_update ||
+        can_delete ||
+        can_truncate ||
+        can_references ||
+        can_trigger,
+    )
+  ) {
+    throw new Error(
+      `cross-owner effective runtime table privilege drift for ${contract.owner_service}`,
+    );
+  }
+
+  const crossOwnerRuntimeColumnPrivilegeResult =
+    await options.runtime_postgres.query<{
+      schema_name: string;
+      relation_name: string;
+      column_name: string;
+      can_select: boolean;
+      can_insert: boolean;
+      can_update: boolean;
+      can_references: boolean;
+    }>(
+      `SELECT n.nspname AS schema_name, c.relname AS relation_name,
+              a.attname AS column_name,
+              pg_catalog.has_column_privilege(current_user, c.oid, a.attnum, 'SELECT') AS can_select,
+              pg_catalog.has_column_privilege(current_user, c.oid, a.attnum, 'INSERT') AS can_insert,
+              pg_catalog.has_column_privilege(current_user, c.oid, a.attnum, 'UPDATE') AS can_update,
+              pg_catalog.has_column_privilege(current_user, c.oid, a.attnum, 'REFERENCES') AS can_references
+         FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+         JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+        WHERE n.nspname = ANY($1::text[])
+          AND c.relkind IN ('r','p','v','m','f')
+          AND a.attnum > 0
+          AND NOT a.attisdropped
+        ORDER BY n.nspname, c.relname, a.attnum`,
+      [otherOwnerSchemas],
+    );
+  if (
+    crossOwnerRuntimeColumnPrivilegeResult.rows.some(
+      ({ can_select, can_insert, can_update, can_references }) =>
+        can_select || can_insert || can_update || can_references,
+    )
+  ) {
+    throw new Error(
+      `cross-owner effective runtime column privilege drift for ${contract.owner_service}`,
+    );
+  }
+
+  const crossOwnerRuntimeFunctionPrivilegeResult =
+    await options.runtime_postgres.query<{
+      schema_name: string;
+      function_name: string;
+      can_execute: boolean;
+    }>(
+      `SELECT n.nspname AS schema_name, p.proname AS function_name,
+              pg_catalog.has_function_privilege(current_user, p.oid, 'EXECUTE') AS can_execute
+         FROM pg_catalog.pg_proc p
+         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = ANY($1::text[])
+        ORDER BY n.nspname, p.proname, p.oid`,
+      [otherOwnerSchemas],
+    );
+  if (
+    crossOwnerRuntimeFunctionPrivilegeResult.rows.some(
+      ({ can_execute }) => can_execute,
+    )
+  ) {
+    throw new Error(
+      `cross-owner effective runtime function privilege drift for ${contract.owner_service}`,
     );
   }
 
@@ -3191,13 +5146,9 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
   const observedColumns = new Set(
     columnResult.rows.map(({ table_name, column_name }) => `${table_name}.${column_name}`),
   );
-  assertSameSet(
-    `${contract.schema} columns`,
-    observedColumns,
-    contract.table_permissions.flatMap(({ table_name, select_columns }) =>
-      select_columns.map((column) => `${table_name}.${column}`),
-    ),
-  );
+  // Physical columns are verified exhaustively against database_columns below.
+  // select_columns is intentionally only the app_role-readable subset so
+  // internal lease and claim-token columns never need a direct SELECT grant.
   for (const permission of contract.table_permissions) {
     for (const column of permission.select_columns) {
       if (!observedColumns.has(`${permission.table_name}.${column}`)) {
@@ -3252,9 +5203,7 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
        FROM pg_catalog.pg_class c
        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
        JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
-       CROSS JOIN LATERAL pg_catalog.aclexplode(
-         COALESCE(a.attacl, '{}'::aclitem[])
-       ) acl
+       CROSS JOIN LATERAL pg_catalog.aclexplode(a.attacl) acl
        LEFT JOIN pg_catalog.pg_roles r ON r.oid = acl.grantee
       WHERE n.nspname = $1 AND c.relkind IN ('r','p')
         AND a.attnum > 0 AND NOT a.attisdropped`,
@@ -3511,6 +5460,166 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     throw new Error(`effective runtime schema privilege drift for ${contract.schema}`);
   }
 
+  const defaultPrivilegeResult = await postgres.query<{
+    namespace_name: string;
+    object_type: string;
+    grantee: string;
+    privilege_type: string;
+  }>(
+    `WITH owner_role AS (
+       SELECT r.oid AS role_oid, r.rolname AS role_name
+         FROM pg_catalog.pg_roles r
+        WHERE r.rolname = $1
+     ), object_types(object_type) AS (
+       VALUES ('r'::"char"), ('S'::"char"), ('f'::"char")
+     ), effective_defaults(namespace_name, object_type, owner_oid, acl_items) AS (
+       SELECT 'GLOBAL'::text, object_types.object_type, owner_role.role_oid,
+              COALESCE(default_acl.defaclacl,
+                       pg_catalog.acldefault(object_types.object_type, owner_role.role_oid))
+         FROM owner_role
+         CROSS JOIN object_types
+         LEFT JOIN pg_catalog.pg_default_acl default_acl
+           ON default_acl.defaclrole = owner_role.role_oid
+          AND default_acl.defaclnamespace = 0
+          AND default_acl.defaclobjtype = object_types.object_type
+       UNION ALL
+       SELECT namespace.nspname, default_acl.defaclobjtype,
+              owner_role.role_oid, default_acl.defaclacl
+         FROM owner_role
+         JOIN pg_catalog.pg_default_acl default_acl
+           ON default_acl.defaclrole = owner_role.role_oid
+          AND default_acl.defaclnamespace <> 0
+         JOIN pg_catalog.pg_namespace namespace
+           ON namespace.oid = default_acl.defaclnamespace
+        WHERE namespace.nspname = $2
+          AND default_acl.defaclobjtype IN ('r','S','f')
+     )
+     SELECT defaults.namespace_name,
+            defaults.object_type::text AS object_type,
+            COALESCE(grantee.rolname, 'PUBLIC') AS grantee,
+            acl.privilege_type
+       FROM effective_defaults defaults
+       CROSS JOIN LATERAL pg_catalog.aclexplode(defaults.acl_items) acl
+       LEFT JOIN pg_catalog.pg_roles grantee ON grantee.oid = acl.grantee
+      ORDER BY defaults.namespace_name, defaults.object_type, grantee, acl.privilege_type`,
+    [options.expected_schema_owner, contract.schema],
+  );
+  if (
+    defaultPrivilegeResult.rows.some(
+      ({ grantee }) => grantee !== options.expected_schema_owner,
+    )
+  ) {
+    throw new Error(
+      `default privilege drift for ${options.expected_schema_owner} in ${contract.schema}`,
+    );
+  }
+
+  const sequenceOwnerResult = await postgres.query<{
+    sequence_name: string;
+    sequence_owner: string;
+  }>(
+    `SELECT c.relname AS sequence_name,
+            pg_catalog.pg_get_userbyid(c.relowner) AS sequence_owner
+       FROM pg_catalog.pg_class c
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1 AND c.relkind = 'S'
+      ORDER BY c.relname`,
+    [contract.schema],
+  );
+  if (
+    sequenceOwnerResult.rows.some(
+      ({ sequence_owner }) =>
+        sequence_owner !== options.expected_schema_owner,
+    )
+  ) {
+    throw new Error(`sequence owner drift for ${contract.schema}`);
+  }
+
+  const sequenceAclResult = await postgres.query<{
+    sequence_name: string;
+    grantee: string;
+    privilege_type: string;
+  }>(
+    `SELECT c.relname AS sequence_name,
+            COALESCE(r.rolname, 'PUBLIC') AS grantee,
+            acl.privilege_type
+       FROM pg_catalog.pg_class c
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+       CROSS JOIN LATERAL pg_catalog.aclexplode(
+         COALESCE(c.relacl, pg_catalog.acldefault('S', c.relowner))
+       ) acl
+       LEFT JOIN pg_catalog.pg_roles r ON r.oid = acl.grantee
+      WHERE n.nspname = $1 AND c.relkind = 'S'
+      ORDER BY c.relname, grantee, acl.privilege_type`,
+    [contract.schema],
+  );
+  if (
+    sequenceAclResult.rows.some(
+      ({ grantee }) => grantee !== options.expected_schema_owner,
+    )
+  ) {
+    throw new Error(`sequence privilege drift for ${contract.schema}`);
+  }
+
+  const runtimeSequencePrivilegeResult =
+    await options.runtime_postgres.query<{
+      schema_name: string;
+      sequence_name: string;
+      can_usage: boolean;
+      can_select: boolean;
+      can_update: boolean;
+    }>(
+      `SELECT n.nspname AS schema_name, c.relname AS sequence_name,
+              pg_catalog.has_sequence_privilege(current_user, c.oid, 'USAGE') AS can_usage,
+              pg_catalog.has_sequence_privilege(current_user, c.oid, 'SELECT') AS can_select,
+              pg_catalog.has_sequence_privilege(current_user, c.oid, 'UPDATE') AS can_update
+         FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = $1 AND c.relkind = 'S'
+        ORDER BY c.relname`,
+      [contract.schema],
+    );
+  if (
+    runtimeSequencePrivilegeResult.rows.some(
+      ({ can_usage, can_select, can_update }) =>
+        can_usage || can_select || can_update,
+    )
+  ) {
+    throw new Error(
+      `effective runtime sequence privilege drift for ${contract.schema}`,
+    );
+  }
+
+  const crossOwnerRuntimeSequencePrivilegeResult =
+    await options.runtime_postgres.query<{
+      schema_name: string;
+      sequence_name: string;
+      can_usage: boolean;
+      can_select: boolean;
+      can_update: boolean;
+    }>(
+      `SELECT n.nspname AS schema_name, c.relname AS sequence_name,
+              pg_catalog.has_sequence_privilege(current_user, c.oid, 'USAGE') AS can_usage,
+              pg_catalog.has_sequence_privilege(current_user, c.oid, 'SELECT') AS can_select,
+              pg_catalog.has_sequence_privilege(current_user, c.oid, 'UPDATE') AS can_update
+         FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = ANY($1::text[])
+          AND c.relkind = 'S'
+        ORDER BY n.nspname, c.relname`,
+      [otherOwnerSchemas],
+    );
+  if (
+    crossOwnerRuntimeSequencePrivilegeResult.rows.some(
+      ({ can_usage, can_select, can_update }) =>
+        can_usage || can_select || can_update,
+    )
+  ) {
+    throw new Error(
+      `cross-owner effective runtime sequence privilege drift for ${contract.owner_service}`,
+    );
+  }
+
   const foreignKeyResult = await postgres.query<{
     constraint_name: string;
     table_name: string;
@@ -3712,6 +5821,8 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     schema_owner_role: schemaOwnerRoleResult.rows,
     schema_owner_inherited_roles: schemaOwnerInheritedRoleResult.rows,
     schema_owner_reverse_membership: schemaOwnerMemberResult.rows,
+    schema_owner_reverse_membership_options:
+      schemaOwnerMembershipOptionsResult.rows,
     app_role: appRoleResult.rows,
     columns: columnResult.rows,
     table_owners: tableOwnerResult.rows,
@@ -3721,6 +5832,14 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     runtime_membership: runtimeMembershipResult.rows,
     runtime_membership_options: runtimeMembershipOptionsResult.rows,
     app_role_reverse_membership: appRoleMemberResult.rows,
+    cross_owner_runtime_schema_privileges:
+      crossOwnerRuntimeSchemaPrivilegeResult.rows,
+    cross_owner_runtime_table_privileges:
+      crossOwnerRuntimeTablePrivilegeResult.rows,
+    cross_owner_runtime_column_privileges:
+      crossOwnerRuntimeColumnPrivilegeResult.rows,
+    cross_owner_runtime_function_privileges:
+      crossOwnerRuntimeFunctionPrivilegeResult.rows,
     unsupported_relations: unsupportedRelationResult.rows,
     rewrite_rules: rewriteRuleResult.rows,
     table_acl: tableAclResult.rows,
@@ -3732,19 +5851,63 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     runtime_execute: runtimeExecuteResult.rows,
     schema_acl: schemaAclResult.rows,
     runtime_schema_privileges: runtimeSchemaPrivilegeResult.rows,
+    default_privileges: defaultPrivilegeResult.rows,
+    sequence_owners: sequenceOwnerResult.rows,
+    sequence_acl: sequenceAclResult.rows,
+    runtime_sequence_privileges: runtimeSequencePrivilegeResult.rows,
+    cross_owner_runtime_sequence_privileges:
+      crossOwnerRuntimeSequencePrivilegeResult.rows,
     foreign_keys: foreignKeyResult.rows,
     foreign_key_triggers: foreignKeyTriggerResult.rows,
     unique_constraints: uniqueConstraintResult.rows,
     indexes: indexResult.rows,
     check_constraints: checkConstraintResult.rows,
+    database_identity: catalogDatabaseIdentity,
   });
-  return Object.freeze({
+  const deployment = Object.freeze({
     owner_service: contract.owner_service,
     verified_at: new Date().toISOString(),
     contract_fingerprint: contractFingerprint,
     database_fingerprint: databaseFingerprint,
     [verifiedOwnerDeploymentBrand]: true,
   }) as VerifiedOwnerRepositoryDeploymentV1<TContract["owner_service"]>;
+  verifiedOwnerDeploymentBindingsV1.set(deployment, {
+    catalog_postgres: postgres,
+    runtime_postgres: options.runtime_postgres,
+    contract_fingerprint: contractFingerprint,
+    database_fingerprint: databaseFingerprint,
+  });
+  return deployment;
+}
+
+/**
+ * Converts a verified read-only proof into an executable capability only for
+ * the Pool created and retained by this module's composition factory. Keeping
+ * this operation private prevents nominal `instanceof Pool` lookalikes from
+ * turning caller-reported catalog rows into writer authority.
+ */
+function activateOwnerRepositoryDeploymentForCompositionV1<
+  TService extends OwnerDatabaseServiceIdV1,
+>(
+  deployment: VerifiedOwnerRepositoryDeploymentV1<TService>,
+  pool: Pool,
+): void {
+  const binding = verifiedOwnerDeploymentBindingsV1.get(deployment);
+  if (
+    binding === undefined ||
+    binding.catalog_postgres !== pool ||
+    binding.runtime_postgres !== pool ||
+    binding.contract_fingerprint !== deployment.contract_fingerprint ||
+    binding.database_fingerprint !== deployment.database_fingerprint
+  ) {
+    throw new Error(
+      `verified deployment proof cannot be activated for ${deployment.owner_service}`,
+    );
+  }
+  verifiedOwnerDeploymentBindingsV1.set(deployment, {
+    ...binding,
+    activation_pool: pool,
+  });
 }
 
 export interface VerifiedOwnerPostgresCompositionV1<
@@ -3760,7 +5923,7 @@ export interface VerifiedOwnerPostgresCompositionV1<
     TContract["owner_service"],
     Readonly<{ owner: OwnerRepositoryPortV1<TContract> }>
   >;
-  readonly checkReadiness: () => Promise<void>;
+  readonly checkReadiness: (signal: AbortSignal) => Promise<void>;
   readonly close: () => Promise<void>;
 }
 
@@ -3793,6 +5956,142 @@ export function ownerDatabaseApplicationDependenciesV1<
   });
 }
 
+export type OwnerPostgresTransportSecurityV1 = "local" | "tls_verified";
+const OWNER_POSTGRES_CONNECTION_TIMEOUT_MS_V1 = 5_000;
+
+interface OwnerPostgresConnectionResolutionV1 {
+  readonly transport_security: OwnerPostgresTransportSecurityV1;
+  readonly effective_host?: string;
+  readonly url?: URL;
+}
+
+function ownerPostgresConnectionResolutionV1(
+  databaseUrl: string,
+): OwnerPostgresConnectionResolutionV1 {
+  if (databaseUrl.startsWith("/")) {
+    return { transport_security: "local" };
+  }
+  let url: URL;
+  let parsedWithDummyHost = false;
+  try {
+    url = new URL(databaseUrl);
+  } catch {
+    try {
+      if (!databaseUrl.includes("@/")) throw new Error("missing socket marker");
+      url = new URL(databaseUrl.replace("@/", "@owner-postgres.invalid/"));
+      parsedWithDummyHost = true;
+    } catch {
+      // Never include a connection string because it may contain credentials.
+      throw new Error("invalid PostgreSQL connection URL");
+    }
+  }
+  if (url.protocol === "socket:") {
+    if (!url.pathname.startsWith("/")) {
+      throw new Error("invalid PostgreSQL Unix socket URL");
+    }
+    return { transport_security: "local", url };
+  }
+  if (url.protocol !== "postgres:" && url.protocol !== "postgresql:") {
+    throw new Error("unsupported PostgreSQL connection URL protocol");
+  }
+  const configuredHosts = url.searchParams.getAll("host");
+  if (configuredHosts.length > 1) {
+    throw new Error("PostgreSQL connection URL must name exactly one host");
+  }
+  const effectiveHost =
+    configuredHosts[0] ?? (parsedWithDummyHost ? "" : url.hostname);
+  if (effectiveHost.startsWith("/")) {
+    return { transport_security: "local", url };
+  }
+  if (effectiveHost.length === 0) {
+    throw new Error(
+      "PostgreSQL connection URL must explicitly name a loopback host or Unix socket",
+    );
+  }
+  const normalizedHost = effectiveHost
+    .replace(/^\[|\]$/gu, "")
+    .replace(/\.$/u, "")
+    .toLowerCase();
+  const ipVersion = isIP(normalizedHost);
+  const loopback =
+    normalizedHost === "localhost" ||
+    (ipVersion === 4 && normalizedHost.startsWith("127.")) ||
+    (ipVersion === 6 &&
+      (normalizedHost === "::1" ||
+        normalizedHost.startsWith("::ffff:127.")));
+  if (loopback) {
+    return { transport_security: "local", url };
+  }
+  const sslModes = url.searchParams.getAll("sslmode");
+  if (sslModes.length !== 1 || sslModes[0]?.toLowerCase() !== "verify-full") {
+    throw new Error(
+      "remote PostgreSQL requires sslmode=verify-full with CA and hostname verification",
+    );
+  }
+  return {
+    transport_security: "tls_verified",
+    effective_host: normalizedHost,
+    url,
+  };
+}
+
+/**
+ * Validates a DSN without returning or logging credentials. TCP connections
+ * outside the local host must use CA and hostname verification; explicitly
+ * local Unix sockets and loopback TCP remain usable by development/CI.
+ */
+export function assertOwnerPostgresTransportSecurityV1(
+  databaseUrl: string,
+): OwnerPostgresTransportSecurityV1 {
+  return ownerPostgresConnectionResolutionV1(databaseUrl).transport_security;
+}
+
+function verifiedOwnerPostgresPoolConfigV1(databaseUrl: string): PoolConfig {
+  const resolution = ownerPostgresConnectionResolutionV1(databaseUrl);
+  if (resolution.transport_security === "local" || resolution.url === undefined) {
+    return {
+      connectionString: databaseUrl,
+      connectionTimeoutMillis: OWNER_POSTGRES_CONNECTION_TIMEOUT_MS_V1,
+    };
+  }
+  if (resolution.effective_host === undefined) {
+    throw new Error("remote PostgreSQL hostname verification target is missing");
+  }
+  const effectiveHost = resolution.effective_host;
+  const url = new URL(resolution.url.toString());
+  const rootCertificatePath = url.searchParams.get("sslrootcert");
+  const clientCertificatePath = url.searchParams.get("sslcert");
+  const clientKeyPath = url.searchParams.get("sslkey");
+  for (const parameter of [
+    "ssl",
+    "sslmode",
+    "sslrootcert",
+    "sslcert",
+    "sslkey",
+    "uselibpqcompat",
+  ]) {
+    url.searchParams.delete(parameter);
+  }
+  return {
+    connectionString: url.toString(),
+    connectionTimeoutMillis: OWNER_POSTGRES_CONNECTION_TIMEOUT_MS_V1,
+    ssl: {
+      rejectUnauthorized: true,
+      checkServerIdentity: (_hostname, certificate) =>
+        checkServerIdentity(effectiveHost, certificate),
+      ...(rootCertificatePath === null
+        ? {}
+        : { ca: readFileSync(rootCertificatePath, "utf8") }),
+      ...(clientCertificatePath === null
+        ? {}
+        : { cert: readFileSync(clientCertificatePath, "utf8") }),
+      ...(clientKeyPath === null
+        ? {}
+        : { key: readFileSync(clientKeyPath, "utf8") }),
+    },
+  };
+}
+
 /**
  * Opens the service runtime connection, verifies that exact effective identity
  * against PostgreSQL, and retains both the verified capability and pool for the
@@ -3804,8 +6103,10 @@ export async function openVerifiedOwnerPostgresCompositionV1<
   contract: TContract,
   databaseUrl: string,
   expectedSchemaOwner = "pai_migrator",
+  schemaOwnerAssumePrincipals: readonly string[] = [],
 ): Promise<VerifiedOwnerPostgresCompositionV1<TContract>> {
-  const pool = new Pool({ connectionString: databaseUrl });
+  const pool = new Pool(verifiedOwnerPostgresPoolConfigV1(databaseUrl));
+  const runtimePostgres = pool as unknown as PostgresQueryPortV1;
   const postgres: PostgresQueryPortV1 = {
     async query<TRow extends Record<string, unknown>>(
       sql: string,
@@ -3819,12 +6120,14 @@ export async function openVerifiedOwnerPostgresCompositionV1<
     const deployment =
       await verifyOwnerRepositoryDeploymentFromPostgresV1(
         contract,
-        postgres,
+        runtimePostgres,
         {
           expected_schema_owner: expectedSchemaOwner,
-          runtime_postgres: postgres,
+          runtime_postgres: runtimePostgres,
+          schema_owner_assume_principals: schemaOwnerAssumePrincipals,
         },
       );
+    activateOwnerRepositoryDeploymentForCompositionV1(deployment, pool);
     const ownerRepository = createVerifiedOwnerPostgresRepositoryV1(
       contract,
       deployment,
@@ -3836,8 +6139,8 @@ export async function openVerifiedOwnerPostgresCompositionV1<
       repository: ownerRepository.repository,
       outbox: ownerRepository.outbox,
       unit_of_work: ownerRepository.unit_of_work,
-      async checkReadiness(): Promise<void> {
-        await postgres.query("SELECT 1 AS owner_postgres_ready");
+      async checkReadiness(signal: AbortSignal): Promise<void> {
+        await checkOwnerPostgresReadinessV1(pool, signal);
       },
       async close(): Promise<void> {
         await pool.end();
@@ -3849,14 +6152,18 @@ export async function openVerifiedOwnerPostgresCompositionV1<
   }
 }
 
-type OwnerPostgresValueV1<TType extends OwnerPostgresTypeV1> =
+type OwnerPostgresNonNullValueV1<TType extends OwnerPostgresTypeV1> =
   TType extends "text" | "bigint" | "timestamptz"
-    ? string | null
+    ? string
     : TType extends "integer"
-      ? number | null
+      ? number
       : TType extends "boolean"
-        ? boolean | null
-        : Readonly<Record<string, unknown>> | readonly unknown[] | null;
+        ? boolean
+        : Readonly<object> | readonly unknown[];
+
+type OwnerPostgresValueV1<TArgument extends OwnerFunctionArgumentV1> =
+  | OwnerPostgresNonNullValueV1<TArgument["postgres_type"]>
+  | (TArgument["nullable"] extends true ? null : never);
 
 type OwnerWriterSignatureForV1<
   TContract extends OwnerRepositoryContractV1,
@@ -3870,7 +6177,7 @@ type OwnerWriterArgumentsV1<
   readonly OwnerFunctionArgumentV1[]
   ? {
       readonly [TArgument in TArguments[number] as TArgument["argument_name"]]:
-        OwnerPostgresValueV1<TArgument["postgres_type"]>;
+        OwnerPostgresValueV1<TArgument>;
     }
   : never;
 
@@ -3908,14 +6215,73 @@ export interface OwnerUnitOfWorkRequestV1 {
   readonly retry: "none" | "serialization_failures";
 }
 
+const OWNER_OUTBOX_IDENTITY_MAX_LENGTH_V1 = 256;
+const OWNER_OUTBOX_EPOCH_MAX_LENGTH_V1 = 128;
+const OWNER_OUTBOX_TRANSPORT_REF_MAX_LENGTH_V1 = 2_048;
+const OWNER_OUTBOX_TIMESTAMP_MAX_LENGTH_V1 = 64;
+const OWNER_UNIT_OF_WORK_OPERATION_MAX_LENGTH_V1 = 256;
+const OWNER_UNIT_OF_WORK_IDEMPOTENCY_KEY_MAX_LENGTH_V1 = 512;
+const OWNER_UNIT_OF_WORK_TRACE_ID_MAX_LENGTH_V1 = 256;
+
+function isBoundedNonBlankTextV1(
+  value: unknown,
+  maximumLength: number,
+): value is string {
+  return (
+    typeof value === "string" &&
+    value.length <= maximumLength &&
+    value.trim().length > 0
+  );
+}
+
 export interface OwnerOutboxClaimRequestV1 {
   readonly outbox_table: string;
   readonly worker_id: string;
   readonly limit: number;
   readonly lease_seconds: number;
+  /** Compatibility/audit timestamp only; lease authority is PostgreSQL clock_timestamp(). */
   readonly now: string;
   readonly current_transport_epoch: string;
   readonly current_transport_generation: number;
+}
+
+export interface OwnerOutboxClaimIdentityV1 {
+  readonly outbox_id: string;
+  readonly claim_token: string;
+}
+
+/** Reject malformed claim rows before their lease transaction can commit. */
+export function assertOwnerOutboxClaimIdentityV1(
+  value: unknown,
+): asserts value is OwnerOutboxClaimIdentityV1 &
+  Readonly<Record<string, unknown>> {
+  const outboxIdDescriptor =
+    typeof value === "object" && value !== null
+      ? Object.getOwnPropertyDescriptor(value, "outbox_id")
+      : undefined;
+  const claimTokenDescriptor =
+    typeof value === "object" && value !== null
+      ? Object.getOwnPropertyDescriptor(value, "claim_token")
+      : undefined;
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    outboxIdDescriptor === undefined ||
+    !("value" in outboxIdDescriptor) ||
+    !isBoundedNonBlankTextV1(
+      outboxIdDescriptor.value,
+      OWNER_OUTBOX_IDENTITY_MAX_LENGTH_V1,
+    ) ||
+    claimTokenDescriptor === undefined ||
+    !("value" in claimTokenDescriptor) ||
+    !isBoundedNonBlankTextV1(
+      claimTokenDescriptor.value,
+      OWNER_OUTBOX_IDENTITY_MAX_LENGTH_V1,
+    )
+  ) {
+    throw new Error("outbox claim writer returned an invalid fenced identity");
+  }
 }
 
 export interface OwnerOutboxAcknowledgeRequestV1 {
@@ -3930,7 +6296,224 @@ export interface OwnerOutboxAcknowledgeRequestV1 {
   readonly transport_generation: number | null;
   readonly current_transport_epoch: string;
   readonly current_transport_generation: number;
+  /** Compatibility/audit timestamp only; persisted timing uses PostgreSQL clock_timestamp(). */
   readonly now: string;
+}
+
+export interface OwnerOutboxAcknowledgeConfirmationV1 {
+  readonly acknowledged: true;
+}
+
+const OWNER_OUTBOX_ERROR_MAX_BYTES_V1 = 16 * 1_024;
+const OWNER_OUTBOX_ERROR_MAX_DEPTH_V1 = 16;
+const OWNER_OUTBOX_ERROR_MAX_NODES_V1 = 2_048;
+
+function snapshotOwnerOutboxErrorV1(
+  value: Readonly<Record<string, unknown>> | null,
+): string | null {
+  if (value === null) return null;
+  type SnapshotTarget = Record<string, unknown> | unknown[];
+  const root: Record<string, unknown> = Object.create(null) as Record<
+    string,
+    unknown
+  >;
+  const assign = (
+    target: SnapshotTarget,
+    key: string | number,
+    entry: unknown,
+  ): void => {
+    if (Array.isArray(target)) {
+      if (typeof key !== "number") {
+        throw new Error("owner outbox error snapshot target drifted");
+      }
+      target[key] = entry;
+      return;
+    }
+    if (typeof key !== "string") {
+      throw new Error("owner outbox error snapshot target drifted");
+    }
+    Object.defineProperty(target, key, {
+      value: entry,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  };
+  const pending: Array<
+    Readonly<{
+      source: unknown;
+      depth: number;
+      target: SnapshotTarget;
+      key: string | number;
+    }>
+  > = [
+    { source: value, depth: 0, target: root, key: "value" },
+  ];
+  const visited = new WeakSet<object>();
+  let nodes = 0;
+  let estimatedUtf8Bytes = 0;
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined) break;
+    nodes += 1;
+    if (
+      nodes > OWNER_OUTBOX_ERROR_MAX_NODES_V1 ||
+      current.depth > OWNER_OUTBOX_ERROR_MAX_DEPTH_V1
+    ) {
+      throw new Error("owner outbox error exceeded its bounded JSON contract");
+    }
+    const entry = current.source;
+    if (entry === null || typeof entry === "boolean") {
+      estimatedUtf8Bytes += entry === null ? 4 : entry ? 4 : 5;
+      assign(current.target, current.key, entry);
+      continue;
+    }
+    if (typeof entry === "string") {
+      estimatedUtf8Bytes += Buffer.byteLength(entry, "utf8");
+      if (estimatedUtf8Bytes > OWNER_OUTBOX_ERROR_MAX_BYTES_V1) {
+        throw new Error("owner outbox error exceeded its bounded JSON contract");
+      }
+      assign(current.target, current.key, entry);
+      continue;
+    }
+    if (typeof entry === "number") {
+      if (!Number.isFinite(entry)) {
+        throw new Error("owner outbox error must contain canonical JSON values");
+      }
+      estimatedUtf8Bytes += 32;
+      assign(current.target, current.key, entry);
+      continue;
+    }
+    if (typeof entry !== "object" || ArrayBuffer.isView(entry)) {
+      throw new Error("owner outbox error must contain canonical JSON values");
+    }
+    if (visited.has(entry)) {
+      throw new Error("owner outbox error must not contain cycles or aliases");
+    }
+    visited.add(entry);
+    const isArray = Array.isArray(entry);
+    const prototype = Object.getPrototypeOf(entry);
+    if (!isArray && prototype !== Object.prototype && prototype !== null) {
+      throw new Error("owner outbox error must contain plain JSON objects");
+    }
+    const ownKeys = Reflect.ownKeys(entry);
+    if (ownKeys.length > OWNER_OUTBOX_ERROR_MAX_NODES_V1) {
+      throw new Error("owner outbox error exceeded its bounded JSON contract");
+    }
+    if (isArray) {
+      const lengthDescriptor = Object.getOwnPropertyDescriptor(entry, "length");
+      const length = lengthDescriptor?.value;
+      if (
+        lengthDescriptor === undefined ||
+        !("value" in lengthDescriptor) ||
+        !Number.isSafeInteger(length) ||
+        (length as number) < 0 ||
+        (length as number) > OWNER_OUTBOX_ERROR_MAX_NODES_V1 ||
+        ownKeys.length !== (length as number) + 1
+      ) {
+        throw new Error("owner outbox error arrays must be dense JSON arrays");
+      }
+      const snapshot = new Array(length as number);
+      assign(current.target, current.key, snapshot);
+      estimatedUtf8Bytes += 2;
+      for (const propertyKey of ownKeys) {
+        if (propertyKey === "length") continue;
+        if (typeof propertyKey !== "string") {
+          throw new Error("owner outbox error arrays must use JSON indexes");
+        }
+        const index = Number(propertyKey);
+        if (
+          !Number.isSafeInteger(index) ||
+          index < 0 ||
+          index >= (length as number) ||
+          String(index) !== propertyKey
+        ) {
+          throw new Error("owner outbox error arrays must be dense JSON arrays");
+        }
+        const descriptor = Object.getOwnPropertyDescriptor(entry, propertyKey);
+        if (
+          descriptor === undefined ||
+          !("value" in descriptor) ||
+          descriptor.enumerable !== true
+        ) {
+          throw new Error("owner outbox error must use own data properties");
+        }
+        pending.push({
+          source: descriptor.value,
+          depth: current.depth + 1,
+          target: snapshot,
+          key: index,
+        });
+      }
+      continue;
+    }
+    const snapshot = Object.create(null) as Record<string, unknown>;
+    assign(current.target, current.key, snapshot);
+    estimatedUtf8Bytes += 2;
+    for (const key of ownKeys) {
+      if (typeof key !== "string") {
+        throw new Error("owner outbox error must use string JSON keys");
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(entry, key);
+      if (
+        descriptor === undefined ||
+        !("value" in descriptor) ||
+        descriptor.enumerable !== true
+      ) {
+        throw new Error("owner outbox error must use own data properties");
+      }
+      estimatedUtf8Bytes += Buffer.byteLength(key, "utf8") + 3;
+      if (estimatedUtf8Bytes > OWNER_OUTBOX_ERROR_MAX_BYTES_V1) {
+        throw new Error("owner outbox error exceeded its bounded JSON contract");
+      }
+      pending.push({
+        source: descriptor.value,
+        depth: current.depth + 1,
+        target: snapshot,
+        key,
+      });
+    }
+  }
+  let serialized: string | undefined;
+  try {
+    serialized = JSON.stringify(root.value);
+  } catch {
+    throw new Error("owner outbox error is not JSON-serializable");
+  }
+  if (
+    serialized === undefined ||
+    Buffer.byteLength(serialized, "utf8") > OWNER_OUTBOX_ERROR_MAX_BYTES_V1
+  ) {
+    throw new Error("owner outbox error exceeded its bounded JSON contract");
+  }
+  return serialized;
+}
+
+/**
+ * A standard outbox ACK is successful only when the fenced UPDATE affected the
+ * claimed row.  Writers must return exactly this confirmation object; accepting
+ * arbitrary JSON would turn a stale/no-op claim into a successful dispatch.
+ */
+export function assertOwnerOutboxAcknowledgeConfirmationV1(
+  value: unknown,
+): asserts value is OwnerOutboxAcknowledgeConfirmationV1 {
+  const acknowledgedDescriptor =
+    typeof value === "object" && value !== null
+      ? Object.getOwnPropertyDescriptor(value, "acknowledged")
+      : undefined;
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    Object.keys(value).length !== 1 ||
+    acknowledgedDescriptor === undefined ||
+    !("value" in acknowledgedDescriptor) ||
+    acknowledgedDescriptor.value !== true
+  ) {
+    throw new Error(
+      "outbox acknowledge writer did not confirm its fenced compare-and-set",
+    );
+  }
 }
 
 /**
@@ -3945,9 +6528,9 @@ export interface OwnerOutboxStorePortV1<
   claim<TResult extends Readonly<Record<string, unknown>>>(
     request: OwnerOutboxClaimRequestV1,
   ): Promise<readonly TResult[]>;
-  acknowledge<TResult extends Readonly<Record<string, unknown>>>(
+  acknowledge(
     request: OwnerOutboxAcknowledgeRequestV1,
-  ): Promise<TResult>;
+  ): Promise<OwnerOutboxAcknowledgeConfirmationV1>;
 }
 
 /**
@@ -3973,26 +6556,173 @@ function postgresArgumentCast(type: OwnerPostgresTypeV1): string {
 }
 
 function postgresArgumentValue(
-  type: OwnerPostgresTypeV1,
+  argument: OwnerFunctionArgumentV1,
   value: unknown,
 ): unknown {
   if (value === undefined) {
-    throw new Error("owner writer argument must be explicitly present or null");
+    throw new Error(
+      `owner writer argument must be explicitly present: ${argument.argument_name}`,
+    );
   }
-  if (type !== "jsonb" || value === null) return value;
-  const serialized = JSON.stringify(value);
-  if (serialized === undefined) {
-    throw new Error("owner writer jsonb argument is not JSON-serializable");
+  if (value === null) {
+    if (argument.nullable !== true) {
+      throw new Error(
+        `owner writer argument does not allow null: ${argument.argument_name}`,
+      );
+    }
+    return null;
   }
-  return serialized;
+  switch (argument.postgres_type) {
+    case "text":
+      if (typeof value !== "string") break;
+      return value;
+    case "bigint": {
+      if (
+        typeof value !== "string" ||
+        !/^-?(?:0|[1-9][0-9]*)$/u.test(value)
+      ) {
+        break;
+      }
+      const parsed = BigInt(value);
+      if (
+        parsed < -9_223_372_036_854_775_808n ||
+        parsed > 9_223_372_036_854_775_807n
+      ) {
+        break;
+      }
+      return value;
+    }
+    case "integer":
+      if (
+        typeof value !== "number" ||
+        !Number.isInteger(value) ||
+        value < -2_147_483_648 ||
+        value > 2_147_483_647
+      ) {
+        break;
+      }
+      return value;
+    case "boolean":
+      if (typeof value !== "boolean") break;
+      return value;
+    case "timestamptz":
+      if (
+        typeof value !== "string" ||
+        !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.test(
+          value,
+        ) ||
+        !Number.isFinite(Date.parse(value))
+      ) {
+        break;
+      }
+      return value;
+    case "jsonb": {
+      if (typeof value !== "object" || ArrayBuffer.isView(value)) break;
+      let serialized: string | undefined;
+      try {
+        serialized = JSON.stringify(value);
+      } catch {
+        throw new Error(
+          `owner writer jsonb argument is not JSON-serializable: ${argument.argument_name}`,
+        );
+      }
+      if (serialized === undefined) {
+        throw new Error(
+          `owner writer jsonb argument is not JSON-serializable: ${argument.argument_name}`,
+        );
+      }
+      return serialized;
+    }
+  }
+  throw new Error(
+    `owner writer argument type drift for ${argument.argument_name}: expected ${argument.postgres_type}`,
+  );
+}
+
+const ownerPostgresDriverErrorsV1 = new WeakSet<object>();
+
+function markOwnerPostgresDriverErrorV1(error: unknown): unknown {
+  if (typeof error === "object" && error !== null) {
+    ownerPostgresDriverErrorsV1.add(error);
+  }
+  return error;
+}
+
+function errorCodeV1(error: unknown): string | undefined {
+  if (
+    typeof error !== "object" ||
+    error === null ||
+    !("code" in error) ||
+    typeof (error as { readonly code?: unknown }).code !== "string"
+  ) {
+    return undefined;
+  }
+  return (error as { readonly code: string }).code;
 }
 
 function isSerializationFailure(error: unknown): boolean {
+  return errorCodeV1(error) === "40001";
+}
+
+const transientOwnerPostgresNetworkCodesV1 = new Set([
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "EPIPE",
+  "ETIMEDOUT",
+  "ERR_SOCKET_CLOSED",
+  "ERR_STREAM_PREMATURE_CLOSE",
+]);
+
+const transientOwnerPostgresAvailabilitySqlStatesV1 = new Set([
+  "53000",
+  "53100",
+  "53200",
+  "53300",
+  "53400",
+  "57P01",
+  "57P02",
+  "57P03",
+  "57P04",
+  "58000",
+  "58030",
+]);
+
+const transientOwnerPostgresDriverMessagesV1 = new Set([
+  "Connection terminated",
+  "Connection terminated due to connection timeout",
+  "Connection terminated unexpectedly",
+  "Query read timeout",
+  "timeout exceeded when trying to connect",
+  "timeout expired",
+]);
+
+function isTransientOwnerPostgresFailureV1(
+  error: unknown,
+  trustedDriverOrigin = false,
+): boolean {
   return (
     typeof error === "object" &&
     error !== null &&
-    "code" in error &&
-    (error as { readonly code?: unknown }).code === "40001"
+    (trustedDriverOrigin || ownerPostgresDriverErrorsV1.has(error)) &&
+    (() => {
+      const code = errorCodeV1(error);
+      if (
+        code !== undefined &&
+        (/^08[A-Z0-9]{3}$/u.test(code) ||
+          transientOwnerPostgresAvailabilitySqlStatesV1.has(code) ||
+          transientOwnerPostgresNetworkCodesV1.has(code))
+      ) {
+        return true;
+      }
+      return (
+        error instanceof Error &&
+        transientOwnerPostgresDriverMessagesV1.has(error.message)
+      );
+    })()
   );
 }
 
@@ -4006,6 +6736,25 @@ export class OwnerRepositoryTransientErrorV1 extends Error {
   ) {
     super(message, options);
     this.name = "OwnerRepositoryTransientErrorV1";
+  }
+}
+
+/**
+ * PostgreSQL may commit successfully and lose the connection before the client
+ * receives CommandComplete. This outcome must not be reported as an ordinary
+ * retryable availability failure: callers must reconcile by the durable
+ * operation idempotency key before deciding whether to retry.
+ */
+export class OwnerRepositoryCommitOutcomeUnknownErrorV1 extends Error {
+  public readonly code = "commit_outcome_unknown" as const;
+
+  public constructor(
+    public readonly operation: string,
+    public readonly idempotency_key: string,
+    options?: ErrorOptions,
+  ) {
+    super(`owner PostgreSQL commit outcome is unknown for ${operation}`, options);
+    this.name = "OwnerRepositoryCommitOutcomeUnknownErrorV1";
   }
 }
 
@@ -4030,13 +6779,19 @@ export function createVerifiedOwnerPostgresRepositoryV1<
     Readonly<{ owner: OwnerRepositoryPortV1<TContract> }>
   >;
 }> {
+  const deploymentBinding = verifiedOwnerDeploymentBindingsV1.get(deployment);
   if (
     deployment[verifiedOwnerDeploymentBrand] !== true ||
     deployment.owner_service !== contract.owner_service ||
-    deployment.contract_fingerprint !== fingerprint(contract)
+    deployment.contract_fingerprint !== fingerprint(contract) ||
+    deploymentBinding === undefined ||
+    deploymentBinding.activation_pool !== pool ||
+    deploymentBinding.contract_fingerprint !==
+      deployment.contract_fingerprint ||
+    deploymentBinding.database_fingerprint !== deployment.database_fingerprint
   ) {
     throw new Error(
-      `verified deployment capability does not match ${contract.owner_service}`,
+      `verified deployment capability or PostgreSQL pool does not match ${contract.owner_service}`,
     );
   }
   const clients = new WeakMap<object, PoolClient>();
@@ -4066,6 +6821,44 @@ export function createVerifiedOwnerPostgresRepositoryV1<
     return matches[0];
   }
 
+  async function queryOwnerPostgresV1<TRow extends Record<string, unknown>>(
+    client: PoolClient,
+    sql: string,
+    values: readonly unknown[] = [],
+  ): Promise<{ readonly rows: readonly TRow[] }> {
+    try {
+      const result = await client.query<TRow>(sql, [...values]);
+      return { rows: result.rows };
+    } catch (error) {
+      throw markOwnerPostgresDriverErrorV1(error);
+    }
+  }
+
+  async function executeOwnerPostgresStatementV1(
+    client: PoolClient,
+    sql: string,
+  ): Promise<void> {
+    await queryOwnerPostgresV1(client, sql);
+  }
+
+  async function ownerPostgresClockTimestampV1(
+    client: PoolClient,
+  ): Promise<string> {
+    const result = await queryOwnerPostgresV1<{ database_now: string }>(
+      client,
+      "SELECT pg_catalog.clock_timestamp()::text AS database_now",
+    );
+    const databaseNow = result.rows[0]?.database_now;
+    if (
+      result.rows.length !== 1 ||
+      typeof databaseNow !== "string" ||
+      !Number.isFinite(Date.parse(databaseNow))
+    ) {
+      throw new Error("PostgreSQL did not return a valid authoritative clock");
+    }
+    return databaseNow;
+  }
+
   async function invokeSignature<TResult>(
     client: PoolClient,
     signature: OwnerFunctionSignatureV1,
@@ -4079,9 +6872,10 @@ export function createVerifiedOwnerPostgresRepositoryV1<
       .join(", ");
     const invocation = `${contract.schema}.${signature.function_name}(${placeholders})`;
     if (signature.returns === "setof jsonb") {
-      const result = await client.query<{ result: TResult }>(
+      const result = await queryOwnerPostgresV1<{ result: TResult }>(
+        client,
         `SELECT value AS result FROM ${invocation} AS value`,
-        [...values],
+        values,
       );
       const valuesReturned = result.rows.map(({ result: value }) => value);
       if (valuesReturned.some((value) => value === null || value === undefined)) {
@@ -4091,9 +6885,10 @@ export function createVerifiedOwnerPostgresRepositoryV1<
       }
       return valuesReturned;
     }
-    const result = await client.query<{ result: TResult }>(
+    const result = await queryOwnerPostgresV1<{ result: TResult }>(
+      client,
       `SELECT ${invocation} AS result`,
-      [...values],
+      values,
     );
     if (result.rows.length !== 1 || result.rows[0] === undefined) {
       throw new Error(
@@ -4117,6 +6912,7 @@ export function createVerifiedOwnerPostgresRepositoryV1<
       transaction: OwnerTransactionV1<TContract["owner_service"]>,
       request: ExecuteOwnerWriterRequestV1<TContract, TWriter>,
     ): Promise<TResult> {
+      const writerRequest = Object.freeze({ ...request });
       const client = clients.get(transaction);
       if (
         client === undefined ||
@@ -4125,17 +6921,19 @@ export function createVerifiedOwnerPostgresRepositoryV1<
         throw new Error("owner writer requires its active unit-of-work transaction");
       }
       const signature = contract.function_signatures.find(
-        ({ function_name }) => function_name === request.writer,
+        ({ function_name }) => function_name === writerRequest.writer,
       );
       if (signature === undefined) {
-        throw new Error(`unknown owner writer: ${String(request.writer)}`);
+        throw new Error(`unknown owner writer: ${String(writerRequest.writer)}`);
       }
-      const argumentRecord = request.arguments as Readonly<
+      const argumentRecord = writerRequest.arguments as Readonly<
         Record<string, unknown>
       >;
-      const values = signature.arguments.map(
-        ({ argument_name, postgres_type }) =>
-          postgresArgumentValue(postgres_type, argumentRecord[argument_name]),
+      const values = signature.arguments.map((argument) =>
+        postgresArgumentValue(
+          argument,
+          argumentRecord[argument.argument_name],
+        ),
       );
       if (
         Object.keys(argumentRecord).length !== signature.arguments.length ||
@@ -4151,9 +6949,10 @@ export function createVerifiedOwnerPostgresRepositoryV1<
       if (signature.returns === "setof jsonb") {
         if (
           !Array.isArray(result) ||
-          (request.expected_rows === 1
+          (writerRequest.expected_rows === 1
             ? result.length !== 1
-            : request.expected_rows === "one_or_more" && result.length === 0)
+            : writerRequest.expected_rows === "one_or_more" &&
+              result.length === 0)
         ) {
           throw new Error(
             `owner writer row-count drift: ${contract.schema}.${signature.function_name}`,
@@ -4170,7 +6969,10 @@ export function createVerifiedOwnerPostgresRepositoryV1<
     if (
       typeof request.outbox_table !== "string" ||
       !contract.outbox_tables.includes(request.outbox_table) ||
-      typeof request.now !== "string" ||
+      !isBoundedNonBlankTextV1(
+        request.now,
+        OWNER_OUTBOX_TIMESTAMP_MAX_LENGTH_V1,
+      ) ||
       !Number.isFinite(Date.parse(request.now))
     ) {
       throw new Error("invalid owner outbox request");
@@ -4184,37 +6986,51 @@ export function createVerifiedOwnerPostgresRepositoryV1<
       async claim<TResult extends Readonly<Record<string, unknown>>>(
         request: OwnerOutboxClaimRequestV1,
       ): Promise<readonly TResult[]> {
-        assertOutboxRequest(request);
+        // The validated values are also the values sent to PostgreSQL. A
+        // caller must not be able to change a lease fence while pool.connect
+        // or the authoritative database clock is awaiting completion.
+        const claimRequest = Object.freeze({ ...request });
+        assertOutboxRequest(claimRequest);
         if (
-          request.worker_id.trim().length === 0 ||
-          request.current_transport_epoch.trim().length === 0 ||
-          !Number.isSafeInteger(request.current_transport_generation) ||
-          request.current_transport_generation < 1 ||
-          !Number.isSafeInteger(request.limit) ||
-          request.limit < 1 ||
-          request.limit > 1_000 ||
-          !Number.isSafeInteger(request.lease_seconds) ||
-          request.lease_seconds < 1 ||
-          request.lease_seconds > 3_600
+          !isBoundedNonBlankTextV1(
+            claimRequest.worker_id,
+            OWNER_OUTBOX_IDENTITY_MAX_LENGTH_V1,
+          ) ||
+          !isBoundedNonBlankTextV1(
+            claimRequest.current_transport_epoch,
+            OWNER_OUTBOX_EPOCH_MAX_LENGTH_V1,
+          ) ||
+          !Number.isSafeInteger(claimRequest.current_transport_generation) ||
+          claimRequest.current_transport_generation < 1 ||
+          !Number.isSafeInteger(claimRequest.limit) ||
+          claimRequest.limit < 1 ||
+          claimRequest.limit > OWNER_OUTBOX_BATCH_MAX_V1 ||
+          !Number.isSafeInteger(claimRequest.lease_seconds) ||
+          claimRequest.lease_seconds < 1 ||
+          claimRequest.lease_seconds > 3_600
         ) {
           throw new Error("invalid owner outbox claim request");
         }
-        const signature = outboxSignature(request.outbox_table, "claim");
+        const signature = outboxSignature(claimRequest.outbox_table, "claim");
         const client = await pool.connect();
         try {
           await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+          const databaseNow = await ownerPostgresClockTimestampV1(client);
           const result = await invokeSignature<TResult>(client, signature, [
-            request.worker_id,
-            request.limit,
-            request.lease_seconds,
-            request.now,
-            request.current_transport_epoch,
-            String(request.current_transport_generation),
+            claimRequest.worker_id,
+            claimRequest.limit,
+            claimRequest.lease_seconds,
+            databaseNow,
+            claimRequest.current_transport_epoch,
+            String(claimRequest.current_transport_generation),
           ]);
-          if (!Array.isArray(result)) {
+          if (!Array.isArray(result) || result.length > claimRequest.limit) {
             throw new Error(
               `outbox claim writer did not return rows: ${contract.schema}.${signature.function_name}`,
             );
+          }
+          for (const claimed of result) {
+            assertOwnerOutboxClaimIdentityV1(claimed);
           }
           await client.query("COMMIT");
           return result as readonly TResult[];
@@ -4225,72 +7041,104 @@ export function createVerifiedOwnerPostgresRepositoryV1<
           client.release();
         }
       },
-      async acknowledge<TResult extends Readonly<Record<string, unknown>>>(
+      async acknowledge(
         request: OwnerOutboxAcknowledgeRequestV1,
-      ): Promise<TResult> {
-        assertOutboxRequest(request);
-        const retryWait = request.outcome === "retry_wait";
-        const sent = request.outcome === "sent";
+      ): Promise<OwnerOutboxAcknowledgeConfirmationV1> {
+        const acknowledgeRequest = Object.freeze({ ...request });
+        assertOutboxRequest(acknowledgeRequest);
+        const retryWait = acknowledgeRequest.outcome === "retry_wait";
+        const sent = acknowledgeRequest.outcome === "sent";
         if (
           !(["sent", "retry_wait", "failed"] as const).includes(
-            request.outcome,
+            acknowledgeRequest.outcome,
           ) ||
-          request.outbox_id.trim().length === 0 ||
-          request.claim_token.trim().length === 0 ||
-          (retryWait !== (request.next_retry_at !== null)) ||
-          (request.next_retry_at !== null &&
-            !Number.isFinite(Date.parse(request.next_retry_at))) ||
-          (request.outcome === "sent" && request.error !== null) ||
-          (request.outcome !== "sent" &&
-            (typeof request.error !== "object" ||
-              request.error === null ||
-              Array.isArray(request.error))) ||
+          !isBoundedNonBlankTextV1(
+            acknowledgeRequest.outbox_id,
+            OWNER_OUTBOX_IDENTITY_MAX_LENGTH_V1,
+          ) ||
+          !isBoundedNonBlankTextV1(
+            acknowledgeRequest.claim_token,
+            OWNER_OUTBOX_IDENTITY_MAX_LENGTH_V1,
+          ) ||
+          (retryWait !== (acknowledgeRequest.next_retry_at !== null)) ||
+          (acknowledgeRequest.next_retry_at !== null &&
+            (!isBoundedNonBlankTextV1(
+              acknowledgeRequest.next_retry_at,
+              OWNER_OUTBOX_TIMESTAMP_MAX_LENGTH_V1,
+            ) ||
+              !Number.isFinite(Date.parse(acknowledgeRequest.next_retry_at)))) ||
+          (acknowledgeRequest.outcome === "sent" &&
+            acknowledgeRequest.error !== null) ||
+          (acknowledgeRequest.outcome !== "sent" &&
+            (typeof acknowledgeRequest.error !== "object" ||
+              acknowledgeRequest.error === null ||
+              Array.isArray(acknowledgeRequest.error))) ||
           sent !==
-            (request.transport_ref !== null &&
-              request.transport_epoch !== null &&
-              request.transport_generation !== null) ||
-          (request.transport_ref !== null &&
-            request.transport_ref.trim().length === 0) ||
-          (request.transport_epoch !== null &&
-            request.transport_epoch.trim().length === 0) ||
-          (request.transport_generation !== null &&
-            (!Number.isSafeInteger(request.transport_generation) ||
-              request.transport_generation < 1)) ||
-          request.current_transport_epoch.trim().length === 0 ||
-          !Number.isSafeInteger(request.current_transport_generation) ||
-          request.current_transport_generation < 1 ||
+            (acknowledgeRequest.transport_ref !== null &&
+              acknowledgeRequest.transport_epoch !== null &&
+              acknowledgeRequest.transport_generation !== null) ||
+          (acknowledgeRequest.transport_ref !== null &&
+            !isBoundedNonBlankTextV1(
+              acknowledgeRequest.transport_ref,
+              OWNER_OUTBOX_TRANSPORT_REF_MAX_LENGTH_V1,
+            )) ||
+          (acknowledgeRequest.transport_epoch !== null &&
+            !isBoundedNonBlankTextV1(
+              acknowledgeRequest.transport_epoch,
+              OWNER_OUTBOX_EPOCH_MAX_LENGTH_V1,
+            )) ||
+          (acknowledgeRequest.transport_generation !== null &&
+            (!Number.isSafeInteger(acknowledgeRequest.transport_generation) ||
+              acknowledgeRequest.transport_generation < 1)) ||
+          !isBoundedNonBlankTextV1(
+            acknowledgeRequest.current_transport_epoch,
+            OWNER_OUTBOX_EPOCH_MAX_LENGTH_V1,
+          ) ||
+          !Number.isSafeInteger(
+            acknowledgeRequest.current_transport_generation,
+          ) ||
+          acknowledgeRequest.current_transport_generation < 1 ||
           (sent &&
-            (request.transport_epoch !== request.current_transport_epoch ||
-              request.transport_generation !==
-                request.current_transport_generation)) ||
+            (acknowledgeRequest.transport_epoch !==
+              acknowledgeRequest.current_transport_epoch ||
+              acknowledgeRequest.transport_generation !==
+                acknowledgeRequest.current_transport_generation)) ||
           (!sent &&
-            (request.transport_ref !== null ||
-              request.transport_epoch !== null ||
-              request.transport_generation !== null))
+            (acknowledgeRequest.transport_ref !== null ||
+              acknowledgeRequest.transport_epoch !== null ||
+              acknowledgeRequest.transport_generation !== null))
         ) {
           throw new Error("invalid owner outbox acknowledge request");
         }
-        const signature = outboxSignature(request.outbox_table, "ack");
+        const serializedError = snapshotOwnerOutboxErrorV1(
+          acknowledgeRequest.error,
+        );
+        const signature = outboxSignature(
+          acknowledgeRequest.outbox_table,
+          "ack",
+        );
         const client = await pool.connect();
         try {
           await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
-          const result = await invokeSignature<TResult>(client, signature, [
-            request.outbox_id,
-            request.claim_token,
-            request.outcome,
-            request.next_retry_at,
-            request.error,
-            request.transport_ref,
-            request.transport_epoch,
-            request.transport_generation === null
+          const databaseNow = await ownerPostgresClockTimestampV1(client);
+          const result = await invokeSignature<unknown>(client, signature, [
+            acknowledgeRequest.outbox_id,
+            acknowledgeRequest.claim_token,
+            acknowledgeRequest.outcome,
+            acknowledgeRequest.next_retry_at,
+            serializedError,
+            acknowledgeRequest.transport_ref,
+            acknowledgeRequest.transport_epoch,
+            acknowledgeRequest.transport_generation === null
               ? null
-              : String(request.transport_generation),
-            request.current_transport_epoch,
-            String(request.current_transport_generation),
-            request.now,
+              : String(acknowledgeRequest.transport_generation),
+            acknowledgeRequest.current_transport_epoch,
+            String(acknowledgeRequest.current_transport_generation),
+            databaseNow,
           ]);
+          assertOwnerOutboxAcknowledgeConfirmationV1(result);
           await client.query("COMMIT");
-          return result as TResult;
+          return Object.freeze({ acknowledged: true });
         } catch (error) {
           await client.query("ROLLBACK").catch(() => undefined);
           throw error;
@@ -4316,39 +7164,105 @@ export function createVerifiedOwnerPostgresRepositoryV1<
         repositories: Readonly<{ owner: OwnerRepositoryPortV1<TContract> }>,
       ) => Promise<TResult>,
     ): Promise<TResult> {
-      const maxAttempts = request.retry === "serialization_failures" ? 3 : 1;
+      const transactionRequest = Object.freeze({ ...request });
+      if (
+        !isBoundedNonBlankTextV1(
+          transactionRequest.operation,
+          OWNER_UNIT_OF_WORK_OPERATION_MAX_LENGTH_V1,
+        ) ||
+        !isBoundedNonBlankTextV1(
+          transactionRequest.idempotency_key,
+          OWNER_UNIT_OF_WORK_IDEMPOTENCY_KEY_MAX_LENGTH_V1,
+        ) ||
+        !isBoundedNonBlankTextV1(
+          transactionRequest.trace_id,
+          OWNER_UNIT_OF_WORK_TRACE_ID_MAX_LENGTH_V1,
+        ) ||
+        !Object.prototype.hasOwnProperty.call(
+          isolationSql,
+          transactionRequest.isolation,
+        ) ||
+        (transactionRequest.retry !== "none" &&
+          transactionRequest.retry !== "serialization_failures")
+      ) {
+        throw new Error("invalid owner unit-of-work request");
+      }
+      const maxAttempts =
+        transactionRequest.retry === "serialization_failures" ? 3 : 1;
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-        const client = await pool.connect();
-        const transaction = Object.freeze({
-          owner_service: contract.owner_service,
-          transaction_id: randomUUID(),
-          trace_id: request.trace_id,
-          started_at: new Date().toISOString(),
-          attempt,
-        }) as unknown as OwnerTransactionV1<TContract["owner_service"]>;
-        clients.set(transaction, client);
+        let client: PoolClient;
         try {
-          await client.query(
-            `BEGIN ISOLATION LEVEL ${isolationSql[request.isolation]}`,
-          );
-          const result = await work(transaction, { owner: repository });
-          await client.query("COMMIT");
-          return result;
+          client = await pool.connect();
         } catch (error) {
-          await client.query("ROLLBACK").catch(() => undefined);
-          if (isSerializationFailure(error) && attempt === maxAttempts) {
+          if (isTransientOwnerPostgresFailureV1(error, true)) {
             throw new OwnerRepositoryTransientErrorV1(
-              "serialization_retry_exhausted",
-              `owner unit of work exhausted serialization retries for ${request.operation}`,
+              "transient_database_error",
+              `owner unit of work could not acquire PostgreSQL for ${transactionRequest.operation}`,
               { cause: error },
             );
           }
-          if (!isSerializationFailure(error)) {
-            throw error;
+          throw error;
+        }
+        const transaction = Object.freeze({
+          owner_service: contract.owner_service,
+          transaction_id: randomUUID(),
+          trace_id: transactionRequest.trace_id,
+          started_at: new Date().toISOString(),
+          attempt,
+        }) as unknown as OwnerTransactionV1<TContract["owner_service"]>;
+        let discardClient = false;
+        let commitStarted = false;
+        clients.set(transaction, client);
+        try {
+          await executeOwnerPostgresStatementV1(
+            client,
+            `BEGIN ISOLATION LEVEL ${isolationSql[transactionRequest.isolation]}`,
+          );
+          const result = await work(transaction, { owner: repository });
+          commitStarted = true;
+          await executeOwnerPostgresStatementV1(client, "COMMIT");
+          return result;
+        } catch (error) {
+          if (
+            commitStarted &&
+            isTransientOwnerPostgresFailureV1(error)
+          ) {
+            discardClient = true;
+            throw new OwnerRepositoryCommitOutcomeUnknownErrorV1(
+              transactionRequest.operation,
+              transactionRequest.idempotency_key,
+              { cause: error },
+            );
           }
+          await executeOwnerPostgresStatementV1(client, "ROLLBACK").catch(
+            (rollbackError: unknown) => {
+              discardClient ||= isTransientOwnerPostgresFailureV1(
+                rollbackError,
+              );
+            },
+          );
+          if (isSerializationFailure(error) && attempt === maxAttempts) {
+            throw new OwnerRepositoryTransientErrorV1(
+              "serialization_retry_exhausted",
+              `owner unit of work exhausted serialization retries for ${transactionRequest.operation}`,
+              { cause: error },
+            );
+          }
+          if (isSerializationFailure(error)) {
+            continue;
+          }
+          if (isTransientOwnerPostgresFailureV1(error)) {
+            discardClient = true;
+            throw new OwnerRepositoryTransientErrorV1(
+              "transient_database_error",
+              `owner unit of work lost PostgreSQL availability for ${transactionRequest.operation}`,
+              { cause: error },
+            );
+          }
+          throw error;
         } finally {
           clients.delete(transaction);
-          client.release();
+          client.release(discardClient);
         }
       }
       throw new Error("owner unit of work exhausted serialization retries");

@@ -1,4 +1,5 @@
 import type { ExecuteOwnerWriterRequestV1 } from "../src/index.js";
+import { ownerFunctionSignatureV1 } from "../src/index.js";
 import { TIMER_REPOSITORY_CONTRACT_V1 } from "../../../services/timer-trigger-app/src/db/permission-manifest.v1.js";
 
 type CasTimerScheduleRequest = ExecuteOwnerWriterRequestV1<
@@ -25,5 +26,69 @@ const emptyArgumentsAreForbidden: CasTimerScheduleRequest = {
   expected_rows: 1,
 };
 
+const nullFenceIsForbidden: CasTimerScheduleRequest = {
+  writer: "cas_timer_schedule_v1",
+  arguments: {
+    p_schedule_id: "schedule-1",
+    // @ts-expect-error Fence arguments are non-null unless explicitly declared nullable.
+    p_expected_schedule_version: null,
+    p_schedule_patch: { enabled: true },
+    p_request_hash: "sha256:request",
+    p_trace_id: "trace-1",
+  },
+  expected_rows: 1,
+};
+
+const nullableSignature = ownerFunctionSignatureV1({
+  schema: "timer",
+  function_name: "nullable_test_v1",
+  primary_table: "timer_schedules",
+  writer_kind: "state_transition",
+  arguments: [
+    ["p_required", "text"],
+    ["p_optional", "text", { nullable: true }],
+  ],
+  reads_tables: ["timer_schedules"],
+  writes_tables: ["timer_schedules"],
+  effects: [
+    {
+      table_name: "timer_schedules",
+      operation: "transition",
+      concurrency_control: "idempotency_key",
+    },
+  ],
+  returns: "jsonb",
+});
+
+const nullableContract = {
+  ...TIMER_REPOSITORY_CONTRACT_V1,
+  mutable_writers: ["nullable_test_v1"],
+  function_signatures: [nullableSignature],
+} as const;
+
+type NullableRequest = ExecuteOwnerWriterRequestV1<
+  typeof nullableContract,
+  "nullable_test_v1"
+>;
+
+const explicitNullableArgumentIsAllowed: NullableRequest = {
+  writer: "nullable_test_v1",
+  arguments: { p_required: "required", p_optional: null },
+  expected_rows: 1,
+};
+
+const requiredArgumentStillRejectsNull: NullableRequest = {
+  writer: "nullable_test_v1",
+  arguments: {
+    // @ts-expect-error Only p_optional carries explicit nullable metadata.
+    p_required: null,
+    p_optional: "optional",
+  },
+  expected_rows: 1,
+};
+
 void validRequest;
 void emptyArgumentsAreForbidden;
+void nullFenceIsForbidden;
+void explicitNullableArgumentIsAllowed;
+void requiredArgumentStillRejectsNull;

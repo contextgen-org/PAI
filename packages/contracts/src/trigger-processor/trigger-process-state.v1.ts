@@ -181,32 +181,25 @@ function stateKey(state: TriggerProcessStateV1): string {
   return `${state.phase}/${state.status}/${state.wait_reason ?? "-"}`;
 }
 
-const directEdges = new Set([
-  "admission/running/-->context/running/-",
-  "admission/waiting/weak_queue->context/running/-",
-  "admission/waiting/preempt_commit->context/running/-",
-  "admission/waiting/deferred_strong_queue->context/running/-",
-  "context/running/-->intent/running/-",
-  "intent/running/-->intent/waiting/external_confirmation",
-  "intent/waiting/external_confirmation->intent/running/-",
-  "intent/running/-->execution/waiting/runtime_start",
-  "execution/waiting/runtime_start->execution/running/-",
-  "execution/waiting/runtime_start->execution/waiting/runtime_start_reconcile",
-  "execution/waiting/runtime_start_reconcile->execution/running/-",
-  "execution/waiting/runtime_start->context/waiting/runtime_start_recompose",
-  "execution/waiting/runtime_start_reconcile->context/waiting/runtime_start_recompose",
-  "context/waiting/runtime_start_recompose->context/running/-",
-  "execution/running/-->execution/preempt_requested/-",
-  "execution/running/-->execution/cancelling/-",
-  "execution/preempt_requested/-->execution/cancelling/-",
-]);
-
 const retryablePhases = new Set(["admission", "context", "intent", "execution"]);
 
 const evidenceRefSchema = Type.String({ minLength: 1, pattern: "^[^\\r\\n]+$" });
 const timestampSchema = Type.String({ minLength: 1, format: "date-time" });
 const systemEventRefSchema = Type.String({ pattern: "^system_event:[^\\r\\n]+$" });
 const triggerEventRefSchema = Type.String({ pattern: "^trigger_event:[^\\r\\n]+$" });
+const safeGenerationSchema = Type.Integer({
+  minimum: 0,
+  maximum: Number.MAX_SAFE_INTEGER,
+});
+const sha256Pattern = /^sha256:[0-9a-f]{64}$/u;
+const sha256Schema = Type.String({ pattern: sha256Pattern.source });
+
+const coupledTransitionProperties = {
+  expected_process_updated_at: timestampSchema,
+  process_lock_ref: evidenceRefSchema,
+  transition_audit_ref: evidenceRefSchema,
+  outbox_event_ref: evidenceRefSchema,
+} as const;
 
 function strictEvidenceObject<const T extends TProperties>(properties: T) {
   return Type.Object(properties, { additionalProperties: false });
@@ -238,6 +231,133 @@ const terminalTransactionProperties = {
  */
 export const TriggerProcessTransitionEvidenceV1Schema = Type.Union(
   [
+    strictEvidenceObject({
+      kind: Type.Literal("admission_queue_promotion"),
+      queue_kind: Type.Literal("weak"),
+      trigger_process_id: evidenceRefSchema,
+      expected_process_updated_at: timestampSchema,
+      expected_strong_fifo_revision: safeGenerationSchema,
+      strong_fifo_head_process_id: Type.Null(),
+      strong_fifo_head_admission_time: Type.Null(),
+      preempt_commit_process_id: Type.Null(),
+      strong_fifo_empty_lock_ref: evidenceRefSchema,
+      queue_claim_ref: evidenceRefSchema,
+      process_lock_ref: evidenceRefSchema,
+      foreground_slot_previous_process_id: Type.Null(),
+      foreground_slot_previous_generation: safeGenerationSchema,
+      foreground_slot_next_generation: safeGenerationSchema,
+      foreground_slot_transfer_ref: evidenceRefSchema,
+      transition_audit_ref: evidenceRefSchema,
+      command_outbox_ref: evidenceRefSchema,
+    }),
+    strictEvidenceObject({
+      kind: Type.Literal("stage_progression"),
+      progression: Type.Union([
+        Type.Literal("admission_to_context"),
+        Type.Literal("context_to_intent"),
+      ]),
+      prerequisite_ref: evidenceRefSchema,
+      ...coupledTransitionProperties,
+    }),
+    strictEvidenceObject({
+      kind: Type.Literal("stage_retry_scheduled"),
+      retry_record_ref: evidenceRefSchema,
+      next_retry_at: timestampSchema,
+      ...coupledTransitionProperties,
+    }),
+    strictEvidenceObject({
+      kind: Type.Literal("stage_retry_claimed"),
+      retry_record_ref: evidenceRefSchema,
+      worker_claim_ref: evidenceRefSchema,
+      ...coupledTransitionProperties,
+    }),
+    strictEvidenceObject({
+      kind: Type.Literal("confirmation_challenge_created"),
+      challenge_ref: evidenceRefSchema,
+      intent_ref: evidenceRefSchema,
+      intent_hash: sha256Schema,
+      policy_hash: sha256Schema,
+      allowed_principal_binding_ref: evidenceRefSchema,
+      ...coupledTransitionProperties,
+    }),
+    strictEvidenceObject({
+      kind: Type.Literal("confirmation_accepted"),
+      challenge_ref: evidenceRefSchema,
+      expected_challenge_version: safeGenerationSchema,
+      confirmation_response_ref: evidenceRefSchema,
+      accepted_at: timestampSchema,
+      command_outbox_ref: evidenceRefSchema,
+      ...coupledTransitionProperties,
+    }),
+    strictEvidenceObject({
+      kind: Type.Literal("runtime_start_reserved"),
+      reservation_ref: evidenceRefSchema,
+      runtime_run_id: evidenceRefSchema,
+      start_attempt_no: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+      start_fence_generation: safeGenerationSchema,
+      intent_ref: evidenceRefSchema,
+      policy_ref: evidenceRefSchema,
+      command_outbox_ref: evidenceRefSchema,
+      ...coupledTransitionProperties,
+    }),
+    strictEvidenceObject({
+      kind: Type.Literal("runtime_started"),
+      reservation_ref: evidenceRefSchema,
+      runtime_run_id: evidenceRefSchema,
+      start_attempt_no: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+      start_fence_generation: safeGenerationSchema,
+      runtime_started_event_ref: evidenceRefSchema,
+      inbox_ref: evidenceRefSchema,
+      ...coupledTransitionProperties,
+    }),
+    strictEvidenceObject({
+      kind: Type.Literal("runtime_start_uncertain"),
+      reservation_ref: evidenceRefSchema,
+      transport_uncertainty_ref: evidenceRefSchema,
+      ...coupledTransitionProperties,
+    }),
+    strictEvidenceObject({
+      kind: Type.Literal("runtime_start_recompose"),
+      reservation_ref: evidenceRefSchema,
+      catalog_conflict_ref: evidenceRefSchema,
+      no_run_proof_ref: evidenceRefSchema,
+      ...coupledTransitionProperties,
+    }),
+    strictEvidenceObject({
+      kind: Type.Literal("runtime_recompose_claimed"),
+      recompose_claim_ref: evidenceRefSchema,
+      ...coupledTransitionProperties,
+    }),
+    strictEvidenceObject({
+      kind: Type.Literal("runtime_control_requested"),
+      control: Type.Union([Type.Literal("preempt"), Type.Literal("cancel")]),
+      runtime_signal_ref: evidenceRefSchema,
+      command_outbox_ref: evidenceRefSchema,
+      ...coupledTransitionProperties,
+    }),
+    strictEvidenceObject({
+      kind: Type.Literal("admission_queue_promotion"),
+      queue_kind: Type.Literal("strong"),
+      trigger_process_id: evidenceRefSchema,
+      admission_time: timestampSchema,
+      expected_process_updated_at: timestampSchema,
+      expected_strong_fifo_revision: safeGenerationSchema,
+      strong_fifo_head_process_id: evidenceRefSchema,
+      strong_fifo_head_admission_time: timestampSchema,
+      strong_fifo_head_lock_ref: evidenceRefSchema,
+      preempt_commit_process_id: Type.Union([evidenceRefSchema, Type.Null()]),
+      preempt_commit_ref: Type.Union([evidenceRefSchema, Type.Null()]),
+      process_lock_ref: evidenceRefSchema,
+      foreground_slot_previous_process_id: Type.Union([
+        evidenceRefSchema,
+        Type.Null(),
+      ]),
+      foreground_slot_previous_generation: safeGenerationSchema,
+      foreground_slot_next_generation: safeGenerationSchema,
+      foreground_slot_transfer_ref: evidenceRefSchema,
+      transition_audit_ref: evidenceRefSchema,
+      command_outbox_ref: evidenceRefSchema,
+    }),
     strictEvidenceObject({
       kind: Type.Literal("execution_completed"),
       runtime_terminal_outcome: Type.Literal("completed"),
@@ -361,6 +481,92 @@ function isTimestamp(value: unknown): value is string {
   );
 }
 
+function hasCoupledTransitionFacts(
+  evidence: TriggerProcessTransitionEvidenceV1 | undefined,
+): boolean {
+  if (evidence === undefined || !("expected_process_updated_at" in evidence)) {
+    return false;
+  }
+  if (
+    !isTimestamp(evidence.expected_process_updated_at) ||
+    !("process_lock_ref" in evidence) ||
+    !isNonEmptyRef(evidence.process_lock_ref) ||
+    !("transition_audit_ref" in evidence) ||
+    !isNonEmptyRef(evidence.transition_audit_ref) ||
+    !("outbox_event_ref" in evidence) ||
+    !isNonEmptyRef(evidence.outbox_event_ref)
+  ) {
+    return false;
+  }
+  switch (evidence.kind) {
+    case "stage_progression":
+      return isNonEmptyRef(evidence.prerequisite_ref);
+    case "stage_retry_scheduled":
+      return (
+        isNonEmptyRef(evidence.retry_record_ref) &&
+        isTimestamp(evidence.next_retry_at)
+      );
+    case "stage_retry_claimed":
+      return (
+        isNonEmptyRef(evidence.retry_record_ref) &&
+        isNonEmptyRef(evidence.worker_claim_ref)
+      );
+    case "confirmation_challenge_created":
+      return (
+        isNonEmptyRef(evidence.challenge_ref) &&
+        isNonEmptyRef(evidence.intent_ref) &&
+        sha256Pattern.test(evidence.intent_hash) &&
+        sha256Pattern.test(evidence.policy_hash) &&
+        isNonEmptyRef(evidence.allowed_principal_binding_ref)
+      );
+    case "confirmation_accepted":
+      return (
+        isNonEmptyRef(evidence.challenge_ref) &&
+        Number.isSafeInteger(evidence.expected_challenge_version) &&
+        evidence.expected_challenge_version >= 0 &&
+        isNonEmptyRef(evidence.confirmation_response_ref) &&
+        isTimestamp(evidence.accepted_at) &&
+        isNonEmptyRef(evidence.command_outbox_ref)
+      );
+    case "runtime_start_reserved":
+    case "runtime_started":
+      return (
+        isNonEmptyRef(evidence.reservation_ref) &&
+        isNonEmptyRef(evidence.runtime_run_id) &&
+        Number.isSafeInteger(evidence.start_attempt_no) &&
+        evidence.start_attempt_no >= 1 &&
+        Number.isSafeInteger(evidence.start_fence_generation) &&
+        evidence.start_fence_generation >= 0 &&
+        (evidence.kind === "runtime_start_reserved"
+          ? isNonEmptyRef(evidence.intent_ref) &&
+            isNonEmptyRef(evidence.policy_ref) &&
+            isNonEmptyRef(evidence.command_outbox_ref)
+          : isNonEmptyRef(evidence.runtime_started_event_ref) &&
+            isNonEmptyRef(evidence.inbox_ref))
+      );
+    case "runtime_start_uncertain":
+      return (
+        isNonEmptyRef(evidence.reservation_ref) &&
+        isNonEmptyRef(evidence.transport_uncertainty_ref)
+      );
+    case "runtime_start_recompose":
+      return (
+        isNonEmptyRef(evidence.reservation_ref) &&
+        isNonEmptyRef(evidence.catalog_conflict_ref) &&
+        isNonEmptyRef(evidence.no_run_proof_ref)
+      );
+    case "runtime_recompose_claimed":
+      return isNonEmptyRef(evidence.recompose_claim_ref);
+    case "runtime_control_requested":
+      return (
+        isNonEmptyRef(evidence.runtime_signal_ref) &&
+        isNonEmptyRef(evidence.command_outbox_ref)
+      );
+    default:
+      return false;
+  }
+}
+
 function hasRuntimeBoundaryEvidence(
   from: TriggerProcessStateV1,
   evidence: RuntimeBoundaryEvidenceV1,
@@ -404,7 +610,6 @@ export function isTriggerProcessTransitionV1Allowed(
 ): boolean {
   if (from === null) return isInitialAdmissionState(to);
   if (from.phase === "closed") return false;
-
   if (
     from.phase === to.phase &&
     retryablePhases.has(from.phase) &&
@@ -415,10 +620,115 @@ export function isTriggerProcessTransitionV1Allowed(
         from.wait_reason === "stage_retry_wait" &&
         to.status === "running"))
   ) {
-    return true;
+    return (
+      (from.status === "running" &&
+        evidence?.kind === "stage_retry_scheduled" &&
+        hasCoupledTransitionFacts(evidence)) ||
+      (from.status === "waiting" &&
+        evidence?.kind === "stage_retry_claimed" &&
+        hasCoupledTransitionFacts(evidence))
+    );
   }
 
-  if (directEdges.has(`${stateKey(from)}->${stateKey(to)}`)) return true;
+  if (
+    from.phase === "admission" &&
+    from.status === "waiting" &&
+    to.phase === "context" &&
+    to.status === "running" &&
+    evidence?.kind === "admission_queue_promotion"
+  ) {
+    const commonEvidenceValid =
+      evidence.foreground_slot_next_generation ===
+        evidence.foreground_slot_previous_generation + 1 &&
+      evidence.foreground_slot_next_generation <= Number.MAX_SAFE_INTEGER &&
+      isNonEmptyRef(evidence.trigger_process_id) &&
+      isTimestamp(evidence.expected_process_updated_at) &&
+      isNonEmptyRef(evidence.process_lock_ref) &&
+      isNonEmptyRef(evidence.foreground_slot_transfer_ref) &&
+      isNonEmptyRef(evidence.transition_audit_ref) &&
+      isNonEmptyRef(evidence.command_outbox_ref);
+    if (!commonEvidenceValid) return false;
+
+    if (from.wait_reason === "weak_queue") {
+      return (
+        evidence.queue_kind === "weak" &&
+        Number.isSafeInteger(evidence.expected_strong_fifo_revision) &&
+        evidence.expected_strong_fifo_revision >= 0 &&
+        evidence.strong_fifo_head_process_id === null &&
+        evidence.strong_fifo_head_admission_time === null &&
+        evidence.preempt_commit_process_id === null &&
+        isNonEmptyRef(evidence.strong_fifo_empty_lock_ref) &&
+        evidence.foreground_slot_previous_process_id === null &&
+        isNonEmptyRef(evidence.queue_claim_ref)
+      );
+    }
+    if (
+      from.wait_reason !== "preempt_commit" &&
+      from.wait_reason !== "deferred_strong_queue"
+    ) {
+      return false;
+    }
+    if (evidence.queue_kind !== "strong") return false;
+    const isPreemptCommit = from.wait_reason === "preempt_commit";
+    return (
+      evidence.strong_fifo_head_process_id === evidence.trigger_process_id &&
+      evidence.strong_fifo_head_admission_time === evidence.admission_time &&
+      isNonEmptyRef(evidence.strong_fifo_head_lock_ref) &&
+      (isPreemptCommit
+        ? evidence.preempt_commit_process_id === evidence.trigger_process_id &&
+          isNonEmptyRef(evidence.preempt_commit_ref) &&
+          isNonEmptyRef(evidence.foreground_slot_previous_process_id)
+        : evidence.preempt_commit_process_id === null &&
+          evidence.preempt_commit_ref === null &&
+          evidence.foreground_slot_previous_process_id === null)
+    );
+  }
+
+  const coupledEdge = `${stateKey(from)}->${stateKey(to)}`;
+  const coupledEvidenceValid = hasCoupledTransitionFacts(evidence);
+  switch (coupledEdge) {
+    case "admission/running/-->context/running/-":
+      return (
+        coupledEvidenceValid &&
+        evidence?.kind === "stage_progression" &&
+        evidence.progression === "admission_to_context"
+      );
+    case "context/running/-->intent/running/-":
+      return (
+        coupledEvidenceValid &&
+        evidence?.kind === "stage_progression" &&
+        evidence.progression === "context_to_intent"
+      );
+    case "intent/running/-->intent/waiting/external_confirmation":
+      return coupledEvidenceValid && evidence?.kind === "confirmation_challenge_created";
+    case "intent/waiting/external_confirmation->intent/running/-":
+      return coupledEvidenceValid && evidence?.kind === "confirmation_accepted";
+    case "intent/running/-->execution/waiting/runtime_start":
+      return coupledEvidenceValid && evidence?.kind === "runtime_start_reserved";
+    case "execution/waiting/runtime_start->execution/running/-":
+    case "execution/waiting/runtime_start_reconcile->execution/running/-":
+      return coupledEvidenceValid && evidence?.kind === "runtime_started";
+    case "execution/waiting/runtime_start->execution/waiting/runtime_start_reconcile":
+      return coupledEvidenceValid && evidence?.kind === "runtime_start_uncertain";
+    case "execution/waiting/runtime_start->context/waiting/runtime_start_recompose":
+    case "execution/waiting/runtime_start_reconcile->context/waiting/runtime_start_recompose":
+      return coupledEvidenceValid && evidence?.kind === "runtime_start_recompose";
+    case "context/waiting/runtime_start_recompose->context/running/-":
+      return coupledEvidenceValid && evidence?.kind === "runtime_recompose_claimed";
+    case "execution/running/-->execution/preempt_requested/-":
+      return (
+        coupledEvidenceValid &&
+        evidence?.kind === "runtime_control_requested" &&
+        evidence.control === "preempt"
+      );
+    case "execution/running/-->execution/cancelling/-":
+    case "execution/preempt_requested/-->execution/cancelling/-":
+      return (
+        coupledEvidenceValid &&
+        evidence?.kind === "runtime_control_requested" &&
+        evidence.control === "cancel"
+      );
+  }
 
   if (
     to.phase === "cooldown" &&

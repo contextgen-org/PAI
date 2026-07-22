@@ -60,7 +60,7 @@ function backendFailure(error: unknown): ObjectStorageBackendErrorV1 {
   );
 }
 
-class SupabaseObjectStorageBackendV1 implements ObjectStorageBackendV1 {
+export class SupabaseObjectStorageBackendV1 implements ObjectStorageBackendV1 {
   public constructor(
     private readonly client: SupabaseClient,
     private readonly url: string,
@@ -139,6 +139,11 @@ class SupabaseObjectStorageBackendV1 implements ObjectStorageBackendV1 {
       `${this.url.replace(/\/$/, "")}/storage/v1/object/authenticated/${encodeURIComponent(bucket)}/${encodedKey}`,
       {
         method: "GET",
+        // Never forward the service-role apikey header through a storage
+        // redirect. Fetch only strips a limited set of credential headers on
+        // cross-origin redirects; the Supabase-specific apikey is not one of
+        // them.
+        redirect: "error",
         headers: {
           authorization: `Bearer ${this.secretKey}`,
           apikey: this.secretKey,
@@ -214,7 +219,6 @@ export interface SupabaseStorageAdapterOptionsV1 {
   readonly policies: readonly ObjectClassPolicyV1[];
   readonly now?: () => Date;
   readonly fetch?: typeof fetch;
-  readonly allowVolatileMetadataRepositoryForTests?: boolean;
 }
 
 /**
@@ -227,39 +231,37 @@ export class SupabaseStorageAdapter extends ObjectStoreAdapterCoreV1 {
     if (
       !isTransactionalPostgresObjectMetadataRepositoryV1(
         options.metadataRepository,
-      ) &&
-      options.allowVolatileMetadataRepositoryForTests !== true
+      )
     ) {
       throw new Error(
         "SupabaseStorageAdapter requires a transactional Postgres metadata repository",
       );
     }
-    if (options.allowVolatileMetadataRepositoryForTests !== true) {
-      throw new Error(
-        "SupabaseStorageAdapter production ObjectStore reconciliation is fail-closed until Supabase upload-attempt terminal proof and worker wiring are implemented",
-      );
-    }
+    const storageFetch = options.fetch ?? globalThis.fetch;
+    const redirectRejectingFetch: typeof fetch = (input, init) =>
+      storageFetch(input, { ...init, redirect: "error" });
     const client = createClient(options.url, options.secretKey, {
       auth: {
         persistSession: false,
         autoRefreshToken: false,
         detectSessionInUrl: false,
       },
-      ...(options.fetch === undefined
-        ? {}
-        : { global: { fetch: options.fetch } }),
+      global: { fetch: redirectRejectingFetch },
     });
     super({
       backend: new SupabaseObjectStorageBackendV1(
         client,
         options.url,
         options.secretKey,
-        options.fetch ?? globalThis.fetch,
+        redirectRejectingFetch,
       ),
       metadataRepository: options.metadataRepository,
       accessPolicyVerifier: options.accessPolicyVerifier,
       policies: options.policies,
       ...(options.now === undefined ? {} : { now: options.now }),
     });
+    throw new Error(
+      "SupabaseStorageAdapter production ObjectStore reconciliation is fail-closed until Supabase upload-attempt terminal proof and worker wiring are implemented",
+    );
   }
 }

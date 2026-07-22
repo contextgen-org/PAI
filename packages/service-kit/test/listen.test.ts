@@ -66,6 +66,21 @@ describe("service startup workload verifier requirements", () => {
     expect(buildApp).not.toHaveBeenCalled();
   });
 
+  it("honors an explicit workload verifier requirement without internal policies", async () => {
+    const buildApp = vi.fn(() => createServiceApp("trigger_processor"));
+    await expect(
+      startService({
+        serviceId: "trigger_processor",
+        defaultPort: 3001,
+        env: {},
+        internalRouteAuthPolicies: [],
+        requireWorkloadVerifier: true,
+        buildApp,
+      }),
+    ).rejects.toThrow("PAI_WORKLOAD_JWKS_URL");
+    expect(buildApp).not.toHaveBeenCalled();
+  });
+
   it("can explicitly defer verifier enforcement for local no-DB smoke paths", async () => {
     const signalInstall = vi
       .spyOn(process, "once")

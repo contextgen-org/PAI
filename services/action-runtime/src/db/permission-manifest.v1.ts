@@ -43,7 +43,7 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
     table_permissions: [
     {
       table_name: "runtime_runs",
-      select_columns: ["id","trigger_process_id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","start_fence_generation","status","cancellation_status","runtime_provider","model","intent_ref","intent_version","structured_intent_hash","structured_intent","context_snapshot_ref","policy_snapshot_id","policy_snapshot_hash","cancel_requested_at","started_at","completed_at","cancelled_at","created_at","updated_at"],
+      select_columns: ["id","trigger_process_id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","start_attempt_no","start_fence_generation","status","cancellation_status","runtime_provider","model","intent_ref","intent_version","structured_intent_hash","structured_intent","context_snapshot_ref","context_snapshot_version","context_snapshot_hash","policy_snapshot_id","policy_snapshot_hash","terminal_reason","cancel_requested_at","started_at","completed_at","cancelled_at","created_at","updated_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -51,7 +51,7 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "runtime_policy_input_artifacts",
-      select_columns: ["policy_input_ref","trigger_process_id","runtime_run_id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","expected_catalog_version","catalog_as_of","policy_canonical_bytes","policy_input_hash","intent_policy_snapshot_ref","intent_policy_snapshot_hash","intent_policy_snapshot_canonical_bytes","tool_permission_profile_ref","tool_permission_profile_revision","tool_permission_profile_hash","tool_policy_epoch","policy_created_at","policy_expires_at","retention_until","created_at"],
+      select_columns: ["policy_input_ref","trigger_process_id","runtime_run_id","start_attempt_no","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","expected_catalog_version","catalog_as_of","policy_canonical_bytes","policy_input_hash","intent_policy_snapshot_ref","intent_policy_snapshot_hash","intent_policy_snapshot_canonical_bytes","tool_permission_profile_ref","tool_permission_profile_revision","tool_permission_profile_hash","tool_policy_epoch","requested_allowed_tools","policy_created_at","policy_expires_at","retention_until","created_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -59,7 +59,7 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "runtime_start_attempts",
-      select_columns: ["id","trigger_process_id","runtime_run_id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","request_hash","idempotency_key","start_fence_generation","start_fence_token_hash","reservation_validation_stage","reservation_status_snapshot","policy_input_ref","policy_input_hash","policy_input_created_at","policy_expires_at","requested_catalog_version","effective_catalog_version","result_code","response_payload","trace_id","created_at","completed_at"],
+      select_columns: ["id","trigger_process_id","start_attempt_no","runtime_run_id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","request_hash","idempotency_key","start_fence_generation","start_fence_token_hash","reservation_validation_stage","reservation_status_snapshot","policy_input_ref","policy_input_hash","policy_input_created_at","policy_expires_at","requested_catalog_version","effective_catalog_version","result_code","response_payload","trace_id","created_at","completed_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -67,7 +67,7 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "runtime_policy_snapshots",
-      select_columns: ["id","runtime_run_id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","policy_input_ref","policy_input_hash","policy_input_created_at","policy_input","requested_catalog_version","effective_catalog_version","catalog_as_of","tool_permission_profile_ref","tool_permission_profile_revision","tool_permission_profile_hash","tool_policy_epoch","skill_resolution_ids","resolved_skill_digests","resolved_skills","allowed_tools","tool_scopes","resource_scopes","network_scope","filesystem_scope","timer_scope","memory_scope","expires_at","security_revocation_epoch","revocation_policy","policy_snapshot_hash","created_at"],
+      select_columns: ["id","runtime_run_id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","policy_input_ref","policy_input_hash","policy_input_created_at","policy_input","requested_catalog_version","effective_catalog_version","catalog_as_of","tool_permission_profile_ref","tool_permission_profile_revision","tool_permission_profile_hash","tool_policy_epoch","requested_allowed_tools","tool_arg_constraints","skill_resolution_ids","resolved_skill_digests","resolved_skills","allowed_tools","tool_scopes","resource_scopes","network_scope","filesystem_scope","timer_scope","memory_scope","expires_at","security_revocation_epoch","revocation_policy","policy_snapshot_hash","created_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -91,7 +91,7 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "runtime_event_outbox",
-      select_columns: ["id","runtime_run_id","trigger_process_id","source_event_id","source_sequence_no","append_type","payload_ref","payload_hash","idempotency_key","target","status","next_retry_at","created_at","updated_at"],
+      select_columns: ["id","runtime_run_id","trigger_process_id","source_event_id","source_sequence_no","append_type","payload_ref","payload_hash","idempotency_key","target","status","attempt_count","next_retry_at","created_at","updated_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -124,7 +124,7 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "runtime_control_signals",
-      select_columns: ["runtime_signal_id","trigger_process_id","runtime_run_id","start_fence_generation","signal_type","idempotency_key","request_hash","requested_by","reason_code","control_token_hash","control_valid_until","status","handled_status","target_lease_generation","handled_lease_generation","final_fencing_generation","safe_point_reached","late_events_isolated","last_runtime_sequence_no","isolation_proof_ref","trace_id","requested_at","handled_at","created_at","updated_at"],
+      select_columns: ["runtime_signal_id","trigger_process_id","runtime_run_id","start_attempt_no","start_fence_generation","signal_type","idempotency_key","request_hash","requested_by","reason_code","control_token_hash","control_valid_until","status","handled_status","target_lease_generation","handled_lease_generation","final_fencing_generation","safe_point_reached","late_events_isolated","last_runtime_sequence_no","isolation_proof_ref","trace_id","requested_at","handled_at","created_at","updated_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -132,7 +132,7 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "runtime_control_tombstones",
-      select_columns: ["runtime_run_id","start_fence_generation","signal_type","runtime_signal_id","request_hash","control_token_hash","control_valid_until","reason_code","status","trace_id","created_at","updated_at"],
+      select_columns: ["runtime_run_id","start_attempt_no","start_fence_generation","signal_type","runtime_signal_id","request_hash","control_token_hash","control_valid_until","reason_code","status","trace_id","created_at","updated_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -201,13 +201,14 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
       writer_kind: "state_transition",
       arguments: [
         ["p_runtime_run_id", "text"], ["p_expected_status", "text"],
+        ["p_expected_start_fence_generation", "bigint"],
         ["p_next_status", "text"], ["p_transition", "jsonb"],
         ["p_request_hash", "text"], ["p_trace_id", "text"],
       ],
       reads_tables: ["runtime_runs", "runtime_permissions", "tool_permission_profile_current"],
       writes_tables: ["runtime_runs", "runtime_events", "runtime_event_outbox"],
       effects: [
-        { table_name: "runtime_runs", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "runtime_runs", operation: "transition", concurrency_control: "generation_fence" },
         { table_name: "runtime_events", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "runtime_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
       ],
@@ -303,14 +304,15 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
       primary_table: "runtime_start_attempts",
       writer_kind: "state_transition",
       arguments: [
-        ["p_attempt_id", "text"], ["p_expected_status", "text"],
-        ["p_next_status", "text"], ["p_reservation_validation", "jsonb"],
+        ["p_attempt_id", "text"], ["p_expected_result_code", "text"],
+        ["p_expected_start_fence_generation", "bigint"],
+        ["p_next_result_code", "text"], ["p_reservation_validation", "jsonb"],
         ["p_request_hash", "text"], ["p_trace_id", "text"],
       ],
       reads_tables: ["runtime_start_attempts", "runtime_runs"],
       writes_tables: ["runtime_start_attempts", "runtime_start_reservation_validations", "runtime_events", "runtime_event_outbox"],
       effects: [
-        { table_name: "runtime_start_attempts", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "runtime_start_attempts", operation: "transition", concurrency_control: "generation_fence" },
         { table_name: "runtime_start_reservation_validations", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "runtime_events", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "runtime_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
@@ -465,7 +467,7 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
   ],
   foreign_key_snapshot: {
     status: "complete",
-    source: "Database Design revision 466 / fresh 0200_action_runtime canonical DDL applied to PostgreSQL 17",
+    source: "Database Design revision 476 / fresh 0200_action_runtime canonical DDL applied to PostgreSQL 17",
   },
   foreign_keys: ownerForeignKeysV1("action_runtime", [
     ["runtime_artifacts_runtime_run_id_fkey","runtime_artifacts",["runtime_run_id"],"runtime_runs",["id"]],

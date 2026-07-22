@@ -145,7 +145,7 @@ describe("OpenTelemetry parentage", () => {
     app.get("/parentage", async () => {
       const activeServerContext = trace.getSpanContext(context.active());
       const downstream = await requestInternalJson<{ accepted: boolean }>({
-        url: "http://action-runtime.test/internal/work",
+        url: "https://action-runtime.test/internal/work",
         workloadCredential: "header.payload.signature",
         timeoutMs: 100,
         fetchImpl: fetchImpl as unknown as typeof fetch,

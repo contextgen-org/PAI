@@ -11,5 +11,7 @@ export * from "./shared/service-id.v1.js";
 export * from "./shared/typed-evidence-ref.v1.js";
 export * from "./shared/workload-credential-claims.v1.js";
 export * from "./trigger-processor/trigger-process-state.v1.js";
+export * from "./trigger-processor/trigger-submit.v1.js";
+export * from "./trigger-processor/trigger-submit-response.v1.js";
 export * from "./trigger-processor/trigger-admission.v1.js";
 export * from "./trigger-processor/events.v1.js";

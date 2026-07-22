@@ -1,3 +1,4 @@
+import { assertOwnerDurableEventEnvelopeV1 } from "@pai/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -6,35 +7,55 @@ import {
   createRedisNamespaceV1,
   createRedisDependencyMonitorV1,
   createRedisStreamConsumerGroupPortV1,
+  createRedisStreamReferenceProbeV1,
   loadRedisRuntimeConfigV1,
   namespacedRedisKeyV1,
   openVerifiedRedisStreamCompositionV1,
+  REDIS_STREAM_MESSAGE_MAX_BYTES_V1,
   redisReconnectDelayV1,
+  redisStreamMessageBytesV1,
+  xAddWithLocalAofFenceV1,
 } from "../src/index.js";
 
 const envelope = {
-  event_id: "evt_timer_001",
-  event_type: "timer.occurrence.due",
-  schema_version: "timer_event.v1",
-  producer: "timer_trigger_app",
+  event_id: "evt_trigger_rejected_001",
+  event_type: "trigger.rejected",
+  schema_version: "trigger_processor_event.v1",
+  producer: "trigger_processor",
   occurred_at: "2026-07-21T05:00:00Z",
-  idempotency_key: "occurrence_001:due",
+  idempotency_key: "submit_attempt_001:rejected",
   trace_id: "trace_001",
   payload: {
-    scope_kind: "bot",
     workspace_id: "workspace_001",
     bot_id: "bot_001",
     owner_agent_id: "owner_agent_001",
     deployment_environment: "dev",
     release_channel: "stable",
-    occurrence_id: "occurrence_001",
-    schedule_id: "schedule_001",
-    scheduled_fire_at: "2026-07-21T05:00:00Z",
-    effective_fire_at: "2026-07-21T05:00:00Z",
-    dedupe_key: "timer:occurrence_001",
-    is_catch_up: false,
+    reason_code: "business_admission_rejected",
+    source_ref: "trigger_event:submit_attempt_001",
+    submit_attempt_id: "submit_attempt_001",
+    rejection_stage: "business_admission",
+    rejection_code: "admission_capacity_exceeded",
   },
 } as const;
+
+function envelopeAtRedisMessageBytes(targetBytes: number) {
+  const minimum = {
+    ...envelope,
+    payload: { ...envelope.payload, source_ref: "trigger_event:" },
+  };
+  const minimumBytes = redisStreamMessageBytesV1(
+    buildRedisStreamMessageV1(minimum),
+  );
+  if (targetBytes < minimumBytes) throw new Error("target is below fixture size");
+  return {
+    ...minimum,
+    payload: {
+      ...minimum.payload,
+      source_ref: `trigger_event:${"x".repeat(targetBytes - minimumBytes)}`,
+    },
+  } as const;
+}
 
 describe("Redis Stream transport V1", () => {
   it("namespaces every physical key by environment, channel, owner and schema", () => {
@@ -129,13 +150,189 @@ describe("Redis Stream transport V1", () => {
   it("rejects an unbounded Redis command queue configuration", () => {
     expect(() =>
       loadRedisRuntimeConfigV1({
-        PAI_REDIS_URL: "redis://redis.internal:6379",
+        PAI_REDIS_URL: "rediss://redis.internal:6379",
         PAI_REDIS_COMMANDS_QUEUE_MAX_LENGTH: "10001",
       }),
     ).toThrow(/runtime settings are outside the V1 bounds/);
   });
 
-  it("rejects Observation as an outbox transport target", async () => {
+  it("allows plaintext Redis only on loopback", () => {
+    expect(() =>
+      loadRedisRuntimeConfigV1({
+        PAI_REDIS_URL: "redis://redis.internal:6379",
+      }),
+    ).toThrow(/rediss except for loopback/);
+    expect(() =>
+      loadRedisRuntimeConfigV1({
+        PAI_REDIS_URL: "redis://127.0.0.1:6379",
+      }),
+    ).not.toThrow();
+    expect(() =>
+      loadRedisRuntimeConfigV1({
+        PAI_REDIS_URL: "redis://[::1]:6379",
+      }),
+    ).not.toThrow();
+  });
+
+  it("does not accept WAITAOF proof from a different Redis connection", async () => {
+    let generation = 1;
+    const reconnectAfterWrite = {
+      async xAdd() {
+        generation += 1;
+        return "1-0";
+      },
+      async sendCommand() {
+        return [1, 0];
+      },
+    };
+    await expect(
+      xAddWithLocalAofFenceV1(reconnectAfterWrite, {
+        stream: "pai:test:stream",
+        message: { event_id: "evt_1" },
+        aof_ack_timeout_ms: 2_000,
+        connection_generation: () => generation,
+      }),
+    ).rejects.toMatchObject({ code: "transport_timeout", retryable: true });
+
+    generation = 1;
+    const reconnectDuringWait = {
+      async xAdd() {
+        return "1-0";
+      },
+      async sendCommand() {
+        generation += 1;
+        return [1, 0];
+      },
+    };
+    await expect(
+      xAddWithLocalAofFenceV1(reconnectDuringWait, {
+        stream: "pai:test:stream",
+        message: { event_id: "evt_1" },
+        aof_ack_timeout_ms: 2_000,
+        connection_generation: () => generation,
+      }),
+    ).rejects.toMatchObject({ code: "transport_timeout", retryable: true });
+
+    generation = 1;
+    await expect(
+      xAddWithLocalAofFenceV1(
+        {
+          async xAdd() {
+            return "2-0";
+          },
+          async sendCommand() {
+            return [1, 0];
+          },
+        },
+        {
+          stream: "pai:test:stream",
+          message: { event_id: "evt_2" },
+          aof_ack_timeout_ms: 2_000,
+          connection_generation: () => generation,
+        },
+      ),
+    ).resolves.toBe("2-0");
+  });
+
+  it("snapshots the Redis publish request before the asynchronous XADD boundary", async () => {
+    let releaseWrite!: () => void;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const observed: Array<Readonly<{
+      stream: string;
+      message: Readonly<Record<string, string>>;
+    }>> = [];
+    const commands: readonly string[][] = [];
+    const mutableCommands = commands as string[][];
+    const client = {
+      async xAdd(
+        stream: string,
+        _id: "*",
+        message: Readonly<Record<string, string>>,
+      ) {
+        observed.push({ stream, message });
+        await writeGate;
+        return "7-0";
+      },
+      async sendCommand(args: readonly string[]) {
+        mutableCommands.push([...args]);
+        return [1, 0];
+      },
+    };
+    const mutableMessage = { event_id: "evt_before_await" };
+    const request = {
+      stream: "pai:test:stream",
+      message: mutableMessage,
+      aof_ack_timeout_ms: 2_000,
+      connection_generation: () => 1,
+    };
+
+    const publishing = xAddWithLocalAofFenceV1(client, request);
+    Object.assign(request, {
+      stream: "pai:mutated:stream",
+      aof_ack_timeout_ms: 30_000,
+      connection_generation: () => 999,
+    });
+    mutableMessage.event_id = "evt_mutated_after_xadd";
+    releaseWrite();
+
+    await expect(publishing).resolves.toBe("7-0");
+    expect(observed).toHaveLength(1);
+    expect(observed[0]).toEqual({
+      stream: "pai:test:stream",
+      message: { event_id: "evt_before_await" },
+    });
+    expect(Object.isFrozen(observed[0]?.message)).toBe(true);
+    expect(commands).toEqual([["WAITAOF", "1", "0", "2000"]]);
+  });
+
+  it("uses the exact same bounded message bytes before XADD as the consumer", async () => {
+    let xAdds = 0;
+    const client = {
+      async xAdd() {
+        xAdds += 1;
+        return `${xAdds}-0`;
+      },
+      async sendCommand() {
+        return [1, 0];
+      },
+    };
+    const boundaryEnvelope = envelopeAtRedisMessageBytes(
+      REDIS_STREAM_MESSAGE_MAX_BYTES_V1,
+    );
+    const oversizedEnvelope = envelopeAtRedisMessageBytes(
+      REDIS_STREAM_MESSAGE_MAX_BYTES_V1 + 1,
+    );
+    assertOwnerDurableEventEnvelopeV1(boundaryEnvelope);
+    assertOwnerDurableEventEnvelopeV1(oversizedEnvelope);
+    expect(
+      redisStreamMessageBytesV1(buildRedisStreamMessageV1(boundaryEnvelope)),
+    ).toBe(REDIS_STREAM_MESSAGE_MAX_BYTES_V1);
+
+    await expect(
+      xAddWithLocalAofFenceV1(client, {
+        stream: "pai:test:stream",
+        message: buildRedisStreamMessageV1(boundaryEnvelope),
+        aof_ack_timeout_ms: 2_000,
+        connection_generation: () => 1,
+      }),
+    ).resolves.toBe("1-0");
+    await expect(
+      xAddWithLocalAofFenceV1(client, {
+        stream: "pai:test:stream",
+        message: buildRedisStreamMessageV1(oversizedEnvelope),
+        aof_ack_timeout_ms: 2_000,
+        connection_generation: () => 1,
+      }),
+    ).rejects.toMatchObject({
+      code: "transport_rejected",
+      retryable: false,
+    });
+    expect(xAdds).toBe(1);
+  });
+
+  it("rejects route targets without a durable consumer subroute", async () => {
     const namespace = createRedisNamespaceV1({
       deployment_environment: "dev",
       release_channel: "stable",
@@ -149,14 +346,77 @@ describe("Redis Stream transport V1", () => {
         namespace,
         routes: { observation_gateway: "stream:memory_events" },
       }),
-    ).rejects.toThrow(/outbox route target/u);
+    ).rejects.toThrow(/known durable consumer/u);
     await expect(
       openVerifiedRedisStreamCompositionV1({
         url: "redis://127.0.0.1:1",
         namespace,
         routes: { memory: "stream:memory_events" },
       }),
-    ).rejects.toThrow(/outbox route target/u);
+    ).rejects.toThrow(/known durable consumer/u);
+  });
+
+  it("rejects physical Redis stream aliases across consumer services", async () => {
+    const namespace = createRedisNamespaceV1({
+      deployment_environment: "dev",
+      release_channel: "stable",
+      owner_service: "trigger_processor",
+      stream_epoch: "epoch_20260722",
+      stream_generation: 1,
+    });
+    const routes = {
+      "trigger_processor.admission_audit": "stream:shared_events",
+      "observation_gateway.trigger_events": "stream:shared_events",
+    } as const;
+
+    expect(() =>
+      createRedisStreamReferenceProbeV1(
+        {
+          async sendCommand() {
+            return [];
+          },
+        },
+        { namespace, routes },
+      ),
+    ).toThrow(/different consumers must use distinct physical streams/u);
+    await expect(
+      openVerifiedRedisStreamCompositionV1({
+        url: "redis://127.0.0.1:1",
+        namespace,
+        routes,
+      }),
+    ).rejects.toThrow(/different consumers must use distinct physical streams/u);
+  });
+
+  it("rejects a forged Redis namespace prefix before issuing commands", () => {
+    const namespace = createRedisNamespaceV1({
+      deployment_environment: "dev",
+      release_channel: "stable",
+      owner_service: "trigger_processor",
+      stream_epoch: "epoch_20260722",
+      stream_generation: 1,
+    });
+    let commands = 0;
+    expect(() =>
+      createRedisStreamConsumerGroupPortV1(
+        {
+          async sendCommand() {
+            commands += 1;
+            return null;
+          },
+        },
+        {
+          stream: "pai:forged:stream:trigger_events",
+          group: "trigger_processor",
+          consumer: "worker_001",
+          namespace: {
+            ...namespace,
+            prefix: "pai:forged",
+          },
+        },
+      ),
+    ).toThrow(/canonical identity/u);
+    expect(commands).toBe(0);
   });
 
   it("enters degraded mode after three failures and recovers only on success", () => {
@@ -183,11 +443,16 @@ describe("Redis Stream transport V1", () => {
     const namespace = createRedisNamespaceV1({
       deployment_environment: "dev",
       release_channel: "stable",
-      owner_service: "timer_trigger_app",
+      owner_service: "trigger_processor",
       stream_epoch: "epoch_20260722",
       stream_generation: 1,
     });
     const commands: string[][] = [];
+    let xAutoClaimResponse: unknown = [
+      "5-0",
+      [["1-0", Object.entries(buildRedisStreamMessageV1(envelope)).flat()]],
+      ["0-9"],
+    ];
     const client = {
       async sendCommand(args: readonly string[]): Promise<unknown> {
         commands.push([...args]);
@@ -197,7 +462,7 @@ describe("Redis Stream transport V1", () => {
         if (args[0] === "XREADGROUP") {
           return [
             [
-              "pai:dev:stable:timer_trigger_app:v1:epoch_20260722:generation_1:stream:timer_events",
+              "pai:dev:stable:trigger_processor:v1:epoch_20260722:generation_1:stream:trigger_events",
               [
                 [
                   "1-0",
@@ -208,21 +473,26 @@ describe("Redis Stream transport V1", () => {
           ];
         }
         if (args[0] === "XAUTOCLAIM") {
-          return [
-            "5-0",
-            [["1-0", Object.entries(buildRedisStreamMessageV1(envelope)).flat()]],
-            ["0-9"],
-          ];
+          return xAutoClaimResponse;
         }
         if (args[0] === "XACK") return 1;
         throw new Error(`unexpected command ${args[0]}`);
       },
     };
-    const consumer = createRedisStreamConsumerGroupPortV1(client, {
-      stream: "pai:dev:stable:timer_trigger_app:v1:epoch_20260722:generation_1:stream:timer_events",
+    const consumerOptions = {
+      stream: "pai:dev:stable:trigger_processor:v1:epoch_20260722:generation_1:stream:trigger_events",
       group: "trigger_processor",
       consumer: "worker_001",
       namespace,
+    };
+    const consumer = createRedisStreamConsumerGroupPortV1(
+      client,
+      consumerOptions,
+    );
+    Object.assign(consumerOptions, {
+      stream: "pai:mutated:stream",
+      group: "mutated_group",
+      consumer: "mutated_consumer",
     });
     await expect(consumer.ensureGroup()).resolves.toBeUndefined();
     await expect(consumer.readNew({ count: 10, block_ms: 0 })).resolves.toEqual([
@@ -230,7 +500,7 @@ describe("Redis Stream transport V1", () => {
         kind: "event",
         delivery_id: "1-0",
         delivery_ref:
-          "pai:dev:stable:timer_trigger_app:v1:epoch_20260722:generation_1:stream:timer_events#1-0",
+          "pai:dev:stable:trigger_processor:v1:epoch_20260722:generation_1:stream:trigger_events#1-0",
         envelope,
       },
     ]);
@@ -246,7 +516,7 @@ describe("Redis Stream transport V1", () => {
         kind: "event",
         delivery_id: "1-0",
         delivery_ref:
-          "pai:dev:stable:timer_trigger_app:v1:epoch_20260722:generation_1:stream:timer_events#1-0",
+          "pai:dev:stable:trigger_processor:v1:epoch_20260722:generation_1:stream:trigger_events#1-0",
         envelope,
       }],
       deleted_ids: ["0-9"],
@@ -254,11 +524,66 @@ describe("Redis Stream transport V1", () => {
     await expect(
       consumer.acknowledge({ delivery_ids: ["1-0"] }),
     ).resolves.toEqual({ acknowledged: 1 });
+    xAutoClaimResponse = ["0-0", [], [], "unexpected"];
+    await expect(
+      consumer.reclaimPending({
+        min_idle_ms: 30_000,
+        count: 10,
+        start_id: "0-0",
+      }),
+    ).rejects.toThrow(/XAUTOCLAIM response is malformed/u);
+    xAutoClaimResponse = ["0-0", []];
+    await expect(
+      consumer.reclaimPending({
+        min_idle_ms: 30_000,
+        count: 10,
+        start_id: "0-0",
+      }),
+    ).rejects.toThrow(/XAUTOCLAIM response is malformed/u);
+    xAutoClaimResponse = [
+      "0-0",
+      [["1-0", Object.entries(buildRedisStreamMessageV1(envelope)).flat()]],
+      ["2-0"],
+    ];
+    await expect(
+      consumer.reclaimPending({
+        min_idle_ms: 30_000,
+        count: 1,
+        start_id: "0-0",
+      }),
+    ).rejects.toThrow(/exceeded the requested page/u);
+    await expect(
+      consumer.readNew({ count: 17, block_ms: 0 }),
+    ).rejects.toThrow(/XREADGROUP count/u);
+    await expect(
+      consumer.reclaimPending({
+        min_idle_ms: 30_000,
+        count: 17,
+        start_id: "0-0",
+      }),
+    ).rejects.toThrow(/XAUTOCLAIM count/u);
+    await expect(
+      consumer.acknowledge({
+        delivery_ids: Array.from({ length: 17 }, (_, index) => `${index + 1}-0`),
+      }),
+    ).rejects.toThrow(/batch bound/u);
+    const accessorIds = ["1-0"];
+    Object.defineProperty(accessorIds, "0", {
+      enumerable: true,
+      configurable: true,
+      get: () => "1-0",
+    });
+    await expect(
+      consumer.acknowledge({ delivery_ids: accessorIds }),
+    ).rejects.toThrow(/data property/u);
     expect(commands.map((command) => command[0])).toEqual([
       "XGROUP",
       "XREADGROUP",
       "XAUTOCLAIM",
       "XACK",
+      "XAUTOCLAIM",
+      "XAUTOCLAIM",
+      "XAUTOCLAIM",
     ]);
   });
 
@@ -266,7 +591,7 @@ describe("Redis Stream transport V1", () => {
     const namespace = createRedisNamespaceV1({
       deployment_environment: "dev",
       release_channel: "stable",
-      owner_service: "timer_trigger_app",
+      owner_service: "trigger_processor",
       stream_epoch: "epoch_20260722",
       stream_generation: 1,
     });
@@ -278,7 +603,7 @@ describe("Redis Stream transport V1", () => {
     const wrongScopeFields = Object.entries(
       buildRedisStreamMessageV1({
         ...envelope,
-        event_id: "evt_timer_scope_drift",
+        event_id: "evt_trigger_scope_drift",
         payload: {
           ...envelope.payload,
           deployment_environment: "prod",
@@ -291,7 +616,7 @@ describe("Redis Stream transport V1", () => {
         async sendCommand(args) {
           if (args[0] === "XREADGROUP") {
             return [[
-              namespacedRedisKeyV1(namespace, "stream:timer_events"),
+              namespacedRedisKeyV1(namespace, "stream:trigger_events"),
               [
                 ["1-0", invalidFields],
                 ["2-0", validFields],
@@ -305,7 +630,7 @@ describe("Redis Stream transport V1", () => {
         },
       },
       {
-        stream: namespacedRedisKeyV1(namespace, "stream:timer_events"),
+        stream: namespacedRedisKeyV1(namespace, "stream:trigger_events"),
         group: "trigger_processor",
         consumer: "worker_001",
         namespace,
@@ -322,7 +647,7 @@ describe("Redis Stream transport V1", () => {
       kind: "event",
       delivery_id: "2-0",
       delivery_ref:
-        "pai:dev:stable:timer_trigger_app:v1:epoch_20260722:generation_1:stream:timer_events#2-0",
+        "pai:dev:stable:trigger_processor:v1:epoch_20260722:generation_1:stream:trigger_events#2-0",
       envelope,
     });
     expect(deliveries[2]).toMatchObject({
@@ -335,5 +660,115 @@ describe("Redis Stream transport V1", () => {
       delivery_id: "4-0",
       error_code: "malformed_stream_fields",
     });
+  });
+
+  it("rejects oversized stream messages without amplifying the raw payload into DLQ input", async () => {
+    const namespace = createRedisNamespaceV1({
+      deployment_environment: "dev",
+      release_channel: "stable",
+      owner_service: "trigger_processor",
+      stream_epoch: "epoch_20260722",
+      stream_generation: 1,
+    });
+    const oversizedFields = Object.entries(
+      buildRedisStreamMessageV1(
+        envelopeAtRedisMessageBytes(REDIS_STREAM_MESSAGE_MAX_BYTES_V1 + 1),
+      ),
+    ).flat();
+    const consumer = createRedisStreamConsumerGroupPortV1(
+      {
+        async sendCommand(args) {
+          if (args[0] === "XREADGROUP") {
+            return [[
+              namespacedRedisKeyV1(namespace, "stream:trigger_events"),
+              [["9-0", oversizedFields]],
+            ]];
+          }
+          return "OK";
+        },
+      },
+      {
+        stream: namespacedRedisKeyV1(namespace, "stream:trigger_events"),
+        group: "trigger_processor",
+        consumer: "worker_001",
+        namespace,
+      },
+    );
+
+    const [delivery] = await consumer.readNew({ count: 1, block_ms: 0 });
+
+    expect(delivery).toMatchObject({
+      kind: "invalid",
+      error_code: "malformed_stream_fields",
+    });
+    expect(JSON.stringify(delivery)).not.toContain("x".repeat(20_000));
+    if (delivery?.kind === "invalid") {
+      expect(Buffer.byteLength(JSON.stringify(delivery.raw_fields), "utf8"))
+        .toBeLessThan(20_000);
+    }
+  });
+
+  it("bounds malformed raw-field evidence by count, UTF-8 bytes and serialized bytes", async () => {
+    const namespace = createRedisNamespaceV1({
+      deployment_environment: "dev",
+      release_channel: "stable",
+      owner_service: "trigger_processor",
+      stream_epoch: "epoch_20260722",
+      stream_generation: 1,
+    });
+    const stream = namespacedRedisKeyV1(namespace, "stream:trigger_events");
+    const malformedFields = [
+      Array.from({ length: 20_000 }, () => ""),
+      Array.from({ length: 100 }, () => "x".repeat(1_000)),
+      Array.from({ length: 100 }, () => "\\".repeat(1_000)),
+      Array.from({ length: 20_000 }, () => ({ attacker: true })),
+    ];
+    const consumer = createRedisStreamConsumerGroupPortV1(
+      {
+        async sendCommand(args) {
+          if (args[0] === "XREADGROUP") {
+            return [[
+              stream,
+              malformedFields.map((fields, index) => [
+                `${index + 1}-0`,
+                fields,
+              ]),
+            ]];
+          }
+          return "OK";
+        },
+      },
+      {
+        stream,
+        group: "trigger_processor",
+        consumer: "worker_001",
+        namespace,
+      },
+    );
+
+    const deliveries = await consumer.readNew({ count: 4, block_ms: 0 });
+
+    expect(deliveries).toHaveLength(malformedFields.length);
+    for (const delivery of deliveries) {
+      expect(delivery).toMatchObject({
+        kind: "invalid",
+        error_code: "malformed_stream_fields",
+      });
+      if (delivery.kind !== "invalid") {
+        throw new Error("expected invalid delivery");
+      }
+      expect(delivery.raw_fields.length).toBeLessThanOrEqual(64);
+      expect(
+        delivery.raw_fields.reduce(
+          (total, field) =>
+            total + Buffer.byteLength(String(field), "utf8"),
+          0,
+        ),
+      ).toBeLessThanOrEqual(16_384);
+      expect(
+        Buffer.byteLength(JSON.stringify(delivery.raw_fields), "utf8"),
+      ).toBeLessThanOrEqual(16_384);
+      expect(delivery.raw_fields.at(-1)).toMatch(/raw fields omitted/u);
+    }
   });
 });

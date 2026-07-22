@@ -1,0 +1,370 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { EventRedriverWorkerV1 } from "../src/index.js";
+
+describe("event redriver polling shell", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("fails closed when the durable reconciler dependency is absent", () => {
+    expect(
+      () =>
+        new EventRedriverWorkerV1({
+          reconciler: undefined,
+        } as never),
+    ).toThrow("invalid event redriver worker options");
+  });
+
+  it("treats a widened or inconsistent batch summary as a worker failure", async () => {
+    const widened = new EventRedriverWorkerV1({
+      reconciler: {
+        async reconcileBatch() {
+          return {
+            claimed: 0,
+            probed: 0,
+            present: 0,
+            missing: 0,
+            rematerialized: 0,
+            retryable_failures: 0,
+            permanent_failures: 0,
+            ignored: true,
+          } as never;
+        },
+      },
+    });
+    await expect(widened.runOnce()).rejects.toThrow("malformed batch summary");
+
+    const inconsistent = new EventRedriverWorkerV1({
+      reconciler: {
+        async reconcileBatch() {
+          return {
+            claimed: 1,
+            probed: 0,
+            present: 0,
+            missing: 0,
+            rematerialized: 0,
+            retryable_failures: 0,
+            permanent_failures: 0,
+          };
+        },
+      },
+    });
+    await expect(inconsistent.runOnce()).rejects.toThrow(
+      "inconsistent batch summary",
+    );
+
+    const impossibleProbeAccounting = new EventRedriverWorkerV1({
+      reconciler: {
+        async reconcileBatch() {
+          return {
+            claimed: 1,
+            probed: 1,
+            present: 0,
+            missing: 0,
+            rematerialized: 1,
+            retryable_failures: 0,
+            permanent_failures: 0,
+          };
+        },
+      },
+    });
+    await expect(impossibleProbeAccounting.runOnce()).rejects.toThrow(
+      "inconsistent batch summary",
+    );
+  });
+
+  it("binds the configured port method and rejects accessor-backed summaries", async () => {
+    const empty = {
+      claimed: 0,
+      probed: 0,
+      present: 0,
+      missing: 0,
+      rematerialized: 0,
+      retryable_failures: 0,
+      permanent_failures: 0,
+    };
+    let configuredCalls = 0;
+    let replacementCalls = 0;
+    const reconciler = {
+      async reconcileBatch() {
+        configuredCalls += 1;
+        return empty;
+      },
+    };
+    const worker = new EventRedriverWorkerV1({ reconciler });
+    reconciler.reconcileBatch = async () => {
+      replacementCalls += 1;
+      return empty;
+    };
+    await expect(worker.runOnce()).resolves.toEqual(empty);
+    expect({ configuredCalls, replacementCalls }).toEqual({
+      configuredCalls: 1,
+      replacementCalls: 0,
+    });
+
+    let getterCalls = 0;
+    const accessorSummary = { ...empty } as Record<string, unknown>;
+    Object.defineProperty(accessorSummary, "claimed", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return 0;
+      },
+    });
+    const accessorWorker = new EventRedriverWorkerV1({
+      reconciler: {
+        async reconcileBatch() {
+          return accessorSummary as never;
+        },
+      },
+    });
+    await expect(accessorWorker.runOnce()).rejects.toThrow(
+      "malformed batch summary",
+    );
+    expect(getterCalls).toBe(0);
+  });
+
+  it("coalesces duplicate ticks while durable reconciliation is in flight", async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let calls = 0;
+    const worker = new EventRedriverWorkerV1({
+      reconciler: {
+        async reconcileBatch() {
+          calls += 1;
+          await blocked;
+          return {
+            claimed: 0,
+            probed: 0,
+            present: 0,
+            missing: 0,
+            rematerialized: 0,
+            retryable_failures: 0,
+            permanent_failures: 0,
+          };
+        },
+      },
+      interval_ms: 100,
+    });
+    worker.start();
+    const first = worker.runOnce();
+    expect(worker.runOnce()).toBe(first);
+    await Promise.resolve();
+    expect(calls).toBe(1);
+    release();
+    await worker.stop();
+    await expect(first).resolves.toMatchObject({ claimed: 0 });
+  });
+
+  it("turns synchronous port failures into rejections and isolates a throwing reporter", async () => {
+    let calls = 0;
+    let reports = 0;
+    const failure = new Error("synchronous reconciler failure");
+    const worker = new EventRedriverWorkerV1({
+      reconciler: {
+        reconcileBatch() {
+          calls += 1;
+          throw failure;
+        },
+      },
+      interval_ms: 100,
+      async on_error(error) {
+        reports += 1;
+        expect(error).toBe(failure);
+        await Promise.resolve();
+        throw new Error("broken error reporter");
+      },
+    });
+
+    expect(() => worker.runOnce()).not.toThrow();
+    await expect(worker.runOnce()).rejects.toBe(failure);
+    worker.start();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await worker.stop();
+
+    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(reports).toBeGreaterThanOrEqual(1);
+  });
+
+  it("installs the single-flight promise before a synchronous re-entry", async () => {
+    let worker!: EventRedriverWorkerV1;
+    let calls = 0;
+    let nested: Promise<unknown> | undefined;
+    worker = new EventRedriverWorkerV1({
+      reconciler: {
+        reconcileBatch() {
+          calls += 1;
+          if (calls === 1) nested = worker.runOnce();
+          return Promise.resolve({
+            claimed: 0,
+            probed: 0,
+            present: 0,
+            missing: 0,
+            rematerialized: 0,
+            retryable_failures: 0,
+            permanent_failures: 0,
+          });
+        },
+      },
+      interval_ms: 100,
+    });
+
+    const outer = worker.runOnce();
+    await Promise.resolve();
+
+    expect(nested).toBe(outer);
+    await expect(outer).resolves.toMatchObject({ claimed: 0 });
+    expect(calls).toBe(1);
+  });
+
+  it("linearizes stop against a concurrent start and permits restart after stop", async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let calls = 0;
+    const worker = new EventRedriverWorkerV1({
+      reconciler: {
+        async reconcileBatch() {
+          calls += 1;
+          if (calls === 1) await blocked;
+          return {
+            claimed: 0,
+            probed: 0,
+            present: 0,
+            missing: 0,
+            rematerialized: 0,
+            retryable_failures: 0,
+            permanent_failures: 0,
+          };
+        },
+      },
+      interval_ms: 100,
+    });
+
+    worker.start();
+    await Promise.resolve();
+    const stopping = worker.stop();
+    expect(() => worker.start()).toThrow("event redriver worker is stopping");
+    expect(worker.stop()).toBe(stopping);
+    release();
+    await stopping;
+    await new Promise<void>((resolve) => setTimeout(resolve, 120));
+    expect(calls).toBe(1);
+
+    worker.start();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls).toBe(2);
+    await worker.stop();
+  });
+
+  it("backs off persistent failures and bounds a hanging error reporter", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    let reports = 0;
+    const never = new Promise<void>(() => undefined);
+    const worker = new EventRedriverWorkerV1({
+      reconciler: {
+        async reconcileBatch() {
+          calls += 1;
+          throw new Error("database unavailable");
+        },
+      },
+      interval_ms: 100,
+      retry_base_delay_ms: 200,
+      retry_max_delay_ms: 800,
+      random: () => 0,
+      on_error() {
+        reports += 1;
+        return never;
+      },
+    });
+
+    worker.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect({ calls, reports }).toEqual({ calls: 1, reports: 1 });
+
+    await vi.advanceTimersByTimeAsync(99);
+    expect(calls).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect({ calls, reports }).toEqual({ calls: 2, reports: 1 });
+
+    await vi.advanceTimersByTimeAsync(199);
+    expect(calls).toBe(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect({ calls, reports }).toEqual({ calls: 3, reports: 1 });
+
+    await worker.stop();
+  });
+
+  it("aborts a hanging reconciliation but rejects bounded stop until it really settles", async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let observedSignal: AbortSignal | undefined;
+    const worker = new EventRedriverWorkerV1({
+      reconciler: {
+        async reconcileBatch(signal) {
+          observedSignal = signal;
+          await blocked;
+          return {
+            claimed: 0,
+            probed: 0,
+            present: 0,
+            missing: 0,
+            rematerialized: 0,
+            retryable_failures: 0,
+            permanent_failures: 0,
+          };
+        },
+      },
+      interval_ms: 100,
+      batch_timeout_ms: 300_000,
+      stop_timeout_ms: 100,
+    });
+
+    worker.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const stopping = worker.stop();
+    const stopFailure = expect(stopping).rejects.toThrow(
+      "did not stop within 100ms",
+    );
+    expect(observedSignal?.aborted).toBe(true);
+    expect(() => worker.start()).toThrow("event redriver worker is stopping");
+    await vi.advanceTimersByTimeAsync(100);
+    await stopFailure;
+    expect(() => worker.start()).toThrow("event redriver worker is stopping");
+
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    worker.start();
+    await vi.advanceTimersByTimeAsync(0);
+    await worker.stop();
+  });
+
+  it("requests cooperative abort when a batch exceeds its deadline", async () => {
+    vi.useFakeTimers();
+    let aborts = 0;
+    const worker = new EventRedriverWorkerV1({
+      reconciler: {
+        reconcileBatch(signal) {
+          return new Promise<never>((_resolve, reject) => {
+            signal.addEventListener("abort", () => {
+              aborts += 1;
+              reject(signal.reason);
+            }, { once: true });
+          });
+        },
+      },
+      interval_ms: 100,
+      batch_timeout_ms: 100,
+      random: () => 0,
+    });
+
+    worker.start();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(aborts).toBe(1);
+    await worker.stop();
+  });
+});

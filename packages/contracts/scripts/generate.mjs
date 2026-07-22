@@ -61,14 +61,36 @@ function openApiOperation(operation) {
   if (requestSchema === undefined || responseSchema === undefined) {
     throw new Error(`unknown schema for OpenAPI operation ${operation.operation_id}`);
   }
+  const sourceAuthorization = Object.fromEntries(
+    operation.source_bindings.map((binding) => [
+      binding.source,
+      binding.authentication === "supabase_ingress"
+        ? {
+            authentication: binding.authentication,
+            allowed_principal_types: binding.allowed_principal_types,
+            actor_derivation: binding.actor_derivation,
+            required_permission_scope: binding.required_permission_scope,
+            principal_mapping: binding.principal_mapping,
+          }
+        : {
+            authentication: binding.authentication,
+            required_capability: binding.required_capability,
+            required_permission_scope: binding.required_permission_scope,
+            allowed_caller: binding.allowed_caller,
+          },
+    ]),
+  );
   return {
     [operation.method]: {
       operationId: operation.operation_id,
       tags: ["trigger_processor"],
-      summary: `Admit a ${operation.source} trigger`,
+      summary: "Admit a chat, notification, or timer trigger",
       description:
-        `Route injects source=${operation.source}; callers must be ${operation.allowed_caller} with ${operation.required_capability}.`,
-      security: [{ PaiWorkloadJwt: [operation.required_capability] }],
+        "The source discriminator selects either verified public Supabase ingress for chat/notification or the Timer workload credential binding.",
+      // HTTP bearer schemes do not define OAuth scopes. Keep the standard
+      // requirement empty and expose PAI capabilities through an extension.
+      security: [{ SupabaseJwt: [] }, { PaiWorkloadJwt: [] }],
+      "x-pai-source-authorization": sourceAuthorization,
       requestBody: {
         required: true,
         content: {
@@ -82,8 +104,10 @@ function openApiOperation(operation) {
           String(status),
           {
             description:
-              status === 200
-                ? "Admission decision"
+              status === 202
+                ? "Fresh trigger accepted"
+                : status === 200
+                  ? "Rejected or duplicate replay result"
                 : "Canonical error envelope",
             content: {
               "application/json": {
@@ -136,14 +160,14 @@ await emitGeneratedFile(
 
 const triggerProcessorOpenApiPath = resolve(
   packageRoot,
-  "generated/openapi/trigger-processor-internal.yaml",
+  "generated/openapi/trigger-processor.yaml",
 );
 await emitGeneratedFile(
   triggerProcessorOpenApiPath,
   `${JSON.stringify(
     {
       openapi: "3.1.0",
-      info: { title: "PAI Trigger Processor Internal API", version: "1.0.0" },
+      info: { title: "PAI Trigger Processor API", version: "1.0.0" },
       paths: triggerProcessorOpenApiPaths,
       components: {
         securitySchemes: {
@@ -151,6 +175,11 @@ await emitGeneratedFile(
             type: "http",
             scheme: "bearer",
             bearerFormat: "JWT",
+          },
+          SupabaseJwt: {
+            type: "http",
+            scheme: "bearer",
+            bearerFormat: "Supabase JWT",
           },
         },
         schemas: Object.fromEntries(

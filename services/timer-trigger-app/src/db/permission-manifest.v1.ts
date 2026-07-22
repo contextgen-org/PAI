@@ -35,7 +35,7 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
     table_permissions: [
     {
       table_name: "timer_schedules",
-      select_columns: ["id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","name","message","status","schedule_type","rrule","fire_at","timezone","end_time","payload","catch_up","next_fire_at","schedule_version","created_by","created_by_runtime_run_id","created_by_trigger_process_id","client_request_id","idempotency_key","created_at","updated_at"],
+      select_columns: ["id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","name","message","status","schedule_type","rrule","fire_at","timezone","end_time","payload","catch_up","max_catch_up_window_seconds","max_catch_up_occurrences","next_fire_at","schedule_version","created_by","created_by_runtime_run_id","created_by_trigger_process_id","client_request_id","idempotency_key","created_at","updated_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -51,7 +51,7 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
     },
     {
       table_name: "timer_occurrences",
-      select_columns: ["id","schedule_id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","occurrence_key","occurrence_version","scheduled_fire_at","effective_fire_at","local_date","timezone","schedule_end_time","schedule_version","dispatch_payload","dispatch_payload_hash","payload_schema_version","status","trigger_id","trigger_process_id","dedupe_key","error","next_dispatch_at","catch_up_batch_id","is_catch_up","locked_by","locked_until","created_at","updated_at"],
+      select_columns: ["id","schedule_id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","occurrence_key","occurrence_version","scheduled_fire_at","effective_fire_at","local_date","local_time","timezone","schedule_end_time","schedule_version","dispatch_payload","dispatch_payload_hash","payload_schema_version","status","attempt_count","dispatch_generation","claim_token","trigger_id","trigger_process_id","dedupe_key","error","next_dispatch_at","cancel_requested_at","catch_up_batch_id","is_catch_up","locked_by","locked_until","created_at","updated_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -59,7 +59,7 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
     },
     {
       table_name: "timer_dispatch_attempts",
-      select_columns: ["id","occurrence_id","expected_occurrence_version","resulting_occurrence_version","dispatch_generation","claim_token","status","request","response","error","next_retry_at","created_at"],
+      select_columns: ["id","occurrence_id","attempt_no","expected_occurrence_version","resulting_occurrence_version","dispatch_generation","claim_token","status","request","response","error","next_retry_at","created_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -79,7 +79,7 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
-      writer_kind: "immutable_append",
+      writer_kind: "state_transition",
     },
     {
       table_name: "timer_query_requests",
@@ -91,7 +91,7 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
     },
     {
       table_name: "timer_event_outbox",
-      select_columns: ["id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","aggregate_id","event_type","schema_version","producer","occurred_at","idempotency_key","trace_id","payload","payload_hash","target","status","next_retry_at","created_at","updated_at"],
+      select_columns: ["id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","aggregate_id","event_type","schema_version","producer","occurred_at","idempotency_key","trace_id","payload","payload_hash","target","status","attempt_count","next_retry_at","created_at","updated_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -115,7 +115,7 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
     },
     {
       table_name: "timer_catch_up_batches",
-      select_columns: ["id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","status","cursor_occurrence_id","last_occurrence_id","last_trigger_process_id","deadline_at","started_at","completed_at","reason_code","created_at","updated_at"],
+      select_columns: ["id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","status","cursor_occurrence_id","last_occurrence_id","last_trigger_process_id","deadline_at","timeout_seconds","started_at","completed_at","reason_code","created_at","updated_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -126,7 +126,11 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
   mutable_writers: [
     "cas_timer_schedule_v1",
     "advance_timer_scanner_checkpoint_v1",
+    "enqueue_timer_occurrence_v1",
     "transition_timer_occurrence_v1",
+    "record_timer_command_request_v1",
+    "transition_timer_command_request_v1",
+    "record_timer_query_request_v1",
     "transition_timer_catch_up_batch_v1",
     "claim_timer_event_outbox_v1",
     "ack_timer_event_outbox_v1",
@@ -176,6 +180,21 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
     }),
     ownerFunctionSignatureV1({
       schema: "timer",
+      function_name: "enqueue_timer_occurrence_v1",
+      primary_table: "timer_occurrences",
+      writer_kind: "state_transition",
+      arguments: [["p_occurrence_id", "text"], ["p_schedule_id", "text"], ["p_expected_schedule_version", "bigint"], ["p_occurrence", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["timer_schedules", "timer_occurrences"],
+      writes_tables: ["timer_occurrences", "timer_audit_logs", "timer_event_outbox"],
+      effects: [
+        { table_name: "timer_occurrences", operation: "enqueue", concurrency_control: "idempotency_key" },
+        { table_name: "timer_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "timer_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "timer",
       function_name: "transition_timer_occurrence_v1",
       primary_table: "timer_occurrences",
       writer_kind: "state_transition",
@@ -192,16 +211,59 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
       reads_tables: ["timer_occurrences", "timer_schedules"],
       writes_tables: [
         "timer_occurrences", "timer_dispatch_attempts", "timer_audit_logs",
-        "timer_command_requests", "timer_query_requests", "timer_event_inbox",
         "timer_event_outbox",
       ],
       effects: [
         { table_name: "timer_occurrences", operation: "transition", concurrency_control: "expected_version" },
         { table_name: "timer_dispatch_attempts", operation: "upsert", concurrency_control: "generation_fence" },
         { table_name: "timer_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "timer_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "timer",
+      function_name: "record_timer_command_request_v1",
+      primary_table: "timer_command_requests",
+      writer_kind: "state_transition",
+      arguments: [["p_command_request_id", "text"], ["p_command_request", "jsonb"], ["p_source_event", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_payload_hash", "text"], ["p_semantic_hash", "text"], ["p_scope_fingerprint", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["timer_command_requests", "timer_schedules", "timer_event_inbox"],
+      writes_tables: ["timer_command_requests", "timer_event_inbox", "timer_audit_logs", "timer_event_outbox"],
+      effects: [
         { table_name: "timer_command_requests", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "timer_event_inbox", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "timer_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "timer_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "timer",
+      function_name: "transition_timer_command_request_v1",
+      primary_table: "timer_command_requests",
+      writer_kind: "state_transition",
+      arguments: [["p_command_request_id", "text"], ["p_expected_status", "text"], ["p_expected_updated_at", "timestamptz"], ["p_next_status", "text"], ["p_result", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["timer_command_requests"],
+      writes_tables: ["timer_command_requests", "timer_audit_logs", "timer_event_outbox"],
+      effects: [
+        { table_name: "timer_command_requests", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "timer_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "timer_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "timer",
+      function_name: "record_timer_query_request_v1",
+      primary_table: "timer_query_requests",
+      writer_kind: "immutable_append",
+      arguments: [["p_query_request_id", "text"], ["p_query_request", "jsonb"], ["p_source_event", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_payload_hash", "text"], ["p_semantic_hash", "text"], ["p_scope_fingerprint", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["timer_schedules", "timer_event_inbox"],
+      writes_tables: ["timer_query_requests", "timer_event_inbox", "timer_audit_logs", "timer_event_outbox"],
+      effects: [
         { table_name: "timer_query_requests", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "timer_event_inbox", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "timer_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "timer_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
       ],
       returns: "jsonb",
@@ -308,7 +370,7 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
   ],
   foreign_key_snapshot: {
     status: "complete",
-    source: "Database Design revision 466 / fresh 0300_timer canonical DDL",
+    source: "Database Design revision 476 / fresh 0300_timer canonical DDL",
   },
   foreign_keys: [
     {
@@ -442,7 +504,6 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
   ],
   append_only_tables: [
     "timer_audit_logs",
-    "timer_command_requests",
     "timer_query_requests",
     "timer_event_outbox",
     "timer_event_inbox",

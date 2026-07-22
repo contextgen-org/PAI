@@ -148,5 +148,7 @@ export interface ReconcileObjectStoreResultV1 {
 export interface ObjectStoreReconciliationPortV1 {
   reconcilePending(
     request: ReconcileObjectStoreRequestV1,
+    /** Cooperative only; implementations must not claim rollback until settled. */
+    signal?: AbortSignal,
   ): Promise<ReconcileObjectStoreResultV1>;
 }

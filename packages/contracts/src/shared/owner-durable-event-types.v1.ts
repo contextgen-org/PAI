@@ -7,10 +7,7 @@ import {
   DurableEventEnvelopeValidationErrorV1,
   type DurableEventEnvelopeV1,
 } from "./durable-event-envelope.v1.js";
-import { DeploymentEnvironmentV1Schema } from "./deployment-environment.v1.js";
-import { ReleaseChannelV1Schema } from "./release-channel.v1.js";
 import { SERVICE_IDS, type ServiceIdV1 } from "./service-id.v1.js";
-import { TypedEvidenceRefV1Schema } from "./typed-evidence-ref.v1.js";
 import {
   TRIGGER_PROCESSOR_DOMAIN_EVENT_CONSUMERS_V1,
   TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1,
@@ -120,6 +117,37 @@ export type OwnerDurableEventTypeV1<
   TOwner extends DurableEventOwnerServiceIdV1,
 > = (typeof OWNER_DURABLE_EVENT_TYPES_V1)[TOwner][number];
 
+type ActiveDurableEventOwnerServiceIdV1 = "trigger_processor";
+type PendingDurableEventOwnerServiceIdV1 = Exclude<
+  DurableEventOwnerServiceIdV1,
+  ActiveDurableEventOwnerServiceIdV1
+>;
+
+/**
+ * Owner unions that are declared for PostgreSQL CHECK generation but are not
+ * executable wire contracts yet. These owners stay fail-closed until their
+ * live owner documents provide complete envelope and payload schemas.
+ */
+export const PENDING_OWNER_DURABLE_EVENT_TYPES_V1 = Object.freeze({
+  action_runtime: OWNER_DURABLE_EVENT_TYPES_V1.action_runtime,
+  timer_trigger_app: OWNER_DURABLE_EVENT_TYPES_V1.timer_trigger_app,
+  meta_cognition: OWNER_DURABLE_EVENT_TYPES_V1.meta_cognition,
+  skill_registry: OWNER_DURABLE_EVENT_TYPES_V1.skill_registry,
+  knowthat: OWNER_DURABLE_EVENT_TYPES_V1.knowthat,
+  memory: OWNER_DURABLE_EVENT_TYPES_V1.memory,
+} as const satisfies Readonly<{
+  [TOwner in PendingDurableEventOwnerServiceIdV1]:
+    (typeof OWNER_DURABLE_EVENT_TYPES_V1)[TOwner];
+}>);
+
+/** Complete owner wire unions admitted by validation and dispatch. */
+export const ACTIVE_OWNER_DURABLE_EVENT_TYPES_V1 = Object.freeze({
+  trigger_processor: OWNER_DURABLE_EVENT_TYPES_V1.trigger_processor,
+} as const satisfies Readonly<{
+  [TOwner in ActiveDurableEventOwnerServiceIdV1]:
+    (typeof OWNER_DURABLE_EVENT_TYPES_V1)[TOwner];
+}>);
+
 export type DurableEventConsumerServiceIdV1 = ServiceIdV1;
 
 export interface OwnerDurableEventContractV1 {
@@ -132,191 +160,30 @@ export interface OwnerDurableEventContractV1 {
   ];
 }
 
-type OwnerDurableEventContractMapV1 = {
-  readonly [TOwner in DurableEventOwnerServiceIdV1]: Readonly<
-    Record<OwnerDurableEventTypeV1<TOwner>, OwnerDurableEventContractV1>
+type OwnerDurableEventContractMapV1 = Readonly<{
+  trigger_processor: Readonly<
+    Record<
+      OwnerDurableEventTypeV1<"trigger_processor">,
+      OwnerDurableEventContractV1
+    >
   >;
-};
-
-function eventContract(
-  schemaVersion: string,
-  requiredPayloadKeys: readonly [string, ...string[]],
-  consumerServices: readonly [
-    DurableEventConsumerServiceIdV1,
-    ...DurableEventConsumerServiceIdV1[],
-  ],
-  options: Readonly<{
-    payload_scope?: OwnerDurableEventContractV1["payload_scope"] | undefined;
-    fields?: Readonly<Record<string, TSchema>> | undefined;
-    payload_schema?: TSchema | undefined;
-  }> = {},
-): OwnerDurableEventContractV1 {
-  const payloadScope = options.payload_scope ?? "bot";
-  return Object.freeze({
-    schema_version: schemaVersion,
-    payload_schema:
-      options.payload_schema ??
-      scopedPayloadSchema(
-        payloadScope,
-        payloadProperties(requiredPayloadKeys, options.fields ?? {}),
-      ),
-    payload_scope: payloadScope,
-    consumer_services: Object.freeze([...consumerServices]) as [
-      DurableEventConsumerServiceIdV1,
-      ...DurableEventConsumerServiceIdV1[],
-    ],
-  });
-}
-
-const triggerProcessorConsumer = ["trigger_processor"] as const;
-const runtimeEventConsumer = ["trigger_processor"] as const;
-const metaConsumer = ["meta_cognition"] as const;
-const memoryConsumer = ["memory"] as const;
-const knowthatConsumer = ["knowthat"] as const;
-const runtimeAndTriggerConsumers = ["trigger_processor", "action_runtime"] as const;
+}>;
 
 const triggerEvent = (
   eventType: keyof typeof TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1,
 ) =>
-  eventContract(
-    "trigger_processor_event.v1",
-    ["scope"],
-    TRIGGER_PROCESSOR_DOMAIN_EVENT_CONSUMERS_V1[eventType] as readonly [
+  Object.freeze({
+    schema_version: "trigger_processor_event.v1",
+    payload_schema:
+      TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1[eventType],
+    payload_scope: "bot",
+    consumer_services: Object.freeze([
+      ...TRIGGER_PROCESSOR_DOMAIN_EVENT_CONSUMERS_V1[eventType],
+    ]) as unknown as readonly [
       DurableEventConsumerServiceIdV1,
       ...DurableEventConsumerServiceIdV1[],
     ],
-    {
-      payload_schema: TRIGGER_PROCESSOR_DOMAIN_EVENT_PAYLOAD_SCHEMAS_V1[
-        eventType
-      ],
-    },
-  );
-const runtimeEvent = (
-  keys: readonly [string, ...string[]],
-  fields?: Readonly<Record<string, TSchema>>,
-) =>
-  eventContract("runtime_domain_event.v1", keys, runtimeEventConsumer, {
-    fields,
-  });
-const toolEvent = (
-  keys: readonly [string, ...string[]],
-  fields?: Readonly<Record<string, TSchema>>,
-) =>
-  eventContract("tool_invocation_event.v1", keys, runtimeEventConsumer, {
-    fields,
-  });
-const timerEvent = (
-  keys: readonly [string, ...string[]],
-  fields?: Readonly<Record<string, TSchema>>,
-) => eventContract("timer_event.v1", keys, triggerProcessorConsumer, { fields });
-const metaEvent = (
-  keys: readonly [string, ...string[]],
-  consumers: readonly [
-    DurableEventConsumerServiceIdV1,
-    ...DurableEventConsumerServiceIdV1[],
-  ] = triggerProcessorConsumer,
-  fields?: Readonly<Record<string, TSchema>>,
-) => eventContract("meta_cognition_event.v1", keys, consumers, { fields });
-const skillEvent = (
-  keys: readonly [string, ...string[]],
-  options: Readonly<{
-    payload_scope?: OwnerDurableEventContractV1["payload_scope"] | undefined;
-    consumers?: readonly [
-      DurableEventConsumerServiceIdV1,
-      ...DurableEventConsumerServiceIdV1[],
-    ] | undefined;
-    fields?: Readonly<Record<string, TSchema>> | undefined;
-  }> = {},
-) =>
-  eventContract(
-    "skill_registry_event.v1",
-    keys,
-    options.consumers ?? triggerProcessorConsumer,
-    { payload_scope: options.payload_scope, fields: options.fields },
-  );
-const knowthatEvent = (keys: readonly [string, ...string[]]) =>
-  eventContract("knowthat_event.v1", keys, metaConsumer);
-const memoryEvent = (keys: readonly [string, ...string[]]) =>
-  eventContract("memory_event.v1", keys, metaConsumer);
-
-const nonEmptyPayloadString = Type.String({ minLength: 1, maxLength: 512 });
-const reasonCode = Type.String({
-  minLength: 1,
-  maxLength: 128,
-  pattern: "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
-});
-const boundedInteger = Type.Integer({ minimum: 0, maximum: 9_007_199_254_740_991 });
-const eventTimestamp = DurableEventEnvelopeV1Schema.properties.occurred_at;
-const triggerPhase = Type.Union([
-  Type.Literal("admission"),
-  Type.Literal("context"),
-  Type.Literal("intent"),
-  Type.Literal("execution"),
-  Type.Literal("cooldown"),
-  Type.Literal("meta_enqueued"),
-  Type.Literal("closed"),
-]);
-const reviewDecision = Type.Union([
-  Type.Literal("accepted"),
-  Type.Literal("rejected"),
-  Type.Literal("needs_changes"),
-]);
-
-const botScopeProperties = {
-  scope_kind: Type.Literal("bot"),
-  workspace_id: nonEmptyPayloadString,
-  bot_id: nonEmptyPayloadString,
-  owner_agent_id: nonEmptyPayloadString,
-  deployment_environment: DeploymentEnvironmentV1Schema,
-  release_channel: ReleaseChannelV1Schema,
-} as const satisfies Readonly<Record<string, TSchema>>;
-
-const globalScopeProperties = {
-  scope_kind: Type.Literal("global"),
-  deployment_environment: DeploymentEnvironmentV1Schema,
-  release_channel: ReleaseChannelV1Schema,
-} as const satisfies Readonly<Record<string, TSchema>>;
-
-function schemaForPayloadKey(key: string): TSchema {
-  if (key === "phase") return triggerPhase;
-  if (key === "decision") return reviewDecision;
-  if (key === "revocation_epoch" || key.endsWith("_version")) {
-    return boundedInteger;
-  }
-  if (key.endsWith("_at") || key === "scheduled_fire_at" || key === "effective_fire_at") {
-    return eventTimestamp;
-  }
-  if (key === "is_catch_up") return Type.Boolean();
-  if (key === "error_code" || key === "reason") return reasonCode;
-  return nonEmptyPayloadString;
-}
-
-function payloadProperties(
-  keys: readonly [string, ...string[]],
-  overrides: Readonly<Record<string, TSchema>>,
-): Readonly<Record<string, TSchema>> {
-  return Object.fromEntries(
-    keys.map((key) => [key, overrides[key] ?? schemaForPayloadKey(key)]),
-  );
-}
-
-function scopedPayloadSchema(
-  scope: OwnerDurableEventContractV1["payload_scope"],
-  properties: Readonly<Record<string, TSchema>>,
-): TSchema {
-  const botPayload = Type.Object(
-    { ...botScopeProperties, ...properties },
-    { additionalProperties: false },
-  );
-  if (scope === "bot") return botPayload;
-  return Type.Union([
-    botPayload,
-    Type.Object(
-      { ...globalScopeProperties, ...properties },
-      { additionalProperties: false },
-    ),
-  ]);
-}
+  } satisfies OwnerDurableEventContractV1);
 
 export const OWNER_DURABLE_EVENT_CONTRACTS_V1 = Object.freeze({
   trigger_processor: Object.freeze({
@@ -333,187 +200,6 @@ export const OWNER_DURABLE_EVENT_CONTRACTS_V1 = Object.freeze({
     "weak_trigger.merged": triggerEvent("weak_trigger.merged"),
     "trigger_process.outcome_finalized": triggerEvent(
       "trigger_process.outcome_finalized",
-    ),
-  }),
-  action_runtime: Object.freeze({
-    "runtime.run.started": runtimeEvent(["runtime_run_id"]),
-    "runtime.run.completed": runtimeEvent(["runtime_run_id", "outcome"], {
-      outcome: Type.Literal("completed"),
-    }),
-    "runtime.run.failed": runtimeEvent(["runtime_run_id", "error_code"]),
-    "runtime.run.cancelled": runtimeEvent(["runtime_run_id", "reason"]),
-    "runtime.run.preempted": runtimeEvent(["runtime_run_id", "reason"]),
-    "runtime.tool.requested": toolEvent(["runtime_run_id", "tool_invocation_id"]),
-    "runtime.tool.completed": toolEvent(["runtime_run_id", "tool_invocation_id"]),
-    "runtime.tool.failed": toolEvent([
-      "runtime_run_id",
-      "tool_invocation_id",
-      "error_code",
-    ]),
-    "runtime.tool.cancelled": toolEvent([
-      "runtime_run_id",
-      "tool_invocation_id",
-      "reason",
-    ]),
-    "runtime.artifact.created": runtimeEvent(["runtime_run_id", "artifact_id"]),
-    "runtime.artifact.failed": runtimeEvent([
-      "runtime_run_id",
-      "artifact_id",
-      "error_code",
-    ]),
-    "runtime.control_signal.received": runtimeEvent([
-      "runtime_run_id",
-      "runtime_signal_id",
-    ]),
-    "runtime.control_signal.handled": runtimeEvent([
-      "runtime_run_id",
-      "runtime_signal_id",
-    ]),
-    "runtime.skill.load.requested": runtimeEvent(["runtime_run_id", "skill_id"]),
-    "runtime.skill.load.resolved": runtimeEvent(["runtime_run_id", "skill_id"]),
-    "runtime.skill.load.materialized": runtimeEvent([
-      "runtime_run_id",
-      "skill_id",
-    ]),
-    "runtime.skill.load.failed": runtimeEvent([
-      "runtime_run_id",
-      "skill_id",
-      "error_code",
-    ]),
-  }),
-  timer_trigger_app: Object.freeze({
-    "timer.schedule.created": timerEvent(["schedule_id"]),
-    "timer.schedule.updated": timerEvent(["schedule_id"]),
-    "timer.schedule.paused": timerEvent(["schedule_id"]),
-    "timer.schedule.resumed": timerEvent(["schedule_id"]),
-    "timer.schedule.cancelled": timerEvent(["schedule_id", "reason"]),
-    "timer.schedule.completed": timerEvent(["schedule_id"]),
-    "timer.schedule.expired": timerEvent(["schedule_id"]),
-    "timer.schedule.failed": timerEvent(["schedule_id", "error_code"]),
-    "timer.occurrence.due": timerEvent([
-      "occurrence_id",
-      "schedule_id",
-      "scheduled_fire_at",
-      "effective_fire_at",
-      "dedupe_key",
-      "is_catch_up",
-    ]),
-    "timer.occurrence.snoozed": timerEvent(["occurrence_id"]),
-    "timer.occurrence.dispatched": timerEvent(["occurrence_id"]),
-    "timer.occurrence.skipped": timerEvent(["occurrence_id", "reason"]),
-    "timer.occurrence.failed": timerEvent(["occurrence_id", "error_code"]),
-    "timer.occurrence.cancelled": timerEvent(["occurrence_id", "reason"]),
-    "timer.catch_up.batch_created": timerEvent(["catch_up_batch_id"]),
-    "timer.catch_up.occurrence_summarized": timerEvent([
-      "catch_up_batch_id",
-      "occurrence_id",
-    ]),
-  }),
-  meta_cognition: Object.freeze({
-    "meta.job.created": metaEvent(["meta_job_id"]),
-    "meta.job.started": metaEvent(["meta_job_id"]),
-    "meta.job.retry_wait": metaEvent(["meta_job_id", "reason"]),
-    "meta.experience.created": metaEvent(["experience_id"]),
-    "meta.memory.write_requested": metaEvent(["meta_job_id", "memory_request_id"], memoryConsumer),
-    "meta.knowthat.write_requested": metaEvent(["meta_job_id", "knowthat_request_id"], knowthatConsumer),
-    "meta.candidate.review_requested": metaEvent(["candidate_id"]),
-    "meta.candidate.reviewed": metaEvent(["candidate_id", "decision"]),
-    "meta.skill.candidate_application_requested": metaEvent([
-      "candidate_application_id",
-    ]),
-    "meta.feedback.required": metaEvent(["feedback_request_id"]),
-    "meta.result.updated": metaEvent(["meta_job_id"]),
-    "meta.result.finalized": metaEvent(
-      [
-        "meta_result_id",
-        "meta_job_id",
-        "result_version",
-        "result_status",
-        "finalized_at",
-      ],
-      triggerProcessorConsumer,
-      {
-        result_version: boundedInteger,
-        result_status: Type.Union([
-          Type.Literal("complete"),
-          Type.Literal("partial_failed"),
-        ]),
-      },
-    ),
-    "meta.job.completed": metaEvent(["meta_job_id"]),
-    "meta.job.failed": metaEvent(["meta_job_id", "error_code"]),
-  }),
-  skill_registry: Object.freeze({
-    "skill.version.published": skillEvent(["skill_version_id"]),
-    "skill.catalog.changed": skillEvent(["catalog_version"]),
-    "skill.version.activated": skillEvent(["skill_version_id"]),
-    "skill.activation.rolled_back": skillEvent(["skill_version_id", "reason"]),
-    "skill.version.deprecated": skillEvent(["skill_version_id", "reason"]),
-    "skill.version.revoked": skillEvent(["skill_version_id", "reason"]),
-    "skill.permission.granted": skillEvent(["skill_id", "principal_id"]),
-    "skill.permission.revoked": skillEvent(["skill_id", "principal_id"]),
-    "skill.security_revocation_epoch.changed": skillEvent(["revocation_epoch"], {
-      consumers: runtimeAndTriggerConsumers,
-      payload_scope: "bot_or_global",
-    }),
-    "skill.candidate.application.updated": skillEvent([
-      "candidate_application_id",
-    ]),
-  }),
-  knowthat: Object.freeze({
-    "knowthat.fact.created": knowthatEvent(["fact_id"]),
-    "knowthat.fact.updated": knowthatEvent(["fact_id"]),
-    "knowthat.candidate.promoted": knowthatEvent(["candidate_id", "fact_id"]),
-    "knowthat.candidate.rejected": knowthatEvent(["candidate_id", "reason"]),
-    "knowthat.fact.expired": knowthatEvent(["fact_id"]),
-    "knowthat.conflict.detected": knowthatEvent(["conflict_id"]),
-    "knowthat.linkage_check.requested": knowthatEvent(["linkage_check_id"]),
-  }),
-  memory: Object.freeze({
-    "memory.point.created": memoryEvent(["memory_point_id"]),
-    "memory.point.updated": memoryEvent(["memory_point_id"]),
-    "memory.series.created": memoryEvent(["series_id"]),
-    "memory.series.updated": memoryEvent(["series_id"]),
-    "memory.conflict.detected": memoryEvent(["conflict_id"]),
-    "memory.conflict.updated": memoryEvent(["conflict_id"]),
-    "memory.integration.finished": eventContract(
-      "memory_event.v1",
-      [
-        "integration_job_id",
-        "aggregate_id",
-        "aggregate_version",
-        "aggregate_type",
-        "mode",
-        "status",
-        "checkpoint_ref",
-        "applied_counts",
-        "failure_refs",
-      ],
-      metaConsumer,
-      {
-        fields: {
-          status: Type.Union([
-            Type.Literal("completed"),
-            Type.Literal("partial_failed"),
-            Type.Literal("failed"),
-          ]),
-          aggregate_version: Type.Integer({
-            minimum: 1,
-            maximum: 9_007_199_254_740_991,
-          }),
-          aggregate_type: Type.Literal("integration_job"),
-          checkpoint_ref: Type.Optional(nonEmptyPayloadString),
-          applied_counts: Type.Record(
-            Type.String({ pattern: "^[a-z][a-z0-9_]*$" }),
-            boundedInteger,
-            { additionalProperties: false },
-          ),
-          failure_refs: Type.Array(TypedEvidenceRefV1Schema, {
-            maxItems: 1_000,
-            uniqueItems: true,
-          }),
-        },
-      },
     ),
   }),
 } as const satisfies OwnerDurableEventContractMapV1);
@@ -548,10 +234,7 @@ export function isOwnerDurableEventTypeV1(
   owner: ServiceIdV1,
   eventType: string,
 ): boolean {
-  if (owner === "observation_gateway") return false;
-  return (OWNER_DURABLE_EVENT_TYPES_V1[owner] as readonly string[]).includes(
-    eventType,
-  );
+  return ownerDurableEventContractV1(owner, eventType) !== undefined;
 }
 
 export function ownerDurableEventContractV1(
@@ -559,11 +242,17 @@ export function ownerDurableEventContractV1(
   eventType: string,
 ): OwnerDurableEventContractV1 | undefined {
   if (owner === "observation_gateway") return undefined;
-  return (
-    OWNER_DURABLE_EVENT_CONTRACTS_V1[owner] as Readonly<
-      Record<string, OwnerDurableEventContractV1>
+  const contracts = (
+    OWNER_DURABLE_EVENT_CONTRACTS_V1 as Readonly<
+      Partial<
+        Record<
+          DurableEventOwnerServiceIdV1,
+          Readonly<Record<string, OwnerDurableEventContractV1>>
+        >
+      >
     >
-  )[eventType];
+  )[owner];
+  return contracts?.[eventType];
 }
 
 export function assertOwnerDurableEventEnvelopeV1(
@@ -587,16 +276,6 @@ export function assertOwnerDurableEventEnvelopeV1(
           (issue) =>
             `/payload${issue.path || ""}: ${issue.message}`,
         ),
-      );
-    } else if (
-      value.event_type === "memory.integration.finished" &&
-      typeof value.payload === "object" &&
-      value.payload !== null &&
-      (value.payload as Readonly<Record<string, unknown>>).aggregate_id !==
-        (value.payload as Readonly<Record<string, unknown>>).integration_job_id
-    ) {
-      issues.push(
-        "/payload/aggregate_id: must equal integration_job_id for the integration aggregate",
       );
     }
   }

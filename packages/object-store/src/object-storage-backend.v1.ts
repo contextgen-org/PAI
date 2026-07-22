@@ -48,6 +48,11 @@ export interface FinalizeAbandonedPutAttemptInputV1 {
 
 export type FinalizeAbandonedPutAttemptResultV1 =
   | {
+      /**
+       * The named upload attempt can no longer publish bytes and the physical
+       * key is absent. The receipt time must be at or after the metadata
+       * repository's durable foreground-upload terminal horizon.
+       */
       readonly kind: "terminal";
       readonly receipt: BackendPutTerminalReceiptV1;
     }
@@ -96,6 +101,15 @@ export class InMemoryObjectStorageBackendV1 implements ObjectStorageBackendV1 {
     return `${bucket}/${key}`;
   }
 
+  #head(object: InMemoryBackendObject): BackendObjectHeadV1 {
+    return {
+      version: object.version,
+      size_bytes: object.size_bytes,
+      media_type: object.media_type,
+      sha256: object.sha256,
+    };
+  }
+
   public async putIfAbsent(
     request: PutBackendObjectV1,
   ): Promise<BackendObjectHeadV1> {
@@ -131,7 +145,7 @@ export class InMemoryObjectStorageBackendV1 implements ObjectStorageBackendV1 {
         body,
       };
       this.#objects.set(key, object);
-      return object;
+      return this.#head(object);
     } finally {
       this.#activePutAttempts.delete(request.upload_attempt_token);
     }
@@ -161,7 +175,7 @@ export class InMemoryObjectStorageBackendV1 implements ObjectStorageBackendV1 {
     if (object === undefined) {
       throw new ObjectStorageBackendErrorV1("not_found", "object not found");
     }
-    return object;
+    return this.#head(object);
   }
 
   public async get(

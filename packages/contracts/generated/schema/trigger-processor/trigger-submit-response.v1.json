@@ -1,0 +1,1075 @@
+{
+  "$id": "urn:pai:trigger-processor:trigger-submit-response:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "trace_id"
+      ],
+      "properties": {
+        "code": {
+          "const": "trigger_accepted",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "retryable": {
+          "const": false,
+          "type": "boolean"
+        },
+        "details": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "trigger_id",
+                "trigger_status",
+                "trigger_process_id",
+                "duplicate_replayed",
+                "process_phase",
+                "process_status",
+                "priority",
+                "action"
+              ],
+              "properties": {
+                "trigger_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "trigger_status": {
+                  "const": "accepted",
+                  "type": "string"
+                },
+                "trigger_process_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "duplicate_replayed": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "process_phase": {
+                  "const": "admission",
+                  "type": "string"
+                },
+                "process_status": {
+                  "const": "running",
+                  "type": "string"
+                },
+                "priority": {
+                  "const": "strong",
+                  "type": "string"
+                },
+                "action": {
+                  "const": "dispatch",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "trigger_id",
+                "trigger_status",
+                "trigger_process_id",
+                "duplicate_replayed",
+                "process_phase",
+                "process_status",
+                "priority",
+                "action"
+              ],
+              "properties": {
+                "trigger_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "trigger_status": {
+                  "const": "accepted",
+                  "type": "string"
+                },
+                "trigger_process_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "duplicate_replayed": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "process_phase": {
+                  "const": "admission",
+                  "type": "string"
+                },
+                "process_status": {
+                  "const": "running",
+                  "type": "string"
+                },
+                "priority": {
+                  "const": "weak",
+                  "type": "string"
+                },
+                "action": {
+                  "const": "dispatch",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "trigger_id",
+                "trigger_status",
+                "trigger_process_id",
+                "duplicate_replayed",
+                "process_phase",
+                "process_status",
+                "priority",
+                "action"
+              ],
+              "properties": {
+                "trigger_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "trigger_status": {
+                  "const": "accepted",
+                  "type": "string"
+                },
+                "trigger_process_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "duplicate_replayed": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "process_phase": {
+                  "const": "admission",
+                  "type": "string"
+                },
+                "process_status": {
+                  "const": "waiting",
+                  "type": "string"
+                },
+                "priority": {
+                  "const": "strong",
+                  "type": "string"
+                },
+                "action": {
+                  "const": "dispatch_or_preempt",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "trigger_id",
+                "trigger_status",
+                "trigger_process_id",
+                "duplicate_replayed",
+                "process_phase",
+                "process_status",
+                "priority",
+                "action"
+              ],
+              "properties": {
+                "trigger_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "trigger_status": {
+                  "const": "accepted",
+                  "type": "string"
+                },
+                "trigger_process_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "duplicate_replayed": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "process_phase": {
+                  "const": "admission",
+                  "type": "string"
+                },
+                "process_status": {
+                  "const": "running",
+                  "type": "string"
+                },
+                "priority": {
+                  "const": "strong",
+                  "type": "string"
+                },
+                "action": {
+                  "const": "dispatch_catch_up_serial",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "trigger_id",
+                "trigger_status",
+                "trigger_process_id",
+                "duplicate_replayed",
+                "process_phase",
+                "process_status",
+                "priority",
+                "action"
+              ],
+              "properties": {
+                "trigger_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "trigger_status": {
+                  "const": "accepted",
+                  "type": "string"
+                },
+                "trigger_process_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "duplicate_replayed": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "process_phase": {
+                  "const": "admission",
+                  "type": "string"
+                },
+                "process_status": {
+                  "const": "waiting",
+                  "type": "string"
+                },
+                "priority": {
+                  "const": "strong",
+                  "type": "string"
+                },
+                "action": {
+                  "const": "enqueue_strong_fifo",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "trigger_id",
+                "trigger_status",
+                "trigger_process_id",
+                "duplicate_replayed",
+                "process_phase",
+                "process_status",
+                "priority",
+                "action"
+              ],
+              "properties": {
+                "trigger_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "trigger_status": {
+                  "const": "accepted",
+                  "type": "string"
+                },
+                "trigger_process_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "duplicate_replayed": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "process_phase": {
+                  "const": "admission",
+                  "type": "string"
+                },
+                "process_status": {
+                  "const": "waiting",
+                  "type": "string"
+                },
+                "priority": {
+                  "const": "weak",
+                  "type": "string"
+                },
+                "action": {
+                  "const": "enqueue_weak",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "trigger_id",
+                "trigger_status",
+                "trigger_process_id",
+                "duplicate_replayed",
+                "process_phase",
+                "process_status",
+                "priority",
+                "action"
+              ],
+              "properties": {
+                "trigger_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "trigger_status": {
+                  "const": "accepted",
+                  "type": "string"
+                },
+                "trigger_process_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "duplicate_replayed": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "process_phase": {
+                  "const": "admission",
+                  "type": "string"
+                },
+                "process_status": {
+                  "const": "waiting",
+                  "type": "string"
+                },
+                "priority": {
+                  "const": "weak",
+                  "type": "string"
+                },
+                "action": {
+                  "const": "merge_or_enqueue_weak",
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "trace_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "$id": "urn:pai:trigger-processor:admit-trigger-ok-response:v1",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "code",
+            "message",
+            "retryable",
+            "details",
+            "trace_id"
+          ],
+          "properties": {
+            "code": {
+              "const": "trigger_rejected",
+              "type": "string"
+            },
+            "message": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "retryable": {
+              "const": false,
+              "type": "boolean"
+            },
+            "details": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "trigger_id",
+                "trigger_status",
+                "trigger_process_id",
+                "process_phase",
+                "process_status",
+                "priority",
+                "action",
+                "reason_code",
+                "rejected_event_id",
+                "duplicate_replayed"
+              ],
+              "properties": {
+                "trigger_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "trigger_status": {
+                  "const": "rejected",
+                  "type": "string"
+                },
+                "trigger_process_id": {
+                  "type": "null"
+                },
+                "process_phase": {
+                  "type": "null"
+                },
+                "process_status": {
+                  "type": "null"
+                },
+                "priority": {
+                  "anyOf": [
+                    {
+                      "const": "strong",
+                      "type": "string"
+                    },
+                    {
+                      "const": "weak",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "action": {
+                  "const": "reject",
+                  "type": "string"
+                },
+                "reason_code": {
+                  "anyOf": [
+                    {
+                      "const": "bot_disabled",
+                      "type": "string"
+                    },
+                    {
+                      "const": "bot_archived",
+                      "type": "string"
+                    },
+                    {
+                      "const": "safety_blocked",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "rejected_event_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "duplicate_replayed": {
+                  "const": false,
+                  "type": "boolean"
+                }
+              }
+            },
+            "trace_id": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "code",
+            "message",
+            "retryable",
+            "details",
+            "trace_id"
+          ],
+          "properties": {
+            "code": {
+              "const": "duplicate_replayed",
+              "type": "string"
+            },
+            "message": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "retryable": {
+              "const": false,
+              "type": "boolean"
+            },
+            "details": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "trigger_id",
+                        "trigger_status",
+                        "trigger_process_id",
+                        "priority",
+                        "action",
+                        "duplicate_replayed",
+                        "process_phase",
+                        "process_status"
+                      ],
+                      "properties": {
+                        "trigger_id": {
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "type": "string"
+                        },
+                        "trigger_status": {
+                          "const": "accepted",
+                          "type": "string"
+                        },
+                        "trigger_process_id": {
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "type": "string"
+                        },
+                        "priority": {
+                          "anyOf": [
+                            {
+                              "const": "strong",
+                              "type": "string"
+                            },
+                            {
+                              "const": "weak",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "action": {
+                          "const": "duplicate_replay",
+                          "type": "string"
+                        },
+                        "duplicate_replayed": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "process_phase": {
+                          "const": "admission",
+                          "type": "string"
+                        },
+                        "process_status": {
+                          "anyOf": [
+                            {
+                              "const": "running",
+                              "type": "string"
+                            },
+                            {
+                              "const": "waiting",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "trigger_id",
+                        "trigger_status",
+                        "trigger_process_id",
+                        "priority",
+                        "action",
+                        "duplicate_replayed",
+                        "process_phase",
+                        "process_status"
+                      ],
+                      "properties": {
+                        "trigger_id": {
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "type": "string"
+                        },
+                        "trigger_status": {
+                          "const": "accepted",
+                          "type": "string"
+                        },
+                        "trigger_process_id": {
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "type": "string"
+                        },
+                        "priority": {
+                          "anyOf": [
+                            {
+                              "const": "strong",
+                              "type": "string"
+                            },
+                            {
+                              "const": "weak",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "action": {
+                          "const": "duplicate_replay",
+                          "type": "string"
+                        },
+                        "duplicate_replayed": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "process_phase": {
+                          "const": "context",
+                          "type": "string"
+                        },
+                        "process_status": {
+                          "anyOf": [
+                            {
+                              "const": "running",
+                              "type": "string"
+                            },
+                            {
+                              "const": "waiting",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "trigger_id",
+                        "trigger_status",
+                        "trigger_process_id",
+                        "priority",
+                        "action",
+                        "duplicate_replayed",
+                        "process_phase",
+                        "process_status"
+                      ],
+                      "properties": {
+                        "trigger_id": {
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "type": "string"
+                        },
+                        "trigger_status": {
+                          "const": "accepted",
+                          "type": "string"
+                        },
+                        "trigger_process_id": {
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "type": "string"
+                        },
+                        "priority": {
+                          "anyOf": [
+                            {
+                              "const": "strong",
+                              "type": "string"
+                            },
+                            {
+                              "const": "weak",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "action": {
+                          "const": "duplicate_replay",
+                          "type": "string"
+                        },
+                        "duplicate_replayed": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "process_phase": {
+                          "const": "intent",
+                          "type": "string"
+                        },
+                        "process_status": {
+                          "anyOf": [
+                            {
+                              "const": "running",
+                              "type": "string"
+                            },
+                            {
+                              "const": "waiting",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "trigger_id",
+                        "trigger_status",
+                        "trigger_process_id",
+                        "priority",
+                        "action",
+                        "duplicate_replayed",
+                        "process_phase",
+                        "process_status"
+                      ],
+                      "properties": {
+                        "trigger_id": {
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "type": "string"
+                        },
+                        "trigger_status": {
+                          "const": "accepted",
+                          "type": "string"
+                        },
+                        "trigger_process_id": {
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "type": "string"
+                        },
+                        "priority": {
+                          "anyOf": [
+                            {
+                              "const": "strong",
+                              "type": "string"
+                            },
+                            {
+                              "const": "weak",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "action": {
+                          "const": "duplicate_replay",
+                          "type": "string"
+                        },
+                        "duplicate_replayed": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "process_phase": {
+                          "const": "execution",
+                          "type": "string"
+                        },
+                        "process_status": {
+                          "anyOf": [
+                            {
+                              "const": "running",
+                              "type": "string"
+                            },
+                            {
+                              "const": "waiting",
+                              "type": "string"
+                            },
+                            {
+                              "const": "preempt_requested",
+                              "type": "string"
+                            },
+                            {
+                              "const": "cancelling",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "trigger_id",
+                        "trigger_status",
+                        "trigger_process_id",
+                        "priority",
+                        "action",
+                        "duplicate_replayed",
+                        "process_phase",
+                        "process_status"
+                      ],
+                      "properties": {
+                        "trigger_id": {
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "type": "string"
+                        },
+                        "trigger_status": {
+                          "const": "accepted",
+                          "type": "string"
+                        },
+                        "trigger_process_id": {
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "type": "string"
+                        },
+                        "priority": {
+                          "anyOf": [
+                            {
+                              "const": "strong",
+                              "type": "string"
+                            },
+                            {
+                              "const": "weak",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "action": {
+                          "const": "duplicate_replay",
+                          "type": "string"
+                        },
+                        "duplicate_replayed": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "process_phase": {
+                          "const": "cooldown",
+                          "type": "string"
+                        },
+                        "process_status": {
+                          "const": "waiting",
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "trigger_id",
+                        "trigger_status",
+                        "trigger_process_id",
+                        "priority",
+                        "action",
+                        "duplicate_replayed",
+                        "process_phase",
+                        "process_status"
+                      ],
+                      "properties": {
+                        "trigger_id": {
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "type": "string"
+                        },
+                        "trigger_status": {
+                          "const": "accepted",
+                          "type": "string"
+                        },
+                        "trigger_process_id": {
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "type": "string"
+                        },
+                        "priority": {
+                          "anyOf": [
+                            {
+                              "const": "strong",
+                              "type": "string"
+                            },
+                            {
+                              "const": "weak",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "action": {
+                          "const": "duplicate_replay",
+                          "type": "string"
+                        },
+                        "duplicate_replayed": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "process_phase": {
+                          "const": "meta_enqueued",
+                          "type": "string"
+                        },
+                        "process_status": {
+                          "const": "waiting",
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "trigger_id",
+                        "trigger_status",
+                        "trigger_process_id",
+                        "priority",
+                        "action",
+                        "duplicate_replayed",
+                        "process_phase",
+                        "process_status"
+                      ],
+                      "properties": {
+                        "trigger_id": {
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "type": "string"
+                        },
+                        "trigger_status": {
+                          "const": "accepted",
+                          "type": "string"
+                        },
+                        "trigger_process_id": {
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "type": "string"
+                        },
+                        "priority": {
+                          "anyOf": [
+                            {
+                              "const": "strong",
+                              "type": "string"
+                            },
+                            {
+                              "const": "weak",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "action": {
+                          "const": "duplicate_replay",
+                          "type": "string"
+                        },
+                        "duplicate_replayed": {
+                          "const": true,
+                          "type": "boolean"
+                        },
+                        "process_phase": {
+                          "const": "closed",
+                          "type": "string"
+                        },
+                        "process_status": {
+                          "anyOf": [
+                            {
+                              "const": "completed",
+                              "type": "string"
+                            },
+                            {
+                              "const": "failed",
+                              "type": "string"
+                            },
+                            {
+                              "const": "preempted",
+                              "type": "string"
+                            },
+                            {
+                              "const": "cancelled",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "trigger_id",
+                    "trigger_status",
+                    "trigger_process_id",
+                    "process_phase",
+                    "process_status",
+                    "priority",
+                    "action",
+                    "reason_code",
+                    "rejected_event_id",
+                    "duplicate_replayed"
+                  ],
+                  "properties": {
+                    "trigger_id": {
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "trigger_status": {
+                      "const": "rejected",
+                      "type": "string"
+                    },
+                    "trigger_process_id": {
+                      "type": "null"
+                    },
+                    "process_phase": {
+                      "type": "null"
+                    },
+                    "process_status": {
+                      "type": "null"
+                    },
+                    "priority": {
+                      "anyOf": [
+                        {
+                          "const": "strong",
+                          "type": "string"
+                        },
+                        {
+                          "const": "weak",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "action": {
+                      "const": "duplicate_replay",
+                      "type": "string"
+                    },
+                    "reason_code": {
+                      "anyOf": [
+                        {
+                          "const": "bot_disabled",
+                          "type": "string"
+                        },
+                        {
+                          "const": "bot_archived",
+                          "type": "string"
+                        },
+                        {
+                          "const": "safety_blocked",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "rejected_event_id": {
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "duplicate_replayed": {
+                      "const": true,
+                      "type": "boolean"
+                    }
+                  }
+                }
+              ]
+            },
+            "trace_id": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -78,9 +78,60 @@ function parseInteger(
 export function assertServiceRuntimeConfig(
   value: unknown,
 ): ServiceRuntimeConfigV1 {
-  if (Value.Check(ServiceRuntimeConfigV1Schema, value)) return value;
+  let candidate: unknown = value;
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    let prototype: object | null;
+    let descriptors: PropertyDescriptorMap;
+    try {
+      prototype = Object.getPrototypeOf(value);
+      descriptors = Object.getOwnPropertyDescriptors(value);
+    } catch {
+      prototype = null;
+      descriptors = {};
+    }
+    const expectedKeys = [
+      "deployment_environment",
+      "host",
+      "log_level",
+      "port",
+      "readiness_timeout_ms",
+      "release_channel",
+      "request_timeout_ms",
+      "shutdown_grace_ms",
+    ];
+    const keys = Reflect.ownKeys(descriptors);
+    if (
+      (prototype === Object.prototype || prototype === null) &&
+      keys.every((key) => typeof key === "string") &&
+      (keys as string[]).sort().join(",") === expectedKeys.join(",") &&
+      expectedKeys.every((key) => {
+        const descriptor = descriptors[key];
+        return (
+          descriptor !== undefined &&
+          "value" in descriptor &&
+          descriptor.enumerable === true
+        );
+      })
+    ) {
+      candidate = Object.freeze({
+        host: descriptors.host!.value,
+        port: descriptors.port!.value,
+        log_level: descriptors.log_level!.value,
+        request_timeout_ms: descriptors.request_timeout_ms!.value,
+        readiness_timeout_ms: descriptors.readiness_timeout_ms!.value,
+        shutdown_grace_ms: descriptors.shutdown_grace_ms!.value,
+        deployment_environment: descriptors.deployment_environment!.value,
+        release_channel: descriptors.release_channel!.value,
+      });
+    } else {
+      candidate = undefined;
+    }
+  }
+  if (Value.Check(ServiceRuntimeConfigV1Schema, candidate)) {
+    return candidate as ServiceRuntimeConfigV1;
+  }
 
-  const issues = [...Value.Errors(ServiceRuntimeConfigV1Schema, value)].map(
+  const issues = [...Value.Errors(ServiceRuntimeConfigV1Schema, candidate)].map(
     (issue) => `${issue.path || "/"}: ${issue.message}`,
   );
   throw new ServiceConfigError(issues);

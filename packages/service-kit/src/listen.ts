@@ -125,8 +125,9 @@ export interface StartServiceOptions {
   readonly workloadVerifier?: WorkloadCredentialVerifierPort;
   readonly internalRouteAuthPolicies?: readonly InternalRouteAuthPolicy[];
   /**
-   * Defaults to true so production owners fail closed when an internal route is
-   * configured but no workload verifier can be constructed from JWKS.
+   * When explicitly true, requires a workload verifier even if the service
+   * registers source-specific checks outside the internal-route policy list.
+   * When omitted, internal policies require a verifier.
    */
   readonly requireWorkloadVerifier?: boolean;
 }
@@ -150,11 +151,10 @@ export async function startService(options: StartServiceOptions): Promise<void> 
   );
   const verifier =
     options.workloadVerifier ?? createWorkloadVerifierFromEnv(env);
-  if (
-    (options.internalRouteAuthPolicies?.length ?? 0) > 0 &&
-    (options.requireWorkloadVerifier ?? true) &&
-    verifier === undefined
-  ) {
+  const workloadVerifierRequired =
+    options.requireWorkloadVerifier ??
+    (options.internalRouteAuthPolicies?.length ?? 0) > 0;
+  if (workloadVerifierRequired && verifier === undefined) {
     throw new Error(
       "PAI_WORKLOAD_JWKS_URL or an explicit workload verifier is required when internal routes are configured",
     );

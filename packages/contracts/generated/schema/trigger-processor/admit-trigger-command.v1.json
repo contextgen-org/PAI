@@ -1,58 +1,39 @@
 {
   "$id": "urn:pai:trigger-processor:admit-trigger-command:v1",
-  "additionalProperties": false,
-  "type": "object",
-  "required": [
-    "trigger_id",
-    "process_id",
-    "scope",
-    "payload",
-    "dedupe_key",
-    "idempotency_key",
-    "is_catch_up",
-    "explicit_interrupt",
-    "source",
-    "trace_id"
-  ],
-  "properties": {
-    "trigger_id": {
-      "minLength": 1,
-      "type": "string"
-    },
-    "process_id": {
-      "minLength": 1,
-      "type": "string"
-    },
-    "scope": {
+  "anyOf": [
+    {
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "scope_kind",
         "workspace_id",
         "bot_id",
         "owner_agent_id",
         "deployment_environment",
-        "release_channel"
+        "release_channel",
+        "actor_type",
+        "actor_id",
+        "payload",
+        "dedupe_key",
+        "source",
+        "trace_id"
       ],
       "properties": {
-        "scope_kind": {
-          "const": "bot",
-          "type": "string"
-        },
         "workspace_id": {
           "minLength": 1,
+          "maxLength": 512,
           "type": "string"
         },
         "bot_id": {
           "minLength": 1,
+          "maxLength": 512,
           "type": "string"
         },
         "owner_agent_id": {
           "minLength": 1,
+          "maxLength": 512,
           "type": "string"
         },
         "deployment_environment": {
-          "$id": "urn:pai:shared:deployment-environment:v1",
           "anyOf": [
             {
               "const": "local",
@@ -73,7 +54,6 @@
           ]
         },
         "release_channel": {
-          "$id": "urn:pai:shared:release-channel:v1",
           "anyOf": [
             {
               "const": "stable",
@@ -84,48 +64,529 @@
               "type": "string"
             }
           ]
-        }
-      }
-    },
-    "payload": {
-      "type": "object",
-      "patternProperties": {
-        "^(.*)$": {}
-      }
-    },
-    "dedupe_key": {
-      "minLength": 1,
-      "type": "string"
-    },
-    "idempotency_key": {
-      "minLength": 1,
-      "type": "string"
-    },
-    "is_catch_up": {
-      "type": "boolean"
-    },
-    "explicit_interrupt": {
-      "type": "boolean"
-    },
-    "source": {
-      "anyOf": [
-        {
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "minProperties": 1,
+          "maxProperties": 256,
+          "type": "object",
+          "properties": {}
+        },
+        "dedupe_key": {
+          "minLength": 1,
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "priority_hint": {
+          "anyOf": [
+            {
+              "const": "strong",
+              "type": "string"
+            },
+            {
+              "const": "weak",
+              "type": "string"
+            }
+          ]
+        },
+        "source": {
           "const": "chat",
           "type": "string"
         },
-        {
+        "trace_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "workspace_id",
+        "bot_id",
+        "owner_agent_id",
+        "deployment_environment",
+        "release_channel",
+        "actor_type",
+        "actor_id",
+        "payload",
+        "dedupe_key",
+        "source",
+        "trace_id"
+      ],
+      "properties": {
+        "workspace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "owner_agent_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "deployment_environment": {
+          "anyOf": [
+            {
+              "const": "local",
+              "type": "string"
+            },
+            {
+              "const": "dev",
+              "type": "string"
+            },
+            {
+              "const": "staging",
+              "type": "string"
+            },
+            {
+              "const": "prod",
+              "type": "string"
+            }
+          ]
+        },
+        "release_channel": {
+          "anyOf": [
+            {
+              "const": "stable",
+              "type": "string"
+            },
+            {
+              "const": "canary",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "minProperties": 1,
+          "maxProperties": 256,
+          "type": "object",
+          "properties": {}
+        },
+        "dedupe_key": {
+          "minLength": 1,
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "priority_hint": {
+          "anyOf": [
+            {
+              "const": "strong",
+              "type": "string"
+            },
+            {
+              "const": "weak",
+              "type": "string"
+            }
+          ]
+        },
+        "source": {
           "const": "notification",
           "type": "string"
         },
-        {
-          "const": "timer",
+        "trace_id": {
+          "minLength": 1,
           "type": "string"
         }
-      ]
+      }
     },
-    "trace_id": {
-      "minLength": 1,
-      "type": "string"
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "workspace_id",
+        "bot_id",
+        "owner_agent_id",
+        "deployment_environment",
+        "release_channel",
+        "source",
+        "actor_type",
+        "actor_id",
+        "payload",
+        "dedupe_key",
+        "trace_id"
+      ],
+      "properties": {
+        "workspace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "owner_agent_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "deployment_environment": {
+          "anyOf": [
+            {
+              "const": "local",
+              "type": "string"
+            },
+            {
+              "const": "dev",
+              "type": "string"
+            },
+            {
+              "const": "staging",
+              "type": "string"
+            },
+            {
+              "const": "prod",
+              "type": "string"
+            }
+          ]
+        },
+        "release_channel": {
+          "anyOf": [
+            {
+              "const": "stable",
+              "type": "string"
+            },
+            {
+              "const": "canary",
+              "type": "string"
+            }
+          ]
+        },
+        "source": {
+          "const": "timer",
+          "type": "string"
+        },
+        "actor_type": {
+          "const": "system",
+          "type": "string"
+        },
+        "actor_id": {
+          "const": "timer_app",
+          "type": "string"
+        },
+        "payload": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "workspace_id",
+                "bot_id",
+                "owner_agent_id",
+                "deployment_environment",
+                "release_channel",
+                "schedule_id",
+                "schedule_version",
+                "occurrence_id",
+                "local_date",
+                "local_time",
+                "timezone",
+                "scheduled_for",
+                "occurrence_key",
+                "message",
+                "is_catch_up",
+                "catch_up_batch_id",
+                "missed_window_summary"
+              ],
+              "properties": {
+                "workspace_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "bot_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "owner_agent_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "deployment_environment": {
+                  "anyOf": [
+                    {
+                      "const": "local",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dev",
+                      "type": "string"
+                    },
+                    {
+                      "const": "staging",
+                      "type": "string"
+                    },
+                    {
+                      "const": "prod",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "release_channel": {
+                  "anyOf": [
+                    {
+                      "const": "stable",
+                      "type": "string"
+                    },
+                    {
+                      "const": "canary",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "schedule_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "schedule_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "occurrence_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "local_date": {
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                  "type": "string"
+                },
+                "local_time": {
+                  "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d$",
+                  "type": "string"
+                },
+                "timezone": {
+                  "minLength": 1,
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                "scheduled_for": {
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                  "type": "string"
+                },
+                "occurrence_key": {
+                  "pattern": "^v1:[A-Za-z0-9_-]{43}$",
+                  "type": "string"
+                },
+                "message": {
+                  "minLength": 1,
+                  "maxLength": 8192,
+                  "type": "string"
+                },
+                "is_catch_up": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "catch_up_batch_id": {
+                  "type": "null"
+                },
+                "missed_window_summary": {
+                  "type": "null"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "workspace_id",
+                "bot_id",
+                "owner_agent_id",
+                "deployment_environment",
+                "release_channel",
+                "schedule_id",
+                "schedule_version",
+                "occurrence_id",
+                "local_date",
+                "local_time",
+                "timezone",
+                "scheduled_for",
+                "occurrence_key",
+                "message",
+                "is_catch_up",
+                "catch_up_batch_id",
+                "missed_window_summary"
+              ],
+              "properties": {
+                "workspace_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "bot_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "owner_agent_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "deployment_environment": {
+                  "anyOf": [
+                    {
+                      "const": "local",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dev",
+                      "type": "string"
+                    },
+                    {
+                      "const": "staging",
+                      "type": "string"
+                    },
+                    {
+                      "const": "prod",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "release_channel": {
+                  "anyOf": [
+                    {
+                      "const": "stable",
+                      "type": "string"
+                    },
+                    {
+                      "const": "canary",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "schedule_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "schedule_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "occurrence_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "local_date": {
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                  "type": "string"
+                },
+                "local_time": {
+                  "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d$",
+                  "type": "string"
+                },
+                "timezone": {
+                  "minLength": 1,
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                "scheduled_for": {
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                  "type": "string"
+                },
+                "occurrence_key": {
+                  "pattern": "^v1:[A-Za-z0-9_-]{43}$",
+                  "type": "string"
+                },
+                "message": {
+                  "minLength": 1,
+                  "maxLength": 8192,
+                  "type": "string"
+                },
+                "is_catch_up": {
+                  "const": true,
+                  "type": "boolean"
+                },
+                "catch_up_batch_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "missed_window_summary": {
+                  "minLength": 1,
+                  "maxLength": 2048,
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "dedupe_key": {
+          "minLength": 1,
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
     }
-  }
+  ]
 }

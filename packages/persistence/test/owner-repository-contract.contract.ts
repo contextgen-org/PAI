@@ -13,12 +13,15 @@ import { SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 } from "../../../services/skill-r
 import { TIMER_REPOSITORY_CONTRACT_V1 } from "../../../services/timer-trigger-app/src/db/permission-manifest.v1.js";
 import { TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 } from "../../../services/trigger-processor/src/db/permission-manifest.v1.js";
 import {
+  assertOwnerOutboxAcknowledgeConfirmationV1,
+  assertOwnerOutboxClaimIdentityV1,
   defineOwnerRepositoryContractV1,
   OWNER_DATABASE_TARGETS_V1,
   OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1,
   OWNER_EVENTING_TRANSPORT_EPOCH_WRITER_V1,
   OWNER_SAFE_BIGINT_MAX_V1,
   ownerDatabaseApplicationDependenciesV1,
+  ownerEventingReconciliationContractV1,
   ownerFunctionSignatureV1,
   ownerWriterArtifactV1,
   verifyOwnerDatabaseCheckDefinitionV1,
@@ -46,7 +49,142 @@ const writerKinds = new Set([
   "outbox_claim_ack",
 ]);
 
+const timerReconciliation = ownerEventingReconciliationContractV1(
+  "timer",
+  "timer_event_outbox",
+);
+
+function timerContractWithReconciliation() {
+  const columns = new Map<
+    string,
+    Readonly<{
+      table_name: string;
+      column_name: string;
+      postgres_type: string;
+      not_null: boolean;
+      default_expression: string | null;
+      identity: "";
+      generated: "";
+    }>
+  >();
+  for (const permission of TIMER_REPOSITORY_CONTRACT_V1.table_permissions) {
+    for (const columnName of permission.select_columns) {
+      const postgresType = columnName.endsWith("_at")
+        ? "timestamp with time zone"
+        : columnName === "attempt_count"
+          ? "integer"
+          : "text";
+      columns.set(`${permission.table_name}.${columnName}`, {
+        table_name: permission.table_name,
+        column_name: columnName,
+        postgres_type: postgresType,
+        not_null: false,
+        default_expression: null,
+        identity: "",
+        generated: "",
+      });
+    }
+  }
+  for (const column of TIMER_REPOSITORY_CONTRACT_V1.database_columns ?? []) {
+    columns.set(`${column.table_name}.${column.column_name}`, column);
+  }
+  const requiredTypes: Readonly<Record<string, string>> = {
+    id: "text",
+    status: "text",
+    attempt_count: "integer",
+    transport_ref: "text",
+    transport_epoch: "text",
+    transport_generation: "bigint",
+    sent_at: "timestamp with time zone",
+    updated_at: "timestamp with time zone",
+  };
+  for (const columnName of timerReconciliation.required_existing_columns) {
+    const key = `timer_event_outbox.${columnName}`;
+    if (!columns.has(key)) {
+      columns.set(key, {
+        table_name: "timer_event_outbox",
+        column_name: columnName,
+        postgres_type: requiredTypes[columnName] ?? "text",
+        not_null: false,
+        default_expression: null,
+        identity: "",
+        generated: "",
+      });
+    }
+  }
+  for (const column of timerReconciliation.database_columns) {
+    columns.set(`${column.table_name}.${column.column_name}`, column);
+  }
+  const alreadyIntegrated =
+    TIMER_REPOSITORY_CONTRACT_V1.function_signatures.some((signature) =>
+      signature.effects.some(
+        ({ table_name, operation }) =>
+          table_name === timerReconciliation.outbox_table &&
+          operation === "reconcile_claim",
+      ),
+    );
+  return {
+    ...TIMER_REPOSITORY_CONTRACT_V1,
+    mutable_writers: [
+      ...TIMER_REPOSITORY_CONTRACT_V1.mutable_writers,
+      ...(alreadyIntegrated ? [] : timerReconciliation.mutable_writers),
+    ],
+    function_signatures: [
+      ...TIMER_REPOSITORY_CONTRACT_V1.function_signatures,
+      ...(alreadyIntegrated ? [] : timerReconciliation.function_signatures),
+    ],
+    database_columns: [...columns.values()],
+    database_checks: [
+      ...(TIMER_REPOSITORY_CONTRACT_V1.database_checks ?? []),
+      ...(alreadyIntegrated ? [] : timerReconciliation.database_checks),
+    ],
+    database_indexes: [
+      ...(TIMER_REPOSITORY_CONTRACT_V1.database_indexes ?? []),
+      ...(alreadyIntegrated ? [] : timerReconciliation.database_indexes),
+    ],
+  } as const;
+}
+
 describe("owner repository contracts", () => {
+  it("accepts only the exact fenced outbox ACK confirmation", () => {
+    expect(() =>
+      assertOwnerOutboxAcknowledgeConfirmationV1({ acknowledged: true }),
+    ).not.toThrow();
+    for (const invalid of [
+      { acknowledged: false },
+      {},
+      { acknowledged: true, outbox_id: "stale" },
+      [true],
+      null,
+      "true",
+    ]) {
+      expect(() =>
+        assertOwnerOutboxAcknowledgeConfirmationV1(invalid),
+      ).toThrow(/did not confirm its fenced compare-and-set/u);
+    }
+  });
+
+  it("rejects malformed outbox claim identities before lease commit", () => {
+    expect(() =>
+      assertOwnerOutboxClaimIdentityV1({
+        outbox_id: "outbox-1",
+        claim_token: "claim-1",
+        envelope: {},
+      }),
+    ).not.toThrow();
+    for (const invalid of [
+      { outbox_id: "", claim_token: "claim-1" },
+      { outbox_id: "outbox-1", claim_token: " " },
+      { id: "outbox-1", claim_token: "claim-1" },
+      ["outbox-1", "claim-1"],
+      null,
+    ]) {
+      expect(() => assertOwnerOutboxClaimIdentityV1(invalid)).toThrow(
+        /invalid fenced identity/u,
+      );
+    }
+  });
+
   it("covers all and only the seven database owners", () => {
     expect(contracts.map((contract) => contract.owner_service).sort()).toEqual(
       Object.keys(OWNER_DATABASE_TARGETS_V1).sort(),
@@ -236,12 +374,365 @@ describe("owner repository contracts", () => {
           expect(signatures[0]?.returns).toBe(
             operation === "claim" ? "setof jsonb" : "jsonb",
           );
+          expect(
+            signatures[0]?.arguments
+              .filter(({ nullable }) => nullable === true)
+              .map(({ argument_name }) => argument_name),
+          ).toEqual(
+            operation === "ack"
+              ? [
+                  "p_next_retry_at",
+                  "p_error",
+                  "p_transport_ref",
+                  "p_transport_epoch",
+                  "p_transport_generation",
+                ]
+              : [],
+          );
           expect(signatures[0]?.reads_tables).toContain(
             OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1,
           );
         }
       }
     }
+  });
+
+  it("rejects a hand-built outbox ACK signature that omits canonical nullability", () => {
+    const { writer_artifacts: _writerArtifacts, ...contractWithoutArtifacts } =
+      TIMER_REPOSITORY_CONTRACT_V1;
+    const ackSignature =
+      TIMER_REPOSITORY_CONTRACT_V1.function_signatures.find(
+        (signature) =>
+          signature.effects.some(({ operation }) => operation === "ack"),
+      );
+    expect(ackSignature).toBeDefined();
+    expect(() =>
+      defineOwnerRepositoryContractV1({
+        ...contractWithoutArtifacts,
+        function_signatures:
+          TIMER_REPOSITORY_CONTRACT_V1.function_signatures.map((signature) =>
+            signature === ackSignature
+              ? {
+                  ...signature,
+                  arguments: signature.arguments.map((argument) =>
+                    argument.argument_name === "p_error"
+                      ? {
+                          argument_name: argument.argument_name,
+                          postgres_type: argument.postgres_type,
+                          mode: argument.mode,
+                        }
+                      : argument,
+                  ),
+                }
+              : signature,
+          ),
+      } as never),
+    ).toThrow(/standard ack writer/u);
+    void _writerArtifacts;
+  });
+
+  it("builds one fail-closed reconciliation fragment without exposing leases", () => {
+    expect(timerReconciliation.required_existing_columns).toEqual([
+      "id",
+      "status",
+      "attempt_count",
+      "transport_ref",
+      "transport_epoch",
+      "transport_generation",
+      "sent_at",
+      "updated_at",
+    ]);
+    expect(
+      timerReconciliation.database_columns.map(({ column_name }) => column_name),
+    ).toEqual([
+      "reconciliation_missing_at",
+      "reconciliation_missing_reporter",
+      "reconciliation_next_probe_at",
+      "reconciliation_claimed_by",
+      "reconciliation_claim_token",
+      "reconciliation_claim_generation",
+      "reconciliation_locked_until",
+    ]);
+    expect(timerReconciliation.database_indexes).toHaveLength(3);
+    expect(timerReconciliation.database_indexes[0]?.definition).toContain(
+      "WHERE ((status = 'sent'::text) AND (transport_ref IS NOT NULL))",
+    );
+    expect(timerReconciliation.database_indexes[1]?.definition).toContain(
+      "reconciliation_next_probe_at NULLS FIRST",
+    );
+    expect(timerReconciliation.next_probe_semantics).toEqual({
+      clock_authority: "postgres_clock_timestamp",
+      claim_lease: "database_now_plus_bounded_lease_seconds",
+      acknowledgment_schedule:
+        "database_now_plus_bounded_probe_interval_ms",
+      null_next_probe: "due_immediately",
+      previous_generation: "due_immediately_regardless_of_next_probe",
+      reported_missing: "due_immediately_regardless_of_next_probe",
+      current_generation: "due_when_next_probe_at_lte_now",
+      deleted_ref_update:
+        "least_existing_or_observed_at_with_null_as_observed_at",
+    });
+    expect(timerReconciliation.mutable_writers).toEqual([
+      "record_timer_event_outbox_deleted_transport_refs_v1",
+      "claim_timer_event_outbox_reconciliation_v1",
+      "ack_timer_event_outbox_transport_present_v1",
+      "ack_timer_event_outbox_rematerialized_v1",
+    ]);
+    expect(
+      timerReconciliation.function_signatures.map(
+        ({ effects, returns }) => [
+          effects[0]?.operation,
+          effects[0]?.concurrency_control,
+          returns,
+        ],
+      ),
+    ).toEqual([
+      ["reconcile_mark_missing", "reconciliation_fence", "jsonb"],
+      ["reconcile_claim", "reconciliation_fence", "setof jsonb"],
+      ["reconcile_ack_present", "reconciliation_fence", "jsonb"],
+      ["reconcile_ack_rematerialized", "reconciliation_fence", "jsonb"],
+    ]);
+    const argumentsFor = (operation: string) =>
+      timerReconciliation.function_signatures
+        .find(({ effects }) => effects[0]?.operation === operation)
+        ?.arguments.map(({ argument_name }) => argument_name);
+    expect(argumentsFor("reconcile_claim")).toEqual([
+      "p_worker_id",
+      "p_limit",
+      "p_lease_seconds",
+      "p_current_transport_epoch",
+      "p_current_transport_generation",
+    ]);
+    expect(argumentsFor("reconcile_ack_present")?.slice(-1)).toEqual([
+      "p_probe_interval_ms",
+    ]);
+    expect(argumentsFor("reconcile_ack_rematerialized")?.slice(-1)).toEqual([
+      "p_probe_interval_ms",
+    ]);
+    expect(
+      timerReconciliation.function_signatures.flatMap(({ arguments: values }) =>
+        values.map(({ argument_name }) => argument_name),
+      ),
+    ).not.toContain("p_next_probe_at");
+    for (const value of Object.values(timerReconciliation)) {
+      if (Array.isArray(value)) expect(Object.isFrozen(value)).toBe(true);
+    }
+    expect(
+      TIMER_REPOSITORY_CONTRACT_V1.table_permissions
+        .find(({ table_name }) => table_name === "timer_event_outbox")
+        ?.select_columns.includes("reconciliation_claim_token"),
+    ).toBe(false);
+
+    const longest = ownerEventingReconciliationContractV1(
+      "knowthat",
+      "knowthat_memory_command_outbox",
+    );
+    expect(
+      Math.max(...longest.mutable_writers.map(({ length }) => length)),
+    ).toBe(63);
+    expect(
+      Math.max(...longest.database_indexes.map(({ index_name }) => index_name.length)),
+    ).toBe(63);
+  });
+
+  it("builds the same reconciliation ABI for all eleven owner outboxes", () => {
+    const outboxes = contracts.flatMap((contract) =>
+      contract.outbox_tables.map((table) => ({
+        schema: contract.schema,
+        table,
+      })),
+    );
+    expect(outboxes).toHaveLength(11);
+    for (const { schema, table } of outboxes) {
+      const fragment = ownerEventingReconciliationContractV1(schema, table);
+      expect(fragment.function_signatures).toHaveLength(4);
+      expect(fragment.database_columns).toHaveLength(7);
+      expect(fragment.database_indexes).toHaveLength(3);
+      expect(
+        fragment.mutable_writers.every((writer) => writer.length <= 63),
+      ).toBe(true);
+      expect(
+        fragment.database_indexes.every(({ index_name }) =>
+          index_name.length <= 63,
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("composes reconciliation only with the full physical and compound-fence contract", () => {
+    expect(() =>
+      defineOwnerRepositoryContractV1(
+        timerContractWithReconciliation() as never,
+      ),
+    ).not.toThrow();
+
+    const exposedLease = timerContractWithReconciliation();
+    expect(() =>
+      defineOwnerRepositoryContractV1({
+        ...exposedLease,
+        table_permissions: exposedLease.table_permissions.map((permission) =>
+          permission.table_name === "timer_event_outbox"
+            ? {
+                ...permission,
+                select_columns: [
+                  ...permission.select_columns,
+                  "reconciliation_claim_token",
+                ],
+              }
+            : permission,
+        ),
+      } as never),
+    ).toThrow(/internal columns cannot be direct SELECT grants/u);
+
+    const missingFence = timerContractWithReconciliation();
+    expect(() =>
+      defineOwnerRepositoryContractV1({
+        ...missingFence,
+        function_signatures: missingFence.function_signatures.map((signature) =>
+          signature.effects[0]?.operation === "reconcile_ack_present"
+            ? {
+                ...signature,
+                arguments: signature.arguments.filter(
+                  ({ argument_name }) =>
+                    argument_name !== "p_previous_transport_ref",
+                ),
+              }
+            : signature,
+        ),
+      } as never),
+    ).toThrow(/semantic effect|reconciliation writer ABI drift/u);
+
+    const downgradedFence = timerContractWithReconciliation();
+    expect(() =>
+      defineOwnerRepositoryContractV1({
+        ...downgradedFence,
+        function_signatures: downgradedFence.function_signatures.map(
+          (signature) =>
+            signature.effects[0]?.operation === "reconcile_ack_present"
+              ? {
+                  ...signature,
+                  effects: signature.effects.map((effect) => ({
+                    ...effect,
+                    concurrency_control: "lease_fence" as const,
+                  })),
+                }
+              : signature,
+        ),
+      } as never),
+    ).toThrow(/reconciliation writer ABI drift/u);
+
+    const missingIndex = timerContractWithReconciliation();
+    expect(() =>
+      defineOwnerRepositoryContractV1({
+        ...missingIndex,
+        database_indexes: missingIndex.database_indexes.slice(1),
+      } as never),
+    ).toThrow(/reconciliation index drift/u);
+  });
+
+  it("lints every previous identity and active generation in reconciliation ACK", () => {
+    const contract = defineOwnerRepositoryContractV1(
+      timerContractWithReconciliation() as never,
+    );
+    const signature = contract.function_signatures.find(
+      ({ effects }) =>
+        effects[0]?.operation === "reconcile_ack_present",
+    );
+    expect(signature).toBeDefined();
+    if (signature === undefined) throw new Error("missing reconciliation ACK");
+    const body = `
+DECLARE
+  v_active_epoch text;
+  v_active_generation bigint;
+  v_updated_id text;
+  v_database_now timestamptz;
+BEGIN
+  IF p_probe_interval_ms < 1000 OR p_probe_interval_ms > 86400000 THEN
+    RAISE EXCEPTION 'invalid reconciliation probe interval';
+  END IF;
+  SELECT active_epoch, active_generation
+    INTO v_active_epoch, v_active_generation
+    FROM timer.eventing_transport_epochs
+   WHERE transport_name = 'redis_stream'
+   FOR UPDATE;
+  IF v_active_epoch <> p_current_transport_epoch
+     OR v_active_generation <> p_current_transport_generation THEN
+    RAISE EXCEPTION 'stale active transport generation';
+  END IF;
+  v_database_now := clock_timestamp();
+  UPDATE timer.timer_event_outbox
+     SET reconciliation_next_probe_at = v_database_now +
+           make_interval(secs => p_probe_interval_ms::double precision / 1000.0),
+         reconciliation_missing_at = NULL,
+         reconciliation_missing_reporter = NULL,
+         reconciliation_claimed_by = NULL,
+         reconciliation_claim_token = NULL,
+         reconciliation_locked_until = NULL,
+         updated_at = v_database_now
+   WHERE id = p_outbox_id
+     AND status = 'sent'
+     AND reconciliation_claim_token = p_claim_token
+     AND transport_ref IS NOT DISTINCT FROM p_previous_transport_ref
+     AND transport_epoch IS NOT DISTINCT FROM p_previous_transport_epoch
+     AND transport_generation IS NOT DISTINCT FROM p_previous_transport_generation
+   RETURNING id INTO v_updated_id;
+  IF v_updated_id IS NULL THEN
+    RAISE EXCEPTION 'stale reconciliation claim';
+  END IF;
+  RETURN jsonb_build_object('acknowledged', true);
+END;`;
+    const definition = (functionBody: string) => `
+CREATE FUNCTION timer.${signature.function_name}() RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = timer, pg_temp
+AS $writer$
+${functionBody}
+$writer$`;
+    expect(() =>
+      lintOwnerWriterDefinitionV1(contract, signature, definition(body)),
+    ).not.toThrow();
+    expect(() =>
+      lintOwnerWriterDefinitionV1(
+        contract,
+        signature,
+        definition(
+          body.replace(
+            "     AND transport_ref IS NOT DISTINCT FROM p_previous_transport_ref\n",
+            "",
+          ),
+        ),
+      ),
+    ).toThrow(/reconciliation (?:fence|ACK result) drift/u);
+    expect(() =>
+      lintOwnerWriterDefinitionV1(
+        contract,
+        signature,
+        definition(body.replace("   FOR UPDATE;", ";")),
+      ),
+    ).toThrow(/reconciliation fence drift/u);
+    expect(() =>
+      lintOwnerWriterDefinitionV1(
+        contract,
+        signature,
+        definition(
+          body.replace(
+            "RETURN jsonb_build_object('acknowledged', true);",
+            "RETURN jsonb_build_object('outbox_id', v_updated_id);",
+          ),
+        ),
+      ),
+    ).toThrow(/reconciliation ACK result drift/u);
+    expect(() =>
+      lintOwnerWriterDefinitionV1(
+        contract,
+        signature,
+        definition(
+          body.replace(
+            "v_database_now := clock_timestamp();",
+            "v_database_now := p_now;",
+          ),
+        ),
+      ),
+    ).toThrow(/reconciliation fence drift/u);
   });
 
   it("binds every canonical event outbox to the owner event union and producer", () => {
@@ -748,7 +1239,7 @@ describe("owner repository contracts", () => {
     ).toThrow(/owner database target drift/);
   });
 
-  it("requires canonical schema snapshots before live PostgreSQL verification", async () => {
+  it("refuses to verify a live owner without canonical DLQ resolution mappings", async () => {
     const queries: string[] = [];
     const postgres = {
       async query<TRow extends Record<string, unknown>>(sql: string) {
@@ -765,7 +1256,32 @@ describe("owner repository contracts", () => {
           runtime_postgres: postgres,
         },
       ),
-    ).rejects.toThrow(/canonical PostgreSQL column snapshot is required/);
+    ).rejects.toThrow(/canonical immutable DLQ resolution mapping is required/u);
+    expect(queries).toEqual([]);
+  });
+
+  it("requires canonical schema snapshots before live PostgreSQL verification", async () => {
+    const queries: string[] = [];
+    const postgres = {
+      async query<TRow extends Record<string, unknown>>(sql: string) {
+        queries.push(sql);
+        return { rows: [] as TRow[] };
+      },
+    };
+    await expect(
+      verifyOwnerRepositoryDeploymentFromPostgresV1(
+        {
+          ...TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+          dlq_tables: [],
+          dlq_resolutions: [],
+        } as never,
+        postgres,
+        {
+          expected_schema_owner: "pai_migrator",
+          runtime_postgres: postgres,
+        },
+      ),
+    ).rejects.toThrow(/canonical PostgreSQL column snapshot is required/u);
     expect(queries).toEqual([]);
   });
 
@@ -949,7 +1465,69 @@ $writer$`;
     }
   });
 
-  it("rejects generic row locks as a slot/process admission fence", () => {
+  it("defaults writer arguments to non-null and rejects nullable fences", () => {
+    const signature = ownerFunctionSignatureV1({
+      schema: "timer",
+      function_name: "nullable_metadata_v1",
+      primary_table: "timer_schedules",
+      writer_kind: "state_transition",
+      arguments: [
+        ["p_required", "text"],
+        ["p_optional", "jsonb", { nullable: true }],
+      ],
+      reads_tables: ["timer_schedules"],
+      writes_tables: ["timer_schedules"],
+      effects: [
+        {
+          table_name: "timer_schedules",
+          operation: "transition",
+          concurrency_control: "idempotency_key",
+        },
+      ],
+      returns: "jsonb",
+    });
+    expect(signature.arguments).toEqual([
+      {
+        argument_name: "p_required",
+        postgres_type: "text",
+        mode: "in",
+      },
+      {
+        argument_name: "p_optional",
+        postgres_type: "jsonb",
+        mode: "in",
+        nullable: true,
+      },
+    ]);
+
+    const scheduleWriterIndex =
+      TIMER_REPOSITORY_CONTRACT_V1.function_signatures.findIndex(
+        ({ function_name }) => function_name === "cas_timer_schedule_v1",
+      );
+    expect(scheduleWriterIndex).toBeGreaterThanOrEqual(0);
+    expect(() =>
+      defineOwnerRepositoryContractV1({
+        ...TIMER_REPOSITORY_CONTRACT_V1,
+        function_signatures:
+          TIMER_REPOSITORY_CONTRACT_V1.function_signatures.map(
+            (writer, index) =>
+              index === scheduleWriterIndex
+                ? {
+                    ...writer,
+                    arguments: writer.arguments.map((argument) =>
+                      argument.argument_name ===
+                      "p_expected_schedule_version"
+                        ? { ...argument, nullable: true }
+                        : argument,
+                    ),
+                  }
+                : writer,
+          ),
+      } as never),
+    ).toThrow(/semantic effect/u);
+  });
+
+  it("requires exact authority and slot/process relational fences", () => {
     const signature = ownerFunctionSignatureV1({
       schema: "trigger_processor",
       function_name: "test_server_side_admission_v1",
@@ -957,6 +1535,7 @@ $writer$`;
       writer_kind: "state_transition",
       arguments: [
         ["p_scope", "jsonb"],
+        ["p_source", "text"],
         ["p_authenticated_context", "jsonb"],
         ["p_admission_request", "jsonb"],
       ],
@@ -976,32 +1555,60 @@ $writer$`;
       ],
       returns: "jsonb",
     });
-    const body = (locks: string) => `
+    const validAuthorityProof = `
+        PERFORM b.id, binding.bot_id,
+                p_admission_request->>'is_catch_up',
+                p_admission_request->>'explicit_interrupt'
+          FROM trigger_processor.bots b
+          JOIN trigger_processor.bot_permission_bindings binding
+            ON binding.workspace_id = b.workspace_id
+           AND binding.bot_id = b.id
+           AND binding.deployment_environment = b.deployment_environment
+           AND binding.release_channel = b.release_channel
+           AND binding.principal_type = p_authenticated_context->>'principal_type'
+           AND binding.principal_id = p_authenticated_context->>'principal_id'
+           AND binding.permission_scope = p_authenticated_context->>'permission_scope'
+         WHERE b.workspace_id = p_scope->>'workspace_id'
+           AND b.id = p_scope->>'bot_id'
+           AND b.owner_agent_id = p_scope->>'owner_agent_id'
+           AND b.deployment_environment = p_scope->>'deployment_environment'
+           AND b.release_channel = p_scope->>'release_channel'
+           AND binding.status = 'active'
+           AND p_source IN ('chat', 'notification', 'timer')
+           AND p_authenticated_context->>'permission_scope'
+                 = 'trigger.submit.' || p_source
+           AND (
+             (
+               p_source = 'timer'
+               AND
+               p_authenticated_context->>'authentication_kind' = 'pai_workload_jwt'
+               AND p_authenticated_context->>'principal_type' = 'service'
+             )
+             OR
+             (
+               p_source IN ('chat', 'notification')
+               AND
+               p_authenticated_context->>'authentication_kind' = 'supabase_ingress'
+               AND p_authenticated_context->>'principal_type'
+                     IN ('user', 'developer', 'agent')
+             )
+           );
+        IF NOT FOUND THEN
+          RAISE EXCEPTION 'bot authority not found';
+        END IF;`;
+    const body = (
+      locks: string,
+      authorityProof = validAuthorityProof,
+    ) => `
       CREATE FUNCTION trigger_processor.test_server_side_admission_v1(
         p_scope jsonb,
+        p_source text,
         p_authenticated_context jsonb,
         p_admission_request jsonb
       ) RETURNS jsonb LANGUAGE plpgsql AS $body$
       BEGIN
         ${locks}
-        PERFORM b.id, binding.bot_id,
-                p_admission_request->>'is_catch_up',
-                p_admission_request->>'explicit_interrupt',
-                p_authenticated_context->>'workload_subject',
-                p_authenticated_context->>'capability'
-          FROM trigger_processor.bots b
-          JOIN trigger_processor.bot_permission_bindings binding
-            ON binding.bot_id = b.id
-           AND binding.principal_id = p_authenticated_context->>'workload_subject'
-           AND binding.permission_scope = p_authenticated_context->>'capability'
-         WHERE b.workspace_id = p_scope->>'workspace_id'
-           AND b.id = p_scope->>'bot_id'
-           AND b.owner_agent_id = p_scope->>'owner_agent_id'
-           AND b.deployment_environment = p_scope->>'deployment_environment'
-           AND b.release_channel = p_scope->>'release_channel';
-        IF NOT FOUND THEN
-          RAISE EXCEPTION 'bot authority not found';
-        END IF;
+        ${authorityProof}
         INSERT INTO trigger_processor.weak_trigger_queue_items(id) VALUES ('id');
         RETURN '{}'::jsonb;
       END $body$`;
@@ -1027,6 +1634,59 @@ $writer$`;
         `),
       ),
     ).not.toThrow();
+    const validLocks = `
+      PERFORM 1
+        FROM trigger_processor.bot_foreground_slots slot
+        JOIN trigger_processor.trigger_processes process
+          ON process.id = slot.process_id
+       WHERE slot.bot_id = p_scope->>'bot_id'
+         AND process.workspace_id = p_scope->>'workspace_id'
+         AND process.bot_id = p_scope->>'bot_id'
+         AND process.owner_agent_id = p_scope->>'owner_agent_id'
+         AND process.deployment_environment = p_scope->>'deployment_environment'
+         AND process.release_channel = p_scope->>'release_channel'
+       FOR UPDATE;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'slot/process fence not found';
+      END IF;`;
+    for (const invalidAuthorityProof of [
+      validAuthorityProof.replace(
+        "binding.principal_id = p_authenticated_context->>'principal_id'",
+        "p_authenticated_context->>'principal_id' IS NOT NULL",
+      ),
+      validAuthorityProof.replace(
+        "p_authenticated_context->>'authentication_kind' = 'pai_workload_jwt'",
+        "p_authenticated_context->>'authentication_kind' = 'supabase_ingress'",
+      ),
+      validAuthorityProof.replace(
+        "p_source = 'timer'\n               AND\n               p_authenticated_context->>'authentication_kind' = 'pai_workload_jwt'",
+        "p_source = 'timer'\n               OR\n               p_authenticated_context->>'authentication_kind' = 'pai_workload_jwt'",
+      ),
+      validAuthorityProof.replace(
+        "p_authenticated_context->>'principal_type' = 'service'",
+        "p_authenticated_context->>'principal_type' = 'service' OR TRUE",
+      ),
+      validAuthorityProof.replace(
+        "binding.permission_scope = p_authenticated_context->>'permission_scope'",
+        "binding.permission_scope = 'trigger.submit.timer'",
+      ),
+      validAuthorityProof.replace(
+        "p_authenticated_context->>'permission_scope'\n                 = 'trigger.submit.' || p_source",
+        "p_authenticated_context->>'permission_scope' = 'trigger.submit.timer'",
+      ),
+      validAuthorityProof.replace(
+        "binding.principal_id = p_authenticated_context->>'principal_id'",
+        "binding.principal_id = p_authenticated_context #>> '{verified_principal,principal_id}'",
+      ),
+    ]) {
+      expect(() =>
+        lintOwnerWriterDefinitionV1(
+          TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+          signature,
+          body(validLocks, invalidAuthorityProof),
+        ),
+      ).toThrow(/slot\/process fence drift/);
+    }
     expect(() =>
       lintOwnerWriterDefinitionV1(
         TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,

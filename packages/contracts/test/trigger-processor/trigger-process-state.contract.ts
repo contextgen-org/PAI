@@ -110,6 +110,122 @@ describe("TriggerProcessStateV1", () => {
     ).toBe(false);
   });
 
+  it("requires an atomic queue-head, process-version and slot-generation fence for promotion", () => {
+    const contextRunning = running("context");
+    const deferredStrong = {
+      phase: "admission",
+      status: "waiting",
+      wait_reason: "deferred_strong_queue",
+      terminal_reason: null,
+    } as const satisfies TriggerProcessStateV1;
+    const promotion = {
+      kind: "admission_queue_promotion",
+      queue_kind: "strong",
+      trigger_process_id: "process-strong-1",
+      admission_time: "2026-07-22T08:00:00.000Z",
+      expected_process_updated_at: "2026-07-22T08:00:01.000Z",
+      expected_strong_fifo_revision: 12,
+      strong_fifo_head_process_id: "process-strong-1",
+      strong_fifo_head_admission_time: "2026-07-22T08:00:00.000Z",
+      strong_fifo_head_lock_ref: "strong-head-lock-1",
+      preempt_commit_process_id: null,
+      preempt_commit_ref: null,
+      process_lock_ref: "process-lock-1",
+      foreground_slot_previous_process_id: null,
+      foreground_slot_previous_generation: 9,
+      foreground_slot_next_generation: 10,
+      foreground_slot_transfer_ref: "slot-transfer-1",
+      transition_audit_ref: "transition-audit-1",
+      command_outbox_ref: "command-outbox-1",
+    } as const satisfies TriggerProcessTransitionEvidenceV1;
+
+    expect(isTriggerProcessTransitionV1Allowed(deferredStrong, contextRunning)).toBe(
+      false,
+    );
+    expect(
+      isTriggerProcessTransitionV1Allowed(
+        deferredStrong,
+        contextRunning,
+        promotion,
+      ),
+    ).toBe(true);
+    expect(
+      isTriggerProcessTransitionV1Allowed(deferredStrong, contextRunning, {
+        ...promotion,
+        strong_fifo_head_process_id: "later-process",
+      }),
+    ).toBe(false);
+    expect(
+      isTriggerProcessTransitionV1Allowed(deferredStrong, contextRunning, {
+        ...promotion,
+        foreground_slot_next_generation: 11,
+      }),
+    ).toBe(false);
+
+    const preemptCommit = {
+      ...deferredStrong,
+      wait_reason: "preempt_commit",
+    } as const satisfies TriggerProcessStateV1;
+    expect(
+      isTriggerProcessTransitionV1Allowed(preemptCommit, contextRunning, {
+        ...promotion,
+        preempt_commit_process_id: "process-strong-1",
+        preempt_commit_ref: "preempt-commit-1",
+        foreground_slot_previous_process_id: "process-running-1",
+      }),
+    ).toBe(true);
+    expect(
+      isTriggerProcessTransitionV1Allowed(preemptCommit, contextRunning, promotion),
+    ).toBe(false);
+
+    const weakQueue = {
+      ...deferredStrong,
+      wait_reason: "weak_queue",
+    } as const satisfies TriggerProcessStateV1;
+    expect(
+      isTriggerProcessTransitionV1Allowed(weakQueue, contextRunning, {
+        kind: "admission_queue_promotion",
+        queue_kind: "weak",
+        trigger_process_id: "process-weak-1",
+        expected_process_updated_at: "2026-07-22T08:00:01.000Z",
+        expected_strong_fifo_revision: 12,
+        strong_fifo_head_process_id: null,
+        strong_fifo_head_admission_time: null,
+        preempt_commit_process_id: null,
+        strong_fifo_empty_lock_ref: "strong-empty-lock-1",
+        queue_claim_ref: "weak-claim-1",
+        process_lock_ref: "process-lock-weak-1",
+        foreground_slot_previous_process_id: null,
+        foreground_slot_previous_generation: 10,
+        foreground_slot_next_generation: 11,
+        foreground_slot_transfer_ref: "slot-transfer-weak-1",
+        transition_audit_ref: "transition-audit-weak-1",
+        command_outbox_ref: "command-outbox-weak-1",
+      }),
+    ).toBe(true);
+    expect(
+      isTriggerProcessTransitionV1Allowed(weakQueue, contextRunning, {
+        kind: "admission_queue_promotion",
+        queue_kind: "weak",
+        trigger_process_id: "process-weak-1",
+        expected_process_updated_at: "2026-07-22T08:00:01.000Z",
+        expected_strong_fifo_revision: 12,
+        strong_fifo_head_process_id: "process-strong-raced-in",
+        strong_fifo_head_admission_time: "2026-07-22T08:00:00.000Z",
+        preempt_commit_process_id: null,
+        strong_fifo_empty_lock_ref: "strong-empty-lock-1",
+        queue_claim_ref: "weak-claim-1",
+        process_lock_ref: "process-lock-weak-1",
+        foreground_slot_previous_process_id: null,
+        foreground_slot_previous_generation: 10,
+        foreground_slot_next_generation: 11,
+        foreground_slot_transfer_ref: "slot-transfer-weak-1",
+        transition_audit_ref: "transition-audit-weak-1",
+        command_outbox_ref: "command-outbox-weak-1",
+      } as never),
+    ).toBe(false);
+  });
+
   it("requires persisted transition evidence and covers the canonical terminal edges", () => {
     const executionRunning = running("execution");
     const metaEnqueued = {
@@ -405,6 +521,21 @@ describe("TriggerProcessStateV1", () => {
   it("accepts canonical transitions and rejects invented phases", () => {
     expect(
       isTriggerProcessTransitionV1Allowed(running("context"), running("intent")),
+    ).toBe(false);
+    expect(
+      isTriggerProcessTransitionV1Allowed(
+        running("context"),
+        running("intent"),
+        {
+          kind: "stage_progression",
+          progression: "context_to_intent",
+          prerequisite_ref: "context-snapshot:process-1:v2",
+          expected_process_updated_at: "2026-07-22T08:00:00.000Z",
+          process_lock_ref: "process-lock-1",
+          transition_audit_ref: "transition-audit-1",
+          outbox_event_ref: "outbox-event-1",
+        },
+      ),
     ).toBe(true);
     expect(
       isTriggerProcessTransitionV1Allowed(
@@ -433,6 +564,80 @@ describe("TriggerProcessStateV1", () => {
         terminal_reason: null,
       }),
     ).toBe(false);
+  });
+
+  it("requires persisted coupled facts for confirmation, runtime start, retry, and control edges", () => {
+    const intentRunning = running("intent");
+    const confirmationWaiting = {
+      phase: "intent",
+      status: "waiting",
+      wait_reason: "external_confirmation",
+      terminal_reason: null,
+    } as const satisfies TriggerProcessStateV1;
+    expect(
+      isTriggerProcessTransitionV1Allowed(intentRunning, confirmationWaiting),
+    ).toBe(false);
+    expect(
+      isTriggerProcessTransitionV1Allowed(intentRunning, confirmationWaiting, {
+        kind: "confirmation_challenge_created",
+        challenge_ref: "challenge-1",
+        intent_ref: "intent-1",
+        intent_hash: `sha256:${"a".repeat(64)}`,
+        policy_hash: `sha256:${"b".repeat(64)}`,
+        allowed_principal_binding_ref: "principal-binding-1",
+        expected_process_updated_at: "2026-07-22T08:00:00.000Z",
+        process_lock_ref: "process-lock-1",
+        transition_audit_ref: "transition-audit-1",
+        outbox_event_ref: "outbox-event-1",
+      }),
+    ).toBe(true);
+    expect(
+      isTriggerProcessTransitionV1Allowed(confirmationWaiting, intentRunning),
+    ).toBe(false);
+
+    const retryWaiting = {
+      phase: "context",
+      status: "waiting",
+      wait_reason: "stage_retry_wait",
+      terminal_reason: null,
+    } as const satisfies TriggerProcessStateV1;
+    expect(
+      isTriggerProcessTransitionV1Allowed(running("context"), retryWaiting),
+    ).toBe(false);
+    expect(
+      isTriggerProcessTransitionV1Allowed(running("context"), retryWaiting, {
+        kind: "stage_retry_scheduled",
+        retry_record_ref: "retry-1",
+        next_retry_at: "2026-07-22T08:01:00.000Z",
+        expected_process_updated_at: "2026-07-22T08:00:00.000Z",
+        process_lock_ref: "process-lock-1",
+        transition_audit_ref: "transition-audit-1",
+        outbox_event_ref: "outbox-event-1",
+      }),
+    ).toBe(true);
+
+    const executionRunning = running("execution");
+    const preemptRequested = {
+      phase: "execution",
+      status: "preempt_requested",
+      wait_reason: null,
+      terminal_reason: null,
+    } as const satisfies TriggerProcessStateV1;
+    expect(
+      isTriggerProcessTransitionV1Allowed(executionRunning, preemptRequested),
+    ).toBe(false);
+    expect(
+      isTriggerProcessTransitionV1Allowed(executionRunning, preemptRequested, {
+        kind: "runtime_control_requested",
+        control: "preempt",
+        runtime_signal_ref: "runtime-signal-1",
+        command_outbox_ref: "command-outbox-1",
+        expected_process_updated_at: "2026-07-22T08:00:00.000Z",
+        process_lock_ref: "process-lock-1",
+        transition_audit_ref: "transition-audit-1",
+        outbox_event_ref: "outbox-event-1",
+      }),
+    ).toBe(true);
   });
 
   it.each([

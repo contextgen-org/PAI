@@ -14,6 +14,8 @@ import {
   createDurableSentOutboxRedriverV1,
   DurableInboxApplyErrorV1,
   EventTransportErrorV1,
+  EventTransportPreflightErrorV1,
+  OutboxClaimContractErrorV1,
   type ClaimedOutboxRecordV1,
   type DurableEventTransportPortV1,
   type DurableOutboxStorePortV1,
@@ -24,7 +26,7 @@ import {
   type DurableSentOutboxRedriveStorePortV1,
 } from "../src/index.js";
 
-function botScope(
+function triggerPayloadBase(
   overrides: Partial<Record<
     | "workspace_id"
     | "bot_id"
@@ -35,12 +37,13 @@ function botScope(
   >> = {},
 ) {
   return {
-    scope_kind: "bot",
     workspace_id: "workspace_001",
     bot_id: "bot_001",
     owner_agent_id: "owner_agent_001",
     deployment_environment: "dev",
     release_channel: "stable",
+    reason_code: "business_admission_rejected",
+    source_ref: "trigger_event:submit_attempt_001",
     ...overrides,
   } as const;
 }
@@ -50,14 +53,40 @@ function event(
 ): DurableEventEnvelopeV1 {
   return {
     event_id: "evt_001",
+    event_type: "trigger.rejected",
+    schema_version: "trigger_processor_event.v1",
+    producer: "trigger_processor",
+    occurred_at: "2026-07-21T05:00:00.000Z",
+    idempotency_key: "submit_attempt_001:rejected",
+    trace_id: "trace_001",
+    payload: {
+      ...triggerPayloadBase(),
+      submit_attempt_id: "submit_attempt_001",
+      rejection_stage: "business_admission",
+      rejection_code: "admission_capacity_exceeded",
+    },
+    ...overrides,
+  };
+}
+
+function pendingRuntimeEvent(
+  overrides: Partial<DurableEventEnvelopeV1> = {},
+): DurableEventEnvelopeV1 {
+  return {
+    event_id: "evt_runtime_pending_001",
     event_type: "runtime.run.completed",
     schema_version: "runtime_domain_event.v1",
     producer: "action_runtime",
     occurred_at: "2026-07-21T05:00:00.000Z",
     idempotency_key: "run_001:completed",
-    trace_id: "trace_001",
+    trace_id: "trace_runtime_pending_001",
     payload: {
-      ...botScope(),
+      scope_kind: "bot",
+      workspace_id: "workspace_001",
+      bot_id: "bot_001",
+      owner_agent_id: "owner_agent_001",
+      deployment_environment: "dev",
+      release_channel: "stable",
       runtime_run_id: "run_001",
       outcome: "completed",
     },
@@ -95,6 +124,25 @@ function triggerEvent(
   };
 }
 
+function claimedEventRecord(
+  outboxId: string,
+  claimToken: string,
+  eventId = outboxId,
+): ClaimedOutboxRecordV1 {
+  const envelope = event({
+    event_id: eventId,
+    idempotency_key: `${eventId}:rejected`,
+  });
+  return {
+    outbox_id: outboxId,
+    claim_token: claimToken,
+    attempt_count: 1,
+    target: "trigger_processor.admission_audit",
+    envelope,
+    payload_hash: canonicalPayloadHashV1(envelope.payload),
+  };
+}
+
 interface StoredRecord extends ClaimedOutboxRecordV1 {
   status: "pending" | "dispatching" | "retry_wait" | "sent" | "failed";
   next_retry_at: string | null;
@@ -129,7 +177,7 @@ class DurableStoreFake implements DurableOutboxStorePortV1 {
       outbox_id: `outbox_${index + 1}`,
       claim_token: "",
       attempt_count: 0,
-      target: "trigger_processor.runtime_event_append",
+      target: "trigger_processor.admission_audit",
       envelope,
       payload_hash: canonicalPayloadHashV1(envelope.payload),
       status: "pending",
@@ -172,7 +220,8 @@ class DurableStoreFake implements DurableOutboxStorePortV1 {
       .map((record) => {
         record.status = "dispatching";
         record.attempt_count += 1;
-        record.claim_token = `${request.worker_id}:${record.attempt_count}`;
+        record.claim_token =
+          `${request.worker_id}:${record.outbox_id}:${record.attempt_count}`;
         record.locked_until = new Date(
           nowMs + request.lease_seconds * 1_000,
         ).toISOString();
@@ -228,7 +277,7 @@ function dispatcher(
   store: DurableOutboxStorePortV1,
   transport: DurableEventTransportPortV1,
   clock: { now: Date },
-  ownerService: ServiceIdV1 = "action_runtime",
+  ownerService: ServiceIdV1 = "trigger_processor",
   transportEpoch = "epoch_1",
   transportGeneration = 1,
 ) {
@@ -238,7 +287,7 @@ function dispatcher(
     {
       owner_service: ownerService,
       worker_id: "worker_001",
-      batch_size: 100,
+      batch_size: 16,
       lease_seconds: 5,
       max_attempts: 3,
       retry_base_delay_ms: 250,
@@ -252,6 +301,33 @@ function dispatcher(
 }
 
 describe("durable outbox dispatcher V1", () => {
+  it("rejects a pending owner before claim or acknowledgement side effects", () => {
+    let claims = 0;
+    let acknowledgements = 0;
+    const store: DurableOutboxStorePortV1 = {
+      async claim() {
+        claims += 1;
+        return [];
+      },
+      async acknowledge() {
+        acknowledgements += 1;
+      },
+    };
+
+    expect(() =>
+      dispatcher(
+        store,
+        { async publish() { throw new Error("must not publish"); } },
+        { now: new Date("2026-07-21T05:00:01.000Z") },
+        "action_runtime",
+      ),
+    ).toThrow(/no active owner durable event wire contract/u);
+    expect({ claims, acknowledgements }).toEqual({
+      claims: 0,
+      acknowledgements: 0,
+    });
+  });
+
   it("recovers an event committed before any dispatcher process existed", async () => {
     const store = new DurableStoreFake([event()]);
     const published: string[] = [];
@@ -277,6 +353,138 @@ describe("durable outbox dispatcher V1", () => {
     expect(store.records[0]?.status).toBe("sent");
   });
 
+  it("snapshots claim pages and constructor fences before entering publish", async () => {
+    const claimed = [claimedEventRecord("outbox_snapshot_1", "claim_snapshot_1")];
+    const acknowledged: string[] = [];
+    const claimRequests: Array<Readonly<{
+      limit: number;
+      current_transport_epoch: string;
+      current_transport_generation: number;
+    }>> = [];
+    const config = {
+      owner_service: "trigger_processor" as const,
+      worker_id: "worker_snapshot",
+      batch_size: 2,
+      lease_seconds: 5,
+      max_attempts: 3,
+      retry_base_delay_ms: 250,
+      retry_max_delay_ms: 15_000,
+      retry_jitter: "none" as const,
+      current_transport_epoch: "epoch_snapshot",
+      current_transport_generation: 7,
+    };
+    const worker = createDurableOutboxDispatcherV1(
+      {
+        async claim(request) {
+          claimRequests.push(request);
+          return claimed;
+        },
+        async acknowledge(request) {
+          acknowledged.push(request.outbox_id);
+        },
+      },
+      {
+        async publish() {
+          claimed.push(
+            claimedEventRecord("outbox_late_append", "claim_late_append"),
+          );
+          return {
+            transport_ref: "redis_stream:snapshot:1-0",
+            transport_epoch: "epoch_snapshot",
+            transport_generation: 7,
+          };
+        },
+      },
+      config,
+      { now: () => new Date("2026-07-22T07:00:00.000Z") },
+    );
+
+    Object.assign(config, {
+      owner_service: "action_runtime",
+      batch_size: 999,
+      current_transport_epoch: "epoch_mutated",
+      current_transport_generation: 999,
+    });
+
+    await expect(worker.dispatchBatch()).resolves.toEqual({
+      claimed: 1,
+      sent: 1,
+      retry_wait: 0,
+      failed: 0,
+    });
+    expect(claimRequests).toEqual([{
+      worker_id: "worker_snapshot",
+      limit: 2,
+      lease_seconds: 5,
+      now: "2026-07-22T07:00:00.000Z",
+      current_transport_epoch: "epoch_snapshot",
+      current_transport_generation: 7,
+    }]);
+    expect(acknowledged).toEqual(["outbox_snapshot_1"]);
+  });
+
+  it("rejects duplicate outbox identities before any publish side effect", async () => {
+    let publishes = 0;
+    const duplicateClaim = [
+      claimedEventRecord("outbox_duplicate", "claim_duplicate_1"),
+      claimedEventRecord("outbox_duplicate", "claim_duplicate_2"),
+    ];
+    const worker = dispatcher(
+      {
+        async claim() { return duplicateClaim; },
+        async acknowledge() { throw new Error("must not acknowledge"); },
+      },
+      {
+        async publish() {
+          publishes += 1;
+          throw new Error("must not publish");
+        },
+      },
+      { now: new Date("2026-07-22T07:00:00.000Z") },
+    );
+
+    await expect(worker.dispatchBatch()).rejects.toThrow(
+      /outbox ids must be unique/u,
+    );
+    expect(publishes).toBe(0);
+  });
+
+  it("allows one opaque claim token to fence distinct outbox rows", async () => {
+    const sharedClaimToken = "claim_batch_001";
+    const claims = [
+      claimedEventRecord("outbox_shared_token_1", sharedClaimToken),
+      claimedEventRecord("outbox_shared_token_2", sharedClaimToken),
+    ];
+    const acknowledgements: string[] = [];
+    const worker = dispatcher(
+      {
+        async claim() { return claims; },
+        async acknowledge(request) {
+          acknowledgements.push(`${request.outbox_id}:${request.claim_token}`);
+        },
+      },
+      {
+        async publish({ envelope }) {
+          return {
+            transport_ref: `redis_stream:${envelope.event_id}`,
+            transport_epoch: "epoch_1",
+            transport_generation: 1,
+          };
+        },
+      },
+      { now: new Date("2026-07-22T07:00:00.000Z") },
+    );
+
+    await expect(worker.dispatchBatch()).resolves.toMatchObject({
+      claimed: 2,
+      sent: 2,
+    });
+    expect(acknowledgements).toEqual([
+      `outbox_shared_token_1:${sharedClaimToken}`,
+      `outbox_shared_token_2:${sharedClaimToken}`,
+    ]);
+  });
+
   it("does not let a stale transport generation claim after cutover", async () => {
     const store = new DurableStoreFake([event()]);
     store.activeTransportEpoch = "epoch_2";
@@ -295,7 +503,7 @@ describe("durable outbox dispatcher V1", () => {
     const clock = { now: new Date("2026-07-21T05:00:01.000Z") };
 
     await expect(
-      dispatcher(store, transport, clock, "action_runtime", "epoch_1", 1)
+      dispatcher(store, transport, clock, "trigger_processor", "epoch_1", 1)
         .dispatchBatch(),
     ).resolves.toEqual({
       claimed: 0,
@@ -307,7 +515,7 @@ describe("durable outbox dispatcher V1", () => {
     expect(store.records[0]?.status).toBe("pending");
 
     await expect(
-      dispatcher(store, transport, clock, "action_runtime", "epoch_2", 2)
+      dispatcher(store, transport, clock, "trigger_processor", "epoch_2", 2)
         .dispatchBatch(),
     ).resolves.toEqual({
       claimed: 1,
@@ -373,12 +581,35 @@ describe("durable outbox dispatcher V1", () => {
       attempt_count: 1,
     });
     expect(store.acknowledgements[0]?.error).toEqual({
-      code: "transport_unavailable",
+      code: "delivery_outcome_ambiguous",
       retryable: true,
+    });
+    expect(store.acknowledgements[0]?.next_retry_at).toBe(
+      "2026-07-21T05:00:01.125Z",
+    );
+  });
+
+  it("does not retry a permanent bounded-transport rejection", async () => {
+    const store = new DurableStoreFake([event()]);
+    const clock = { now: new Date("2026-07-21T05:00:01.000Z") };
+    const transport: DurableEventTransportPortV1 = {
+      async publish() {
+        throw new EventTransportPreflightErrorV1(
+          "transport_rejected",
+          "Redis Stream message exceeds the bounded delivery size",
+        );
+      },
+    };
+
+    await expect(dispatcher(store, transport, clock).dispatchBatch()).resolves
+      .toEqual({ claimed: 1, sent: 0, retry_wait: 0, failed: 1 });
+    expect(store.acknowledgements[0]?.error).toEqual({
+      code: "transport_rejected",
+      retryable: false,
     });
   });
 
-  it("moves an exhausted transient delivery to failed with a terminal error", async () => {
+  it("never terminalizes an exhausted commit-ambiguous delivery attempt", async () => {
     const store = new DurableStoreFake([event()]);
     const clock = { now: new Date("2026-07-21T05:00:01.000Z") };
     const transport: DurableEventTransportPortV1 = {
@@ -392,15 +623,16 @@ describe("durable outbox dispatcher V1", () => {
     };
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       const summary = await dispatcher(store, transport, clock).dispatchBatch();
-      expect(summary).toMatchObject(
-        attempt < 3 ? { retry_wait: 1, failed: 0 } : { retry_wait: 0, failed: 1 },
-      );
+      expect(summary).toMatchObject({ retry_wait: 1, failed: 0 });
       clock.now = new Date(clock.now.getTime() + 1_000);
     }
-    expect(store.records[0]).toMatchObject({ status: "failed", attempt_count: 3 });
+    expect(store.records[0]).toMatchObject({
+      status: "retry_wait",
+      attempt_count: 3,
+    });
     expect(store.acknowledgements[2]?.error).toEqual({
-      code: "delivery_retry_exhausted",
-      retryable: false,
+      code: "delivery_outcome_ambiguous",
+      retryable: true,
     });
   });
 
@@ -456,10 +688,8 @@ describe("durable outbox dispatcher V1", () => {
     expect(store.records[0]?.status).toBe("failed");
   });
 
-  it("fails an unknown owner event type before transport", async () => {
-    const store = new DurableStoreFake([
-      event({ event_type: "runtime.run.unregistered" }),
-    ]);
+  it("fails a declared-but-pending owner before constructing a dispatcher", () => {
+    const store = new DurableStoreFake([pendingRuntimeEvent()]);
     let publishes = 0;
     const transport: DurableEventTransportPortV1 = {
       async publish() {
@@ -473,18 +703,17 @@ describe("durable outbox dispatcher V1", () => {
     };
     const clock = { now: new Date("2026-07-21T05:00:01.000Z") };
 
-    await expect(dispatcher(store, transport, clock).dispatchBatch()).resolves
-      .toMatchObject({ failed: 1, retry_wait: 0 });
+    expect(() =>
+      dispatcher(store, transport, clock, "action_runtime"),
+    ).toThrow(/no active owner durable event wire contract/u);
     expect(publishes).toBe(0);
-    expect(store.acknowledgements[0]?.error).toEqual({
-      code: "outbox_contract_violation",
-      retryable: false,
-    });
+    expect(store.acknowledgements).toHaveLength(0);
+    expect(store.records[0]?.status).toBe("pending");
   });
 
   it("fails a durable event whose target is outside the route matrix", async () => {
     const store = new DurableStoreFake([event()]);
-    store.records[0]!.target = "memory.runtime_event_append";
+    store.records[0]!.target = "memory.admission_audit";
     let publishes = 0;
     const transport: DurableEventTransportPortV1 = {
       async publish() {
@@ -534,16 +763,163 @@ describe("durable outbox dispatcher V1", () => {
       retryable: false,
     });
   });
+
+  it("bounds oversized and over-deep poison snapshots before publishing", async () => {
+    let deepPayload: Record<string, unknown> = { leaf: true };
+    for (let depth = 0; depth < 70; depth += 1) {
+      deepPayload = { next: deepPayload };
+    }
+    const store = new DurableStoreFake([
+      event({ event_id: "evt_deep_poison" }),
+      event({ event_id: "evt_oversized_poison" }),
+    ]);
+    store.records[0]!.envelope = event({
+      event_id: "evt_deep_poison",
+      idempotency_key: "evt_deep_poison:rejected",
+      payload: deepPayload as never,
+    });
+    store.records[1]!.envelope = event({
+      event_id: "evt_oversized_poison",
+      idempotency_key: "evt_oversized_poison:rejected",
+      payload: { value: "x".repeat(1_048_577) } as never,
+    });
+    let publishes = 0;
+    const transport: DurableEventTransportPortV1 = {
+      async publish() {
+        publishes += 1;
+        throw new Error("poison rows must not publish");
+      },
+    };
+
+    await expect(
+      dispatcher(store, transport, {
+        now: new Date("2026-07-22T07:00:00.000Z"),
+      }).dispatchBatch(),
+    ).resolves.toEqual({ claimed: 2, sent: 0, retry_wait: 0, failed: 2 });
+    expect(publishes).toBe(0);
+    expect(store.records.map((record) => record.status)).toEqual([
+      "failed",
+      "failed",
+    ]);
+  });
 });
 
 describe("durable sent outbox redrive V1", () => {
+  it("rejects a pending owner before claiming or rewriting sent rows", () => {
+    let claims = 0;
+    let acknowledgements = 0;
+
+    expect(() =>
+      createDurableSentOutboxRedriverV1(
+        {
+          async claimSentForRedrive() {
+            claims += 1;
+            return [];
+          },
+          async acknowledgeSentRedrive() {
+            acknowledgements += 1;
+          },
+        },
+        { async publish() { throw new Error("must not publish"); } },
+        {
+          owner_service: "timer_trigger_app",
+          worker_id: "redrive_worker",
+          batch_size: 10,
+          lease_seconds: 30,
+          current_transport_epoch: "epoch_current",
+          current_transport_generation: 1,
+        },
+      ),
+    ).toThrow(/no active owner durable event wire contract/u);
+    expect({ claims, acknowledgements }).toEqual({
+      claims: 0,
+      acknowledgements: 0,
+    });
+  });
+
+  it("snapshots redrive configuration and claimed rows before publish", async () => {
+    const firstEnvelope = event({
+      event_id: "evt_redrive_snapshot_1",
+      idempotency_key: "evt_redrive_snapshot_1:rejected",
+    });
+    const rows = [{
+      outbox_id: "outbox_redrive_snapshot_1",
+      claim_token: "claim_redrive_snapshot_1",
+      attempt_count: 1,
+      target: "trigger_processor.admission_audit",
+      envelope: firstEnvelope,
+      payload_hash: canonicalPayloadHashV1(firstEnvelope.payload),
+      sent_at: "2026-07-22T06:00:00.000Z",
+      transport_ref: "redis_stream:old:1-0",
+      transport_epoch: "epoch_old",
+      transport_generation: 1,
+      active_transport_generation: 2,
+    }];
+    const acknowledgements: string[] = [];
+    const config = {
+      owner_service: "trigger_processor" as const,
+      worker_id: "redrive_snapshot",
+      batch_size: 2,
+      lease_seconds: 30,
+      current_transport_epoch: "epoch_new",
+      current_transport_generation: 2,
+    };
+    const redriver = createDurableSentOutboxRedriverV1(
+      {
+        async claimSentForRedrive() { return rows; },
+        async acknowledgeSentRedrive(request) {
+          acknowledgements.push(request.outbox_id);
+        },
+        async acknowledgeSentRedrivePermanentFailure() {
+          throw new Error("valid snapshot must not be quarantined");
+        },
+      },
+      {
+        async publish() {
+          const lateEnvelope = event({
+            event_id: "evt_redrive_late_2",
+            idempotency_key: "evt_redrive_late_2:rejected",
+          });
+          rows.push({
+            ...rows[0]!,
+            outbox_id: "outbox_redrive_late_2",
+            claim_token: "claim_redrive_late_2",
+            envelope: lateEnvelope,
+            payload_hash: canonicalPayloadHashV1(lateEnvelope.payload),
+          });
+          return {
+            transport_ref: "redis_stream:new:1-0",
+            transport_epoch: "epoch_new",
+            transport_generation: 2,
+          };
+        },
+      },
+      config,
+      { now: () => new Date("2026-07-22T07:00:00.000Z") },
+    );
+    Object.assign(config, {
+      owner_service: "memory",
+      batch_size: 999,
+      current_transport_epoch: "epoch_mutated",
+      current_transport_generation: 999,
+    });
+
+    await expect(redriver.redriveBatch()).resolves.toEqual({
+      claimed: 1,
+      redriven: 1,
+      retryable_failures: 0,
+      permanent_failures: 0,
+    });
+    expect(acknowledgements).toEqual(["outbox_redrive_snapshot_1"]);
+  });
+
   it("rebuilds a lost Redis epoch from retained PostgreSQL facts and dedupes replay", async () => {
     const envelope = event({ event_id: "evt_redrive_001" });
     const row = {
       outbox_id: "outbox_redrive_001",
       claim_token: "redrive_worker:1",
       attempt_count: 1,
-      target: "trigger_processor.runtime_event_append",
+      target: "trigger_processor.admission_audit",
       envelope,
       payload_hash: canonicalPayloadHashV1(envelope.payload),
       sent_at: "2026-07-21T05:00:00.000Z",
@@ -601,7 +977,7 @@ describe("durable sent outbox redrive V1", () => {
         },
       },
       {
-        owner_service: "action_runtime",
+        owner_service: "trigger_processor",
         worker_id: "redrive_worker",
         batch_size: 10,
         lease_seconds: 30,
@@ -633,7 +1009,7 @@ describe("durable sent outbox redrive V1", () => {
       outbox_id: "outbox_redrive_same_epoch_001",
       claim_token: "redrive_worker:1",
       attempt_count: 1,
-      target: "trigger_processor.runtime_event_append",
+      target: "trigger_processor.admission_audit",
       envelope,
       payload_hash: canonicalPayloadHashV1(envelope.payload),
       sent_at: "2026-07-21T05:00:00.000Z",
@@ -668,7 +1044,7 @@ describe("durable sent outbox redrive V1", () => {
         },
       },
       {
-        owner_service: "action_runtime",
+        owner_service: "trigger_processor",
         worker_id: "redrive_worker",
         batch_size: 10,
         lease_seconds: 30,
@@ -686,6 +1062,237 @@ describe("durable sent outbox redrive V1", () => {
       transport_ref: "redis_stream:same-epoch-new-1-0",
       transport_generation: 2,
     });
+  });
+
+  it("fails a redrive claim with a non-positive persisted generation before publish", async () => {
+    const envelope = event({ event_id: "evt_redrive_invalid_generation_001" });
+    let publishes = 0;
+    const quarantined: string[] = [];
+    const redriver = createDurableSentOutboxRedriverV1(
+      {
+        async claimSentForRedrive() {
+          return [{
+            outbox_id: "outbox_redrive_invalid_generation_001",
+            claim_token: "redrive_worker:1",
+            attempt_count: 1,
+            target: "trigger_processor.admission_audit",
+            envelope,
+            payload_hash: canonicalPayloadHashV1(envelope.payload),
+            sent_at: "2026-07-21T05:00:00.000Z",
+            transport_ref: "redis_stream:old-1-0",
+            transport_epoch: "epoch_old",
+            transport_generation: 0,
+            active_transport_generation: 2,
+          }];
+        },
+        async acknowledgeSentRedrive() {
+          throw new Error("invalid claim must not be acknowledged as redriven");
+        },
+        async acknowledgeSentRedrivePermanentFailure(request) {
+          expect(request).toMatchObject({
+            outbox_id: "outbox_redrive_invalid_generation_001",
+            previous_transport_generation: 0,
+            current_transport_generation: 2,
+            failure_code: "outbox_contract_violation",
+          });
+          quarantined.push(request.outbox_id);
+          return { acknowledged: true, status: "quarantined" };
+        },
+      },
+      {
+        async publish() {
+          publishes += 1;
+          throw new Error("invalid claim must not reach the transport");
+        },
+      },
+      {
+        owner_service: "trigger_processor",
+        worker_id: "redrive_worker",
+        batch_size: 10,
+        lease_seconds: 30,
+        current_transport_epoch: "epoch_current",
+        current_transport_generation: 2,
+      },
+    );
+
+    await expect(redriver.redriveBatch()).resolves.toEqual({
+      claimed: 1,
+      redriven: 0,
+      retryable_failures: 0,
+      permanent_failures: 1,
+    });
+    expect(publishes).toBe(0);
+    expect(quarantined).toEqual(["outbox_redrive_invalid_generation_001"]);
+  });
+
+  it("does not quarantine a valid row when the post-publish PostgreSQL ACK is ambiguous", async () => {
+    const envelope = event({ event_id: "evt_redrive_ack_ambiguous_001" });
+    let quarantineCalls = 0;
+    const redriver = createDurableSentOutboxRedriverV1(
+      {
+        async claimSentForRedrive() {
+          return [{
+            outbox_id: "outbox_redrive_ack_ambiguous_001",
+            claim_token: "redrive_worker:ack-ambiguous",
+            attempt_count: 1,
+            target: "trigger_processor.admission_audit",
+            envelope,
+            payload_hash: canonicalPayloadHashV1(envelope.payload),
+            sent_at: "2026-07-21T05:00:00.000Z",
+            transport_ref: "redis_stream:old-1-0",
+            transport_epoch: "epoch_old",
+            transport_generation: 1,
+            active_transport_generation: 2,
+          }];
+        },
+        async acknowledgeSentRedrive() {
+          throw new OutboxClaimContractErrorV1(
+            "PostgreSQL ACK shape was malformed after commit",
+          );
+        },
+        async acknowledgeSentRedrivePermanentFailure() {
+          quarantineCalls += 1;
+          return { acknowledged: true, status: "quarantined" };
+        },
+      },
+      {
+        async publish() {
+          return {
+            transport_ref: "redis_stream:new-1-0",
+            transport_epoch: "epoch_current",
+            transport_generation: 2,
+          };
+        },
+      },
+      {
+        owner_service: "trigger_processor",
+        worker_id: "redrive_worker",
+        batch_size: 1,
+        lease_seconds: 30,
+        current_transport_epoch: "epoch_current",
+        current_transport_generation: 2,
+      },
+    );
+
+    await expect(redriver.redriveBatch()).resolves.toEqual({
+      claimed: 1,
+      redriven: 0,
+      retryable_failures: 1,
+      permanent_failures: 0,
+    });
+    expect(quarantineCalls).toBe(0);
+  });
+
+  it("does not quarantine a valid row when publish throws after a commit-ambiguous attempt", async () => {
+    const envelope = event({ event_id: "evt_redrive_publish_ambiguous_001" });
+    let quarantineCalls = 0;
+    const redriver = createDurableSentOutboxRedriverV1(
+      {
+        async claimSentForRedrive() {
+          return [{
+            outbox_id: "outbox_redrive_publish_ambiguous_001",
+            claim_token: "redriver:publish-ambiguous",
+            attempt_count: 1,
+            target: "trigger_processor.admission_audit",
+            envelope,
+            payload_hash: canonicalPayloadHashV1(envelope.payload),
+            sent_at: "2026-07-22T00:00:00.000Z",
+            transport_ref: "redis_stream:old:1-0",
+            transport_epoch: "epoch-old",
+            transport_generation: 1,
+            active_transport_generation: 2,
+          }];
+        },
+        async acknowledgeSentRedrive() {
+          throw new Error("ACK must not be reached");
+        },
+        async acknowledgeSentRedrivePermanentFailure() {
+          quarantineCalls += 1;
+          return { acknowledged: true, status: "quarantined" } as const;
+        },
+      },
+      {
+        async publish() {
+          throw new EventTransportErrorV1(
+            "transport_rejected",
+            false,
+            "connection closed after Redis accepted the command",
+          );
+        },
+      },
+      {
+        owner_service: "trigger_processor",
+        worker_id: "redriver",
+        batch_size: 1,
+        lease_seconds: 30,
+        current_transport_epoch: "epoch-new",
+        current_transport_generation: 2,
+      },
+      { now: () => new Date("2026-07-22T00:01:00.000Z") },
+    );
+
+    await expect(redriver.redriveBatch()).resolves.toEqual({
+      claimed: 1,
+      redriven: 0,
+      retryable_failures: 1,
+      permanent_failures: 0,
+    });
+    expect(quarantineCalls).toBe(0);
+  });
+
+  it("keeps a permanent redrive failure retryable until its fenced quarantine ACK commits", async () => {
+    const envelope = event({ event_id: "evt_redrive_quarantine_retry_001" });
+    let failQuarantine = true;
+    let quarantineAttempts = 0;
+    const store: DurableSentOutboxRedriveStorePortV1 = {
+      async claimSentForRedrive() {
+        return [{
+          outbox_id: "outbox_redrive_quarantine_retry_001",
+          claim_token: `redrive_worker:${quarantineAttempts + 1}`,
+          attempt_count: quarantineAttempts + 1,
+          target: "trigger_processor.admission_audit",
+          envelope,
+          payload_hash: canonicalPayloadHashV1(envelope.payload),
+          sent_at: "2026-07-21T05:00:00.000Z",
+          transport_ref: "redis_stream:old-1-0",
+          transport_epoch: "epoch_old",
+          transport_generation: 0,
+          active_transport_generation: 2,
+        }];
+      },
+      async acknowledgeSentRedrive() {
+        throw new Error("invalid claim must not be acknowledged as redriven");
+      },
+      async acknowledgeSentRedrivePermanentFailure() {
+        quarantineAttempts += 1;
+        if (failQuarantine) throw new Error("commit outcome unknown");
+        return { acknowledged: true, status: "quarantined" };
+      },
+    };
+    const redriver = createDurableSentOutboxRedriverV1(
+      store,
+      { async publish() { throw new Error("must not publish"); } },
+      {
+        owner_service: "trigger_processor",
+        worker_id: "redrive_worker",
+        batch_size: 1,
+        lease_seconds: 30,
+        current_transport_epoch: "epoch_current",
+        current_transport_generation: 2,
+      },
+      { now: () => new Date("2026-07-22T04:00:00.000Z") },
+    );
+
+    await expect(redriver.redriveBatch()).resolves.toMatchObject({
+      retryable_failures: 1,
+      permanent_failures: 0,
+    });
+    failQuarantine = false;
+    await expect(redriver.redriveBatch()).resolves.toMatchObject({
+      retryable_failures: 0,
+      permanent_failures: 1,
+    });
+    expect(quarantineAttempts).toBe(2);
   });
 });
 
@@ -706,6 +1313,33 @@ describe("durable inbox consumer V1", () => {
       status: "processed",
     });
     expect(observedScope).toBe(durableEventScopeFingerprintV1(envelope));
+  });
+
+  it("snapshots consumer routing and the envelope before the inbox await", async () => {
+    const config = {
+      consumer_service: "observation_gateway" as const,
+    };
+    const original = triggerEvent();
+    let observedReason: unknown;
+    const consumer = createDurableInboxConsumerV1(
+      {
+        async apply(request) {
+          expect(Object.isFrozen(request.envelope)).toBe(true);
+          expect(Object.isFrozen(request.envelope.payload)).toBe(true);
+          Object.assign(original.payload, { reason_code: "mutated_after_snapshot" });
+          observedReason = (request.envelope.payload as Record<string, unknown>)
+            .reason_code;
+          return { status: "processed" };
+        },
+      },
+      config,
+    );
+    Object.assign(config, { consumer_service: "memory" });
+
+    await expect(consumer.consume(original)).resolves.toEqual({
+      status: "processed",
+    });
+    expect(observedReason).toBe("admission_accepted");
   });
 
   it("processes one scoped identity once and rejects same-key semantic drift", async () => {
@@ -738,28 +1372,27 @@ describe("durable inbox consumer V1", () => {
     });
     await expect(consumer.consume(event())).resolves.toEqual({ status: "processed" });
     await expect(consumer.consume(event())).resolves.toEqual({ status: "replayed" });
-    const skillPayload = {
-      ...botScope(),
-      runtime_run_id: "run_001",
-      skill_id: "skill_001",
-    } as const;
+    const semanticConflictKey = "semantic_conflict_001";
     await expect(
       consumer.consume(
         event({
-          event_id: "evt_skill_001",
-          event_type: "runtime.skill.load.requested",
-          idempotency_key: "skill_load:run_001:skill_001",
-          payload: skillPayload,
+          event_id: "evt_rejected_semantic_001",
+          idempotency_key: semanticConflictKey,
         }),
       ),
     ).resolves.toEqual({ status: "processed" });
     await expect(
       consumer.consume(
         event({
-          event_id: "evt_skill_002",
-          event_type: "runtime.skill.load.resolved",
-          idempotency_key: "skill_load:run_001:skill_001",
-          payload: skillPayload,
+          event_id: "evt_cooldown_semantic_002",
+          event_type: "cooldown.expired",
+          idempotency_key: semanticConflictKey,
+          payload: {
+            ...triggerPayloadBase(),
+            trigger_process_id: "process_001",
+            cooldown_until: "2026-07-21T05:00:00.000Z",
+            expired_at: "2026-07-21T05:00:01.000Z",
+          },
         }),
       ),
     ).rejects.toThrow(/semantic hash conflict/);
@@ -783,9 +1416,13 @@ describe("durable inbox consumer V1", () => {
       consumer.consume(
         event({
           payload: {
-            ...botScope({ bot_id: "bot_002", owner_agent_id: "owner_agent_002" }),
-            runtime_run_id: "run_001",
-            outcome: "completed",
+            ...triggerPayloadBase({
+              bot_id: "bot_002",
+              owner_agent_id: "owner_agent_002",
+            }),
+            submit_attempt_id: "submit_attempt_001",
+            rejection_stage: "business_admission",
+            rejection_code: "admission_capacity_exceeded",
           },
         }),
       ),
@@ -793,7 +1430,7 @@ describe("durable inbox consumer V1", () => {
     expect(seen.size).toBe(2);
   });
 
-  it("rejects an unknown producer event branch before owner side effects", async () => {
+  it("rejects a declared-but-pending producer branch before owner side effects", async () => {
     let applies = 0;
     const consumer = createDurableInboxConsumerV1({
       async apply() {
@@ -802,7 +1439,7 @@ describe("durable inbox consumer V1", () => {
       },
     }, { consumer_service: "trigger_processor" });
     await expect(
-      consumer.consume(event({ event_type: "runtime.run.unregistered" })),
+      consumer.consume(pendingRuntimeEvent()),
     ).rejects.toThrow(/producer owner union/u);
     expect(applies).toBe(0);
   });
@@ -819,7 +1456,12 @@ describe("durable inbox consumer V1", () => {
     expect(applies).toBe(0);
   });
 
-  it.each([null, {}, { status: "unknown" }])(
+  it.each([
+    null,
+    {},
+    { status: "unknown" },
+    { status: "processed", unexpected: true },
+  ])(
     "rejects invalid inbox apply result %# before callers can ACK",
     async (invalidResult) => {
       const consumer = createDurableInboxConsumerV1(
@@ -863,6 +1505,10 @@ describe("durable event consumer worker V1", () => {
       this.acknowledged.push(...request.delivery_ids);
       return { acknowledged: request.delivery_ids.length };
     }
+
+    public transportRefForDeliveryId(deliveryId: string): string {
+      return `redis_stream:pai:test:events:${deliveryId}`;
+    }
   }
 
   function deadLetterFake() {
@@ -874,6 +1520,48 @@ describe("durable event consumer worker V1", () => {
       },
     };
     return { port, records };
+  }
+
+  function deletedDeliveryReconciliationFake() {
+    let guardRequestSequence = 0;
+    return {
+      recorder: {
+        async verifyPeriodicFullAuditActive(request: {
+          readonly request_id: string;
+          readonly consumer_service: "trigger_processor";
+          readonly coverage_fingerprint: string;
+          readonly transport_epoch: string;
+          readonly transport_generation: number;
+        }) {
+          return {
+            acknowledged: true as const,
+            status: "active" as const,
+            request_id: request.request_id,
+            consumer_service: request.consumer_service,
+            coverage_fingerprint: request.coverage_fingerprint,
+            transport_epoch: request.transport_epoch,
+            transport_generation: request.transport_generation,
+            audit_fence: "1",
+            checked_at: "2026-07-22T00:00:00.000Z",
+            heartbeat_at: "2026-07-22T00:00:00.000Z",
+            last_full_pass_completed_at: "2026-07-22T00:00:00.000Z",
+            expires_at: "2026-07-22T00:01:00.000Z",
+          };
+        },
+        async recordDeletedTransportRefs(request: {
+          readonly transport_refs: readonly string[];
+        }) {
+          return { matched: request.transport_refs.length, already_missing: 0 };
+        },
+      },
+      transport_epoch: "epoch_test",
+      transport_generation: 1,
+      coverage_fingerprint: `sha256:${"1".repeat(64)}`,
+      required_remaining_ms: 5_000,
+      max_heartbeat_age_ms: 1_000,
+      max_full_audit_lag_ms: 60_000,
+      new_guard_request_id: () => `guard-${++guardRequestSequence}`,
+    } as const;
   }
 
   it("acks transport only after the transactional inbox apply succeeds", async () => {
@@ -891,6 +1579,7 @@ describe("durable event consumer worker V1", () => {
     const worker = createDurableEventConsumerWorkerV1(delivery, inbox, {
       consumer_service: "trigger_processor",
       dead_letter: deadLetter.port,
+      deleted_delivery_reconciliation: deletedDeliveryReconciliationFake(),
     });
     await expect(worker.consumeNewBatch({ count: 10, block_ms: 0 })).resolves.toEqual({
       received: 1,
@@ -904,6 +1593,97 @@ describe("durable event consumer worker V1", () => {
     });
     expect(applied).toEqual(["evt_worker_001"]);
     expect(delivery.acknowledged).toEqual(["1-0"]);
+  });
+
+  it("snapshots a read page before inbox awaits can append more deliveries", async () => {
+    const messages: DurableEventDeliveryV1[] = [{
+      kind: "event",
+      delivery_id: "1-0",
+      delivery_ref: "stream:test#1-0",
+      envelope: event({ event_id: "evt_snapshot_delivery_1" }),
+    }];
+    const acknowledged: string[] = [];
+    const worker = createDurableEventConsumerWorkerV1(
+      {
+        async readNew() { return messages; },
+        async reclaimPending() {
+          return { next_start_id: "0-0", deliveries: [], deleted_ids: [] };
+        },
+        async acknowledge(request) {
+          acknowledged.push(...request.delivery_ids);
+          return { acknowledged: request.delivery_ids.length };
+        },
+      },
+      {
+        async apply() {
+          messages.push({
+            kind: "event",
+            delivery_id: "2-0",
+            delivery_ref: "stream:test#2-0",
+            envelope: event({ event_id: "evt_late_delivery_2" }),
+          });
+          return { status: "processed" };
+        },
+      },
+      {
+        consumer_service: "trigger_processor",
+        dead_letter: deadLetterFake().port,
+      },
+    );
+
+    await expect(worker.consumeNewBatch({ count: 2, block_ms: 0 })).resolves
+      .toMatchObject({ received: 1, processed: 1, acknowledged: 1 });
+    expect(acknowledged).toEqual(["1-0"]);
+  });
+
+  it("rejects duplicate delivery identities before inbox, DLQ, or XACK", async () => {
+    let applies = 0;
+    let acknowledgements = 0;
+    const worker = createDurableEventConsumerWorkerV1(
+      {
+        async readNew() {
+          return [
+            {
+              kind: "event" as const,
+              delivery_id: "1-0",
+              delivery_ref: "stream:test#1-0",
+              envelope: event({ event_id: "evt_duplicate_delivery_1" }),
+            },
+            {
+              kind: "event" as const,
+              delivery_id: "1-0",
+              delivery_ref: "stream:test#duplicate-1-0",
+              envelope: event({ event_id: "evt_duplicate_delivery_2" }),
+            },
+          ];
+        },
+        async reclaimPending() {
+          return { next_start_id: "0-0", deliveries: [], deleted_ids: [] };
+        },
+        async acknowledge() {
+          acknowledgements += 1;
+          return { acknowledged: 1 };
+        },
+      },
+      {
+        async apply() {
+          applies += 1;
+          return { status: "processed" };
+        },
+      },
+      {
+        consumer_service: "trigger_processor",
+        dead_letter: deadLetterFake().port,
+      },
+    );
+
+    await expect(
+      worker.consumeNewBatch({ count: 2, block_ms: 0 }),
+    ).rejects.toThrow(/independently unique/u);
+    expect({ applies, acknowledgements }).toEqual({
+      applies: 0,
+      acknowledgements: 0,
+    });
   });
 
   it("does not ack when the inbox transaction fails, leaving the message reclaimable", async () => {
@@ -922,6 +1702,7 @@ describe("durable event consumer worker V1", () => {
     const worker = createDurableEventConsumerWorkerV1(delivery, inbox, {
       consumer_service: "trigger_processor",
       dead_letter: deadLetter.port,
+      deleted_delivery_reconciliation: deletedDeliveryReconciliationFake(),
     });
     await expect(worker.consumeNewBatch({ count: 10, block_ms: 0 })).resolves.toEqual({
       received: 1,
@@ -993,6 +1774,11 @@ describe("durable event consumer worker V1", () => {
       { kind: "event", delivery_id: "1-0", delivery_ref: "stream:test#1-0", envelope: event() },
     ]);
     const order: string[] = [];
+    const originalAcknowledge = delivery.acknowledge.bind(delivery);
+    delivery.acknowledge = async (request) => {
+      order.push("xack");
+      return originalAcknowledge(request);
+    };
     const worker = createDurableEventConsumerWorkerV1(
       delivery,
       {
@@ -1014,11 +1800,6 @@ describe("durable event consumer worker V1", () => {
         },
       },
     );
-    const originalAcknowledge = delivery.acknowledge.bind(delivery);
-    delivery.acknowledge = async (request) => {
-      order.push("xack");
-      return originalAcknowledge(request);
-    };
     await expect(worker.consumeNewBatch({ count: 10, block_ms: 0 })).resolves
       .toMatchObject({ dead_lettered: 1, acknowledged: 1, failed: 0 });
     expect(order).toEqual(["dlq", "xack"]);
@@ -1050,6 +1831,102 @@ describe("durable event consumer worker V1", () => {
     await expect(worker.consumeNewBatch({ count: 10, block_ms: 0 })).resolves
       .toMatchObject({ failed: 1, dead_lettered: 0, acknowledged: 0 });
     expect(delivery.acknowledged).toEqual([]);
+  });
+
+  it("bounds DLQ errors and rejects a widened terminal ACK before XACK", async () => {
+    const delivery = new DeliveryFake([{
+      kind: "invalid",
+      delivery_id: "1-0",
+      delivery_ref: "stream:test#1-0",
+      error_code: "invalid_envelope",
+      error_message: "x".repeat(2_000),
+      raw_fields: [],
+    }]);
+    let recordedMessage = "";
+    const worker = createDurableEventConsumerWorkerV1(
+      delivery,
+      { async apply() { return { status: "processed" }; } },
+      {
+        consumer_service: "trigger_processor",
+        dead_letter: {
+          async recordPermanentFailure(request) {
+            recordedMessage = request.failure_message;
+            return { status: "recorded", unexpected: true } as never;
+          },
+        },
+      },
+    );
+
+    await expect(worker.consumeNewBatch({ count: 10, block_ms: 0 })).resolves
+      .toMatchObject({ failed: 1, dead_lettered: 0, acknowledged: 0 });
+    expect(recordedMessage).toHaveLength(512);
+    expect(delivery.acknowledged).toEqual([]);
+  });
+
+  it("rejects accessor-backed inbox and DLQ acknowledgements before XACK", async () => {
+    const processedDelivery = new DeliveryFake([{
+      kind: "event",
+      delivery_id: "1-0",
+      delivery_ref: "stream:test#1-0",
+      envelope: event({ event_id: "evt_accessor_ack" }),
+    }]);
+    processedDelivery.acknowledge = async () => {
+      const ack = {} as { acknowledged: number };
+      Object.defineProperty(ack, "acknowledged", {
+        enumerable: true,
+        get: () => 1,
+      });
+      return ack;
+    };
+    const processedWorker = createDurableEventConsumerWorkerV1(
+      processedDelivery,
+      { async apply() { return { status: "processed" }; } },
+      {
+        consumer_service: "trigger_processor",
+        dead_letter: deadLetterFake().port,
+      },
+    );
+    await expect(
+      processedWorker.consumeNewBatch({ count: 1, block_ms: 0 }),
+    ).resolves.toMatchObject({
+      processed: 0,
+      failed: 1,
+      acknowledged: 0,
+    });
+
+    const invalidDelivery = new DeliveryFake([{
+      kind: "invalid",
+      delivery_id: "2-0",
+      delivery_ref: "stream:test#2-0",
+      error_code: "invalid_envelope",
+      error_message: "invalid event",
+      raw_fields: [],
+    }]);
+    const invalidWorker = createDurableEventConsumerWorkerV1(
+      invalidDelivery,
+      { async apply() { return { status: "processed" }; } },
+      {
+        consumer_service: "trigger_processor",
+        dead_letter: {
+          async recordPermanentFailure() {
+            const ack = {} as { status: "recorded" };
+            Object.defineProperty(ack, "status", {
+              enumerable: true,
+              get: () => "recorded",
+            });
+            return ack;
+          },
+        },
+      },
+    );
+    await expect(
+      invalidWorker.consumeNewBatch({ count: 1, block_ms: 0 }),
+    ).resolves.toMatchObject({
+      dead_lettered: 0,
+      failed: 1,
+      acknowledged: 0,
+    });
+    expect(invalidDelivery.acknowledged).toEqual([]);
   });
 
   it.each([null, {}, { status: "unknown" }])(
@@ -1124,6 +2001,9 @@ describe("durable event consumer worker V1", () => {
         acknowledged.push(...request.delivery_ids);
         return { acknowledged: request.delivery_ids.length };
       },
+      transportRefForDeliveryId(deliveryId) {
+        return `redis_stream:pai:test:events:${deliveryId}`;
+      },
     };
     const deadLetter = deadLetterFake();
     const worker = createDurableEventConsumerWorkerV1(
@@ -1132,12 +2012,13 @@ describe("durable event consumer worker V1", () => {
       {
         consumer_service: "trigger_processor",
         dead_letter: deadLetter.port,
+        deleted_delivery_reconciliation: deletedDeliveryReconciliationFake(),
       },
     );
     await expect(
       worker.reclaimAndConsumeBatch({
         min_idle_ms: 30_000,
-        count: 1,
+        count: 2,
         start_id: "0-0",
         max_pages: 5,
       }),

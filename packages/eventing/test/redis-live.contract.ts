@@ -17,12 +17,12 @@ describeRedis("locked Redis 8.8 Stream integration", () => {
   const namespace = createRedisNamespaceV1({
     deployment_environment: "local",
     release_channel: "stable",
-    owner_service: "timer_trigger_app",
+    owner_service: "trigger_processor",
     stream_epoch: "epoch_20260722",
     stream_generation: 1,
   });
-  const target = "trigger_processor.timer_submit";
-  const logicalStream = "stream:timer_events";
+  const target = "trigger_processor.admission_audit";
+  const logicalStream = "stream:trigger_events";
   const physicalStream = namespacedRedisKeyV1(namespace, logicalStream);
   let composition: VerifiedRedisStreamCompositionV1 | undefined;
   const reader = redisUrl === undefined ? undefined : createClient({ url: redisUrl });
@@ -51,26 +51,24 @@ describeRedis("locked Redis 8.8 Stream integration", () => {
 
   it("publishes the canonical eight-field envelope into its physical namespace", async () => {
     const envelope = {
-      event_id: "evt_timer_live_001",
-      event_type: "timer.occurrence.due",
-      schema_version: "timer_event.v1",
-      producer: "timer_trigger_app",
+      event_id: "evt_trigger_rejected_live_001",
+      event_type: "trigger.rejected",
+      schema_version: "trigger_processor_event.v1",
+      producer: "trigger_processor",
       occurred_at: "2026-07-21T05:00:00.000Z",
-      idempotency_key: "timer_occurrence_live_001:due",
-      trace_id: "trace_timer_live_001",
+      idempotency_key: "submit_attempt_live_001:rejected",
+      trace_id: "trace_trigger_live_001",
       payload: {
-        scope_kind: "bot",
         workspace_id: "workspace_live_001",
         bot_id: "bot_live_001",
         owner_agent_id: "owner_agent_live_001",
         deployment_environment: "local",
         release_channel: "stable",
-        occurrence_id: "timer_occurrence_live_001",
-        schedule_id: "timer_schedule_live_001",
-        scheduled_fire_at: "2026-07-21T05:00:00.000Z",
-        effective_fire_at: "2026-07-21T05:00:00.000Z",
-        dedupe_key: "timer:timer_occurrence_live_001",
-        is_catch_up: false,
+        reason_code: "business_admission_rejected",
+        source_ref: "trigger_event:submit_attempt_live_001",
+        submit_attempt_id: "submit_attempt_live_001",
+        rejection_stage: "business_admission",
+        rejection_code: "admission_capacity_exceeded",
       },
     } as const;
     const published = await composition!.transport.publish({
@@ -111,25 +109,23 @@ describeRedis("locked Redis 8.8 Stream integration", () => {
     const before = await reader!.xLen(physicalStream);
     const baseEnvelope = {
       event_id: "evt_scope_drift_001",
-      event_type: "timer.occurrence.due",
-      schema_version: "timer_event.v1",
-      producer: "timer_trigger_app",
+      event_type: "trigger.rejected",
+      schema_version: "trigger_processor_event.v1",
+      producer: "trigger_processor",
       occurred_at: "2026-07-21T05:00:00.000Z",
-      idempotency_key: "scope_drift_001:due",
+      idempotency_key: "scope_drift_001:rejected",
       trace_id: "trace_scope_drift_001",
       payload: {
-        scope_kind: "bot",
         workspace_id: "workspace_live_001",
         bot_id: "bot_live_001",
         owner_agent_id: "owner_agent_live_001",
         deployment_environment: "prod",
         release_channel: "stable",
-        occurrence_id: "scope_drift_001",
-        schedule_id: "scope_schedule_001",
-        scheduled_fire_at: "2026-07-21T05:00:00.000Z",
-        effective_fire_at: "2026-07-21T05:00:00.000Z",
-        dedupe_key: "timer:scope_drift_001",
-        is_catch_up: false,
+        reason_code: "business_admission_rejected",
+        source_ref: "trigger_event:scope_drift_001",
+        submit_attempt_id: "scope_drift_001",
+        rejection_stage: "business_admission",
+        rejection_code: "admission_capacity_exceeded",
       },
     } as const;
     await expect(
@@ -144,7 +140,7 @@ describeRedis("locked Redis 8.8 Stream integration", () => {
     const channelDrift = {
       ...baseEnvelope,
       event_id: "evt_scope_drift_002",
-      idempotency_key: "scope_drift_002:due",
+      idempotency_key: "scope_drift_002:rejected",
       payload: {
         ...baseEnvelope.payload,
         deployment_environment: "local",
@@ -168,7 +164,7 @@ describeRedis("locked Redis 8.8 Stream integration", () => {
     const actionEnvelope = {
       event_id: "evt_cross_owner_001",
       event_type: "runtime.run.completed",
-      schema_version: "runtime_event.v1",
+      schema_version: "runtime_domain_event.v1",
       producer: "action_runtime",
       occurred_at: "2026-07-21T05:00:00.000Z",
       idempotency_key: "runtime_run_001:completed",
@@ -194,18 +190,19 @@ describeRedis("locked Redis 8.8 Stream integration", () => {
       }),
     ).rejects.toMatchObject({ code: "transport_rejected", retryable: false });
 
-    const unknownTimerEnvelope = {
+    const pendingTimerEnvelope = {
       ...actionEnvelope,
-      event_id: "evt_unknown_timer_001",
-      event_type: "timer.occurrence.unregistered",
+      event_id: "evt_pending_timer_001",
+      event_type: "timer.occurrence.due",
+      schema_version: "timer_event.v1",
       producer: "timer_trigger_app",
-      idempotency_key: "timer_occurrence_001:unregistered",
+      idempotency_key: "timer_occurrence_001:due",
     } as const;
     await expect(
       composition!.transport.publish({
         target,
-        envelope: unknownTimerEnvelope,
-        payload_hash: canonicalPayloadHashV1(unknownTimerEnvelope.payload),
+        envelope: pendingTimerEnvelope,
+        payload_hash: canonicalPayloadHashV1(pendingTimerEnvelope.payload),
         current_transport_epoch: "epoch_20260722",
         current_transport_generation: 1,
       }),

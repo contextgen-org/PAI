@@ -9,10 +9,13 @@ import {
 
 import {
   buildTriggerProcessorApp,
-  TRIGGER_ADMISSION_INTERNAL_AUTH_POLICIES_V1,
 } from "./app.js";
 import { createTriggerAdmissionApplicationV1 } from "./application/trigger-admission.v1.js";
 import { TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 } from "./db/permission-manifest.v1.js";
+import {
+  assertTriggerIngressConfigurationV1,
+  createTriggerSupabaseIngressVerifierFromEnvV1,
+} from "./supabase-ingress-config.v1.js";
 
 const databaseUrl = process.env.PAI_DATABASE_URL;
 const postgresComposition =
@@ -28,18 +31,24 @@ const triggerAdmission =
     : createTriggerAdmissionApplicationV1(
         ownerDatabaseApplicationDependenciesV1(postgresComposition),
       );
+
+const supabaseIngressVerifier =
+  createTriggerSupabaseIngressVerifierFromEnvV1(process.env);
 const productionDependenciesRequired = requiresProductionDependenciesV1();
 if (postgresComposition === undefined && productionDependenciesRequired) {
   throw new Error(
     "PAI_DATABASE_URL is required for owner PostgreSQL verification in production",
   );
 }
+assertTriggerIngressConfigurationV1(
+  triggerAdmission !== undefined,
+  supabaseIngressVerifier,
+);
 const requireWorkloadVerifier =
   productionDependenciesRequired || postgresComposition !== undefined;
 await startService({
   serviceId: "trigger_processor",
   defaultPort: 3001,
-  internalRouteAuthPolicies: TRIGGER_ADMISSION_INTERNAL_AUTH_POLICIES_V1,
   requireWorkloadVerifier,
   buildApp(options) {
     const app = buildTriggerProcessorApp(
@@ -56,6 +65,9 @@ await startService({
                 },
               ]),
         ],
+        ...(supabaseIngressVerifier === undefined
+          ? {}
+          : { supabaseIngressVerifier }),
       },
       triggerAdmission,
     );

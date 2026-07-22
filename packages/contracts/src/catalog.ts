@@ -13,19 +13,21 @@ import { TypedEvidenceRefV1Schema } from "./shared/typed-evidence-ref.v1.js";
 import { WorkloadCredentialClaimsV1Schema } from "./shared/workload-credential-claims.v1.js";
 import {
   AdmitTriggerCommandV1Schema,
+  AdmitTriggerAcceptedResponseV1Schema,
   AdmitTriggerAuthorizationFailureResponseV1Schema,
   AdmitTriggerConflictResponseV1Schema,
   AdmitTriggerInternalErrorResponseV1Schema,
   AdmitTriggerInvalidRequestResponseV1Schema,
+  AdmitTriggerNotFoundResponseV1Schema,
+  AdmitTriggerOkResponseV1Schema,
+  AdmitTriggerRateLimitedResponseV1Schema,
   AdmitTriggerRetryableFailureResponseV1Schema,
-  AdmitTriggerRequestBodyV1Schema,
-  AdmitTriggerResponseV1Schema,
-  AdmitTriggerSuccessResponseV1Schema,
   AdmitTriggerUnauthenticatedResponseV1Schema,
-  type TriggerSourceV1,
   TriggerAdmissionDecisionV1Schema,
   TrustedAdmissionFactsV1Schema,
 } from "./trigger-processor/trigger-admission.v1.js";
+import { TriggerSubmitRequestV1Schema } from "./trigger-processor/trigger-submit.v1.js";
+import { TriggerSubmitResponseV1Schema } from "./trigger-processor/trigger-submit-response.v1.js";
 import {
   TriggerProcessStateV1Schema,
   TriggerProcessTransitionEvidenceV1Schema,
@@ -238,7 +240,7 @@ function triggerProcessorEntry(
     source_file,
     generated_outputs: generatedOutputs ?? [
         generated_file,
-        "generated/openapi/trigger-processor-internal.yaml",
+        "generated/openapi/trigger-processor.yaml",
         "generated/types/trigger-processor.d.ts",
       ],
     contract_tests: [contract_test],
@@ -270,12 +272,12 @@ export const TRIGGER_PROCESSOR_SCHEMA_CATALOG = [
     TriggerProcessStateV1Schema,
   ),
   triggerProcessorEntry(
-    "AdmitTriggerRequestBodyV1",
-    "urn:pai:trigger-processor:admit-trigger-request-body:v1",
-    "packages/contracts/src/trigger-processor/trigger-admission.v1.ts",
-    "generated/schema/trigger-processor/admit-trigger-request-body.v1.json",
-    "packages/contracts/test/trigger-processor/trigger-admission.contract.ts",
-    AdmitTriggerRequestBodyV1Schema,
+    "TriggerSubmitRequestV1",
+    "urn:pai:trigger-processor:trigger-submit-request:v1",
+    "packages/contracts/src/trigger-processor/trigger-submit.v1.ts",
+    "generated/schema/trigger-processor/trigger-submit.v1.json",
+    "services/trigger-processor/test/contracts/trigger-submit.contract.ts",
+    TriggerSubmitRequestV1Schema,
   ),
   triggerProcessorEntry(
     "AdmitTriggerCommandV1",
@@ -286,12 +288,12 @@ export const TRIGGER_PROCESSOR_SCHEMA_CATALOG = [
     AdmitTriggerCommandV1Schema,
   ),
   triggerProcessorEntry(
-    "AdmitTriggerResponseV1",
-    "urn:pai:trigger-processor:admit-trigger-response:v1",
-    "packages/contracts/src/trigger-processor/trigger-admission.v1.ts",
-    "generated/schema/trigger-processor/admit-trigger-response.v1.json",
-    "packages/contracts/test/trigger-processor/trigger-admission.contract.ts",
-    AdmitTriggerResponseV1Schema,
+    "TriggerSubmitResponseV1",
+    "urn:pai:trigger-processor:trigger-submit-response:v1",
+    "packages/contracts/src/trigger-processor/trigger-submit-response.v1.ts",
+    "generated/schema/trigger-processor/trigger-submit-response.v1.json",
+    "services/trigger-processor/test/contracts/trigger-submit-response.contract.ts",
+    TriggerSubmitResponseV1Schema,
   ),
   triggerProcessorEntry(
     "TrustedAdmissionFactsV1",
@@ -322,69 +324,115 @@ export const TRIGGER_PROCESSOR_SCHEMA_CATALOG = [
 export interface TriggerProcessorHttpOperationV1 {
   readonly operation_id: string;
   readonly method: "post";
-  readonly path: `/internal/v1/triggers/admit/${TriggerSourceV1}`;
-  readonly source: TriggerSourceV1;
-  readonly required_capability: string;
-  readonly allowed_caller: "observation_gateway" | "timer_trigger_app";
-  readonly request_schema_name: "AdmitTriggerRequestBodyV1";
-  readonly response_schema_name: "AdmitTriggerResponseV1";
-  readonly responses: readonly [200, 400, 401, 403, 409, 500, 503];
+  readonly path: "/v1/triggers";
+  readonly source_bindings: readonly [
+    Readonly<{
+      source: "chat";
+      authentication: "supabase_ingress";
+      allowed_principal_types: readonly ["user", "developer", "bot"];
+      actor_derivation: "verified_supabase_principal";
+      required_permission_scope: "trigger.submit.chat";
+      principal_mapping: Readonly<{
+        user: "user_or_signed_super_user";
+        developer: "developer";
+        bot: "agent";
+        operator: "rejected";
+      }>;
+    }>,
+    Readonly<{
+      source: "notification";
+      authentication: "supabase_ingress";
+      allowed_principal_types: readonly ["user", "developer", "bot"];
+      actor_derivation: "verified_supabase_principal";
+      required_permission_scope: "trigger.submit.notification";
+      principal_mapping: Readonly<{
+        user: "user_or_signed_super_user";
+        developer: "developer";
+        bot: "agent";
+        operator: "rejected";
+      }>;
+    }>,
+    Readonly<{
+      source: "timer";
+      authentication: "pai_workload_jwt";
+      required_capability: "trigger.submit.timer";
+      required_permission_scope: "trigger.submit.timer";
+      allowed_caller: "timer_trigger_app";
+    }>,
+  ];
+  readonly request_schema_name: "TriggerSubmitRequestV1";
+  readonly response_schema_name: "TriggerSubmitResponseV1";
+  readonly responses: readonly [200, 202, 400, 401, 403, 404, 409, 429, 500, 503];
   readonly response_schemas_by_status: Readonly<{
     readonly 200: TSchema;
+    readonly 202: TSchema;
     readonly 400: TSchema;
     readonly 401: TSchema;
     readonly 403: TSchema;
+    readonly 404: TSchema;
     readonly 409: TSchema;
+    readonly 429: TSchema;
     readonly 500: TSchema;
     readonly 503: TSchema;
   }>;
 }
 
 const admitTriggerResponseSchemasByStatus = Object.freeze({
-  200: AdmitTriggerSuccessResponseV1Schema,
+  200: AdmitTriggerOkResponseV1Schema,
+  202: AdmitTriggerAcceptedResponseV1Schema,
   400: AdmitTriggerInvalidRequestResponseV1Schema,
   401: AdmitTriggerUnauthenticatedResponseV1Schema,
   403: AdmitTriggerAuthorizationFailureResponseV1Schema,
+  404: AdmitTriggerNotFoundResponseV1Schema,
   409: AdmitTriggerConflictResponseV1Schema,
+  429: AdmitTriggerRateLimitedResponseV1Schema,
   500: AdmitTriggerInternalErrorResponseV1Schema,
   503: AdmitTriggerRetryableFailureResponseV1Schema,
 });
 
 export const TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1 = [
   {
-    operation_id: "admitTriggerFromChatV1",
+    operation_id: "submitTriggerV1",
     method: "post",
-    path: "/internal/v1/triggers/admit/chat",
-    source: "chat",
-    required_capability: "trigger.submit.chat",
-    allowed_caller: "observation_gateway",
-    request_schema_name: "AdmitTriggerRequestBodyV1",
-    response_schema_name: "AdmitTriggerResponseV1",
-    responses: [200, 400, 401, 403, 409, 500, 503],
-    response_schemas_by_status: admitTriggerResponseSchemasByStatus,
-  },
-  {
-    operation_id: "admitTriggerFromNotificationV1",
-    method: "post",
-    path: "/internal/v1/triggers/admit/notification",
-    source: "notification",
-    required_capability: "trigger.submit.notification",
-    allowed_caller: "observation_gateway",
-    request_schema_name: "AdmitTriggerRequestBodyV1",
-    response_schema_name: "AdmitTriggerResponseV1",
-    responses: [200, 400, 401, 403, 409, 500, 503],
-    response_schemas_by_status: admitTriggerResponseSchemasByStatus,
-  },
-  {
-    operation_id: "admitTriggerFromTimerV1",
-    method: "post",
-    path: "/internal/v1/triggers/admit/timer",
-    source: "timer",
-    required_capability: "trigger.submit.timer",
-    allowed_caller: "timer_trigger_app",
-    request_schema_name: "AdmitTriggerRequestBodyV1",
-    response_schema_name: "AdmitTriggerResponseV1",
-    responses: [200, 400, 401, 403, 409, 500, 503],
+    path: "/v1/triggers",
+    source_bindings: [
+      {
+        source: "chat",
+        authentication: "supabase_ingress",
+        allowed_principal_types: ["user", "developer", "bot"],
+        actor_derivation: "verified_supabase_principal",
+        required_permission_scope: "trigger.submit.chat",
+        principal_mapping: {
+          user: "user_or_signed_super_user",
+          developer: "developer",
+          bot: "agent",
+          operator: "rejected",
+        },
+      },
+      {
+        source: "notification",
+        authentication: "supabase_ingress",
+        allowed_principal_types: ["user", "developer", "bot"],
+        actor_derivation: "verified_supabase_principal",
+        required_permission_scope: "trigger.submit.notification",
+        principal_mapping: {
+          user: "user_or_signed_super_user",
+          developer: "developer",
+          bot: "agent",
+          operator: "rejected",
+        },
+      },
+      {
+        source: "timer",
+        authentication: "pai_workload_jwt",
+        required_capability: "trigger.submit.timer",
+        required_permission_scope: "trigger.submit.timer",
+        allowed_caller: "timer_trigger_app",
+      },
+    ],
+    request_schema_name: "TriggerSubmitRequestV1",
+    response_schema_name: "TriggerSubmitResponseV1",
+    responses: [200, 202, 400, 401, 403, 404, 409, 429, 500, 503],
     response_schemas_by_status: admitTriggerResponseSchemasByStatus,
   },
 ] as const satisfies readonly TriggerProcessorHttpOperationV1[];

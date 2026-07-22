@@ -42,11 +42,9 @@ describe("generated contract owner boundaries", () => {
     }
   });
 
-  it("emits Trigger Processor routes and schemas only to its internal OpenAPI", async () => {
+  it("emits Trigger Processor routes and schemas only to its owner OpenAPI", async () => {
     const document = JSON.parse(
-      await readGenerated(
-        "generated/openapi/trigger-processor-internal.yaml",
-      ),
+      await readGenerated("generated/openapi/trigger-processor.yaml"),
     ) as {
       paths: Record<string, unknown>;
       components: { schemas: Record<string, unknown> };
@@ -70,6 +68,12 @@ describe("generated contract owner boundaries", () => {
     expect(sharedTypes).not.toContain("trigger-processor");
     expect(triggerProcessorTypes).toContain(
       '../../dist/trigger-processor/trigger-admission.v1.js',
+    );
+    expect(triggerProcessorTypes).toContain(
+      '../../dist/trigger-processor/trigger-submit.v1.js',
+    );
+    expect(triggerProcessorTypes).toContain(
+      '../../dist/trigger-processor/trigger-submit-response.v1.js',
     );
     expect(triggerProcessorTypes).toContain(
       '../../dist/trigger-processor/trigger-process-state.v1.js',

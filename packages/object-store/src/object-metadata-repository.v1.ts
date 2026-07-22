@@ -177,9 +177,16 @@ export interface ObjectMetadataRepositoryV1 {
   abortPut(reservationId: string, foregroundLeaseToken: string): Promise<void>;
   findByRef(objectRef: ObjectRefV1): Promise<ObjectMetadataRecordV1 | undefined>;
   reserveDelete(input: ReserveDeleteInputV1): Promise<ReserveDeleteResultV1>;
+  /** Foreground completion must fail while a reconciler owns a live claim. */
   completeDelete(reservationId: string): Promise<ObjectMetadataRecordV1>;
   findDeleteFinalization(reservationId: string): Promise<DeleteFinalizationV1>;
+  /** Foreground abort must never clear a reconciler claim or its fence. */
   abortDelete(reservationId: string): Promise<void>;
+  /**
+   * Atomically fences foreground cleanup against reconciliation/finalization.
+   * Missing or already-finalized reservations must fail rather than be treated
+   * as a successful handoff, because the caller may delete physical bytes next.
+   */
   handoffPutReconciliation(
     reservationId: string,
     operation: "put_finalize" | "put_cleanup",
@@ -187,6 +194,7 @@ export interface ObjectMetadataRepositoryV1 {
     notBefore?: Date,
     foregroundUploadMayStillArrive?: boolean,
   ): Promise<void>;
+  /** Handoff is idempotent only while no reconciler claim is active. */
   handoffDeleteReconciliation(reservationId: string): Promise<void>;
   claimReconciliation(
     input: ClaimObjectReconciliationInputV1,
@@ -438,6 +446,9 @@ export class InMemoryObjectMetadataRepositoryV1
   public async reserveDelete(
     input: ReserveDeleteInputV1,
   ): Promise<ReserveDeleteResultV1> {
+    if (!(input.now instanceof Date) || !Number.isFinite(input.now.getTime())) {
+      throw new Error("delete reservation time must be a valid instant");
+    }
     const record = this.#records.get(input.object_ref);
     if (record === undefined) return { kind: "not_found" };
     if (record.state === "deleted") {
@@ -499,6 +510,15 @@ export class InMemoryObjectMetadataRepositoryV1
       if (completed !== undefined) return completed;
       throw new Error("unknown delete reservation");
     }
+    if (pending.claimToken !== undefined) {
+      throw new Error("stale delete foreground claim");
+    }
+    return this.#completePendingDelete(pending);
+  }
+
+  #completePendingDelete(
+    pending: PendingDelete,
+  ): ObjectMetadataRecordV1 {
     const deleted: ObjectMetadataRecordV1 = {
       ...pending.previous,
       state: "deleted",
@@ -506,8 +526,8 @@ export class InMemoryObjectMetadataRepositoryV1
       deletion_idempotency_key: pending.idempotencyKey,
     };
     this.#records.set(deleted.object_ref, deleted);
-    this.#pendingDeletes.delete(reservationId);
-    this.#completedDeletes.set(reservationId, deleted);
+    this.#pendingDeletes.delete(pending.reservationId);
+    this.#completedDeletes.set(pending.reservationId, deleted);
     return deleted;
   }
 
@@ -525,6 +545,9 @@ export class InMemoryObjectMetadataRepositoryV1
   public async abortDelete(reservationId: string): Promise<void> {
     const pending = this.#pendingDeletes.get(reservationId);
     if (pending === undefined) return;
+    if (pending.claimToken !== undefined) {
+      throw new Error("stale delete foreground claim");
+    }
     this.#records.set(pending.objectRef, pending.previous);
     this.#pendingDeletes.delete(reservationId);
   }
@@ -537,7 +560,9 @@ export class InMemoryObjectMetadataRepositoryV1
     foregroundUploadMayStillArrive = false,
   ): Promise<void> {
     const pending = this.#pendingPuts.get(reservationId);
-    if (pending === undefined) return;
+    if (pending === undefined) {
+      throw new Error("unknown or finalized put reservation");
+    }
     if (
       pending.foregroundLeaseToken !== foregroundLeaseToken ||
       pending.claimToken !== undefined ||
@@ -565,6 +590,9 @@ export class InMemoryObjectMetadataRepositoryV1
   public async handoffDeleteReconciliation(reservationId: string): Promise<void> {
     const pending = this.#pendingDeletes.get(reservationId);
     if (pending === undefined) return;
+    if (pending.claimToken !== undefined) {
+      throw new Error("stale delete foreground claim");
+    }
     pending.operation = "delete_finalize";
     delete pending.claimToken;
     delete pending.lockedUntil;
@@ -654,7 +682,9 @@ export class InMemoryObjectMetadataRepositoryV1
           if (
             receipt === undefined ||
             receipt.upload_attempt_token !== put.uploadAttemptToken ||
-            !Number.isFinite(Date.parse(receipt.terminal_at))
+            !Number.isFinite(Date.parse(receipt.terminal_at)) ||
+            Date.parse(receipt.terminal_at) <
+              put.foregroundUploadTerminalAt.getTime()
           ) {
             throw new Error(
               "late-upload cleanup tombstone cannot be completed without a matching backend terminal receipt",
@@ -688,7 +718,7 @@ export class InMemoryObjectMetadataRepositoryV1
     ) {
       throw new Error("stale reconciliation claim");
     }
-    return this.completeDelete(input.reservation_id);
+    return this.#completePendingDelete(deletion);
   }
 
   public async releaseReconciliation(

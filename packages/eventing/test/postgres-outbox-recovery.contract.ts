@@ -3,10 +3,13 @@ import { createClient } from "redis";
 import { afterAll, describe, expect, it } from "vitest";
 
 import {
+  assertOwnerOutboxAcknowledgeConfirmationV1,
   defineOwnerRepositoryContractV1,
+  ownerDlqResolutionContractV1,
   openVerifiedOwnerPostgresCompositionV1,
   ownerFunctionSignatureV1,
   ownerWriterArtifactV1,
+  verifyOwnerRepositoryDeploymentFromPostgresV1,
 } from "@pai/persistence";
 
 import {
@@ -33,6 +36,41 @@ const databaseUrl = process.env.PAI_TEST_DATABASE_URL;
 const redisUrl = process.env.PAI_TEST_REDIS_URL;
 const itPostgresRedis =
   databaseUrl === undefined || redisUrl === undefined ? it.skip : it;
+const EVENTING_TEST_SCHEMA = "trigger_processor" as const;
+const EVENTING_TEST_APP_ROLE = "pai_trigger_processor_app" as const;
+const EVENTING_DLQ_RESOLUTION = ownerDlqResolutionContractV1(
+  "trigger_processor",
+  "eventing_dlq",
+);
+
+function triggerRejectedEvent(request: Readonly<{
+  event_id: string;
+  idempotency_key: string;
+  trace_id: string;
+  submit_attempt_id: string;
+}>) {
+  return {
+    event_id: request.event_id,
+    event_type: "trigger.rejected",
+    schema_version: "trigger_processor_event.v1",
+    producer: "trigger_processor",
+    occurred_at: "2026-07-21T05:00:00.000Z",
+    idempotency_key: request.idempotency_key,
+    trace_id: request.trace_id,
+    payload: {
+      workspace_id: "workspace_001",
+      bot_id: "bot_001",
+      owner_agent_id: "owner_agent_001",
+      deployment_environment: "dev",
+      release_channel: "stable",
+      reason_code: "business_admission_rejected",
+      source_ref: `trigger_event:${request.submit_attempt_id}`,
+      submit_attempt_id: request.submit_attempt_id,
+      rejection_stage: "business_admission",
+      rejection_code: "admission_capacity_exceeded",
+    },
+  } as const;
+}
 
 function eventingColumn<const TTable extends string>(
   table_name: TTable,
@@ -54,13 +92,13 @@ function eventingColumn<const TTable extends string>(
 
 const EVENTING_CONTRACT_INPUT = {
   contract_version: "owner_repository_contract.v1",
-  owner_service: "skill_registry",
-  schema: "skill_registry",
-  app_role: "pai_skill_registry_app",
-  fresh_migrations: ["0450_skill_registry"],
-  manifest_source: "services/skill-registry/src/db/permission-manifest.v1.ts",
+  owner_service: "trigger_processor",
+  schema: "trigger_processor",
+  app_role: "pai_trigger_processor_app",
+  fresh_migrations: ["0100_trigger_processor"],
+  manifest_source: "services/trigger-processor/src/db/permission-manifest.v1.ts",
   generated_permission_sql: [
-    "pai-infra/supabase/generated/permissions/0450_skill_registry.sql",
+    "pai-infra/supabase/generated/permissions/0100_trigger_processor.sql",
   ],
   tables: [
     "eventing_outbox",
@@ -69,6 +107,7 @@ const EVENTING_CONTRACT_INPUT = {
     "eventing_projection",
     "eventing_audit",
     "eventing_dlq",
+    EVENTING_DLQ_RESOLUTION.resolution_table,
   ],
   table_permissions: [
     {
@@ -147,7 +186,6 @@ const EVENTING_CONTRACT_INPUT = {
         "payload",
         "last_error",
         "failed_at",
-        "resolved_at",
       ],
       insert_columns: [],
       update_columns: [],
@@ -184,6 +222,7 @@ const EVENTING_CONTRACT_INPUT = {
       delete_allowed: false,
       writer_kind: "immutable_append",
     },
+    EVENTING_DLQ_RESOLUTION.table_permission,
   ],
   mutable_writers: [
     "enqueue_eventing_outbox_v1",
@@ -194,10 +233,11 @@ const EVENTING_CONTRACT_INPUT = {
     "claim_sent_eventing_outbox_redrive_v1",
     "activate_eventing_transport_epoch_v1",
     "ack_sent_eventing_outbox_redrive_v1",
+    ...EVENTING_DLQ_RESOLUTION.mutable_writers,
   ],
   function_signatures: [
     ownerFunctionSignatureV1({
-      schema: "skill_registry",
+      schema: "trigger_processor",
       function_name: "enqueue_eventing_outbox_v1",
       primary_table: "eventing_outbox",
       writer_kind: "outbox_claim_ack",
@@ -218,7 +258,7 @@ const EVENTING_CONTRACT_INPUT = {
       returns: "jsonb",
     }),
     ownerFunctionSignatureV1({
-      schema: "skill_registry",
+      schema: "trigger_processor",
       function_name: "claim_eventing_outbox_v1",
       primary_table: "eventing_outbox",
       writer_kind: "outbox_claim_ack",
@@ -242,7 +282,7 @@ const EVENTING_CONTRACT_INPUT = {
       returns: "setof jsonb",
     }),
     ownerFunctionSignatureV1({
-      schema: "skill_registry",
+      schema: "trigger_processor",
       function_name: "ack_eventing_outbox_v1",
       primary_table: "eventing_outbox",
       writer_kind: "outbox_claim_ack",
@@ -276,7 +316,7 @@ const EVENTING_CONTRACT_INPUT = {
       returns: "jsonb",
     }),
     ownerFunctionSignatureV1({
-      schema: "skill_registry",
+      schema: "trigger_processor",
       function_name: "consume_eventing_inbox_v1",
       primary_table: "eventing_inbox",
       writer_kind: "immutable_append",
@@ -309,7 +349,7 @@ const EVENTING_CONTRACT_INPUT = {
       returns: "jsonb",
     }),
     ownerFunctionSignatureV1({
-      schema: "skill_registry",
+      schema: "trigger_processor",
       function_name: "record_eventing_consumer_dlq_v1",
       primary_table: "eventing_dlq",
       writer_kind: "immutable_append",
@@ -319,8 +359,8 @@ const EVENTING_CONTRACT_INPUT = {
         ["p_consumer_service", "text"],
         ["p_failure_code", "text"],
         ["p_failure_message", "text"],
-        ["p_raw_fields", "jsonb"],
-        ["p_envelope", "jsonb"],
+        ["p_raw_fields", "jsonb", { nullable: true }],
+        ["p_envelope", "jsonb", { nullable: true }],
         ["p_now", "timestamptz"],
       ],
       reads_tables: ["eventing_dlq"],
@@ -340,7 +380,7 @@ const EVENTING_CONTRACT_INPUT = {
       returns: "jsonb",
     }),
     ownerFunctionSignatureV1({
-      schema: "skill_registry",
+      schema: "trigger_processor",
       function_name: "claim_sent_eventing_outbox_redrive_v1",
       primary_table: "eventing_outbox",
       writer_kind: "outbox_claim_ack",
@@ -364,7 +404,7 @@ const EVENTING_CONTRACT_INPUT = {
       returns: "setof jsonb",
     }),
     ownerFunctionSignatureV1({
-      schema: "skill_registry",
+      schema: "trigger_processor",
       function_name: "activate_eventing_transport_epoch_v1",
       primary_table: "eventing_transport_epochs",
       writer_kind: "pointer_cas",
@@ -387,13 +427,14 @@ const EVENTING_CONTRACT_INPUT = {
       returns: "jsonb",
     }),
     ownerFunctionSignatureV1({
-      schema: "skill_registry",
+      schema: "trigger_processor",
       function_name: "ack_sent_eventing_outbox_redrive_v1",
       primary_table: "eventing_outbox",
       writer_kind: "outbox_claim_ack",
       arguments: [
         ["p_outbox_id", "text"],
         ["p_claim_token", "text"],
+        ["p_previous_transport_ref", "text"],
         ["p_previous_transport_epoch", "text"],
         ["p_previous_transport_generation", "bigint"],
         ["p_transport_ref", "text"],
@@ -412,13 +453,13 @@ const EVENTING_CONTRACT_INPUT = {
       ],
       returns: "jsonb",
     }),
+    ...EVENTING_DLQ_RESOLUTION.function_signatures,
   ],
   foreign_key_snapshot: {
-    status: "known_empty",
-    source: "Day 5 isolated PostgreSQL eventing contract fixture",
-    justification: "The fixture contains no same-owner parent-child relation.",
+    status: "complete",
+    source: "Day 5 isolated PostgreSQL eventing contract fixture with canonical DLQ resolution",
   },
-  foreign_keys: [],
+  foreign_keys: [...EVENTING_DLQ_RESOLUTION.foreign_keys],
   database_columns: [
     eventingColumn("eventing_dlq", "id", "text"),
     eventingColumn("eventing_dlq", "source_event_id", "text"),
@@ -426,12 +467,7 @@ const EVENTING_CONTRACT_INPUT = {
     eventingColumn("eventing_dlq", "payload", "jsonb"),
     eventingColumn("eventing_dlq", "last_error", "jsonb"),
     eventingColumn("eventing_dlq", "failed_at", "timestamp with time zone"),
-    eventingColumn(
-      "eventing_dlq",
-      "resolved_at",
-      "timestamp with time zone",
-      false,
-    ),
+    ...EVENTING_DLQ_RESOLUTION.database_columns,
     eventingColumn("eventing_inbox", "id", "text"),
     eventingColumn("eventing_inbox", "source", "text"),
     eventingColumn("eventing_inbox", "event_id", "text"),
@@ -540,6 +576,7 @@ const EVENTING_CONTRACT_INPUT = {
     ),
   ],
   database_unique_constraints: [
+    ...EVENTING_DLQ_RESOLUTION.database_unique_constraints,
     {
       constraint_name: "eventing_dlq_pkey",
       table_name: "eventing_dlq",
@@ -614,11 +651,12 @@ const EVENTING_CONTRACT_INPUT = {
     },
   ],
   database_indexes: [
+    ...EVENTING_DLQ_RESOLUTION.database_indexes,
     {
       index_name: "eventing_dlq_pkey",
       table_name: "eventing_dlq",
       definition:
-        "CREATE UNIQUE INDEX eventing_dlq_pkey ON skill_registry.eventing_dlq USING btree (id)",
+        "CREATE UNIQUE INDEX eventing_dlq_pkey ON trigger_processor.eventing_dlq USING btree (id)",
       unique: true,
       primary: true,
       valid: true,
@@ -627,7 +665,7 @@ const EVENTING_CONTRACT_INPUT = {
       index_name: "eventing_inbox_pkey",
       table_name: "eventing_inbox",
       definition:
-        "CREATE UNIQUE INDEX eventing_inbox_pkey ON skill_registry.eventing_inbox USING btree (id)",
+        "CREATE UNIQUE INDEX eventing_inbox_pkey ON trigger_processor.eventing_inbox USING btree (id)",
       unique: true,
       primary: true,
       valid: true,
@@ -636,7 +674,7 @@ const EVENTING_CONTRACT_INPUT = {
       index_name: "eventing_inbox_source_scope_fingerprint_idempotency_key_key",
       table_name: "eventing_inbox",
       definition:
-        "CREATE UNIQUE INDEX eventing_inbox_source_scope_fingerprint_idempotency_key_key ON skill_registry.eventing_inbox USING btree (source, scope_fingerprint, idempotency_key)",
+        "CREATE UNIQUE INDEX eventing_inbox_source_scope_fingerprint_idempotency_key_key ON trigger_processor.eventing_inbox USING btree (source, scope_fingerprint, idempotency_key)",
       unique: true,
       primary: false,
       valid: true,
@@ -645,7 +683,7 @@ const EVENTING_CONTRACT_INPUT = {
       index_name: "eventing_outbox_idempotency_key_key",
       table_name: "eventing_outbox",
       definition:
-        "CREATE UNIQUE INDEX eventing_outbox_idempotency_key_key ON skill_registry.eventing_outbox USING btree (idempotency_key)",
+        "CREATE UNIQUE INDEX eventing_outbox_idempotency_key_key ON trigger_processor.eventing_outbox USING btree (idempotency_key)",
       unique: true,
       primary: false,
       valid: true,
@@ -654,7 +692,7 @@ const EVENTING_CONTRACT_INPUT = {
       index_name: "eventing_outbox_pkey",
       table_name: "eventing_outbox",
       definition:
-        "CREATE UNIQUE INDEX eventing_outbox_pkey ON skill_registry.eventing_outbox USING btree (id)",
+        "CREATE UNIQUE INDEX eventing_outbox_pkey ON trigger_processor.eventing_outbox USING btree (id)",
       unique: true,
       primary: true,
       valid: true,
@@ -663,7 +701,7 @@ const EVENTING_CONTRACT_INPUT = {
       index_name: "eventing_transport_epochs_pkey",
       table_name: "eventing_transport_epochs",
       definition:
-        "CREATE UNIQUE INDEX eventing_transport_epochs_pkey ON skill_registry.eventing_transport_epochs USING btree (transport_name)",
+        "CREATE UNIQUE INDEX eventing_transport_epochs_pkey ON trigger_processor.eventing_transport_epochs USING btree (transport_name)",
       unique: true,
       primary: true,
       valid: true,
@@ -672,7 +710,7 @@ const EVENTING_CONTRACT_INPUT = {
       index_name: "eventing_projection_pkey",
       table_name: "eventing_projection",
       definition:
-        "CREATE UNIQUE INDEX eventing_projection_pkey ON skill_registry.eventing_projection USING btree (id)",
+        "CREATE UNIQUE INDEX eventing_projection_pkey ON trigger_processor.eventing_projection USING btree (id)",
       unique: true,
       primary: true,
       valid: true,
@@ -681,7 +719,7 @@ const EVENTING_CONTRACT_INPUT = {
       index_name: "eventing_audit_pkey",
       table_name: "eventing_audit",
       definition:
-        "CREATE UNIQUE INDEX eventing_audit_pkey ON skill_registry.eventing_audit USING btree (id)",
+        "CREATE UNIQUE INDEX eventing_audit_pkey ON trigger_processor.eventing_audit USING btree (id)",
       unique: true,
       primary: true,
       valid: true,
@@ -705,21 +743,21 @@ const EVENTING_CONTRACT_INPUT = {
     {
       constraint_name: "eventing_outbox_event_type_check",
       table_name: "eventing_outbox",
-      required_definition_fragments: ["event_type", "skill.version.published"],
+      required_definition_fragments: ["event_type", "trigger.rejected"],
       semantic_constraint: {
         kind: "text_enum",
         column_name: "event_type",
-        allowed_values: ["skill.version.published"],
+        allowed_values: ["trigger.rejected"],
       },
     },
     {
       constraint_name: "eventing_outbox_producer_check",
       table_name: "eventing_outbox",
-      required_definition_fragments: ["producer", "skill_registry"],
+      required_definition_fragments: ["producer", "trigger_processor"],
       semantic_constraint: {
         kind: "text_equals",
         column_name: "producer",
-        value: "skill_registry",
+        value: "trigger_processor",
       },
     },
     {
@@ -750,10 +788,12 @@ const EVENTING_CONTRACT_INPUT = {
     "eventing_inbox",
     "eventing_audit",
     "eventing_dlq",
+    EVENTING_DLQ_RESOLUTION.resolution_table,
   ],
   outbox_tables: ["eventing_outbox"],
   inbox_tables: ["eventing_inbox"],
   dlq_tables: ["eventing_dlq"],
+  dlq_resolutions: [EVENTING_DLQ_RESOLUTION.binding],
   object_metadata_tables: [],
 } as const;
 
@@ -762,11 +802,11 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_migrator') THEN
     CREATE ROLE pai_migrator NOLOGIN;
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_skill_registry_app') THEN
-    CREATE ROLE pai_skill_registry_app NOLOGIN;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_trigger_processor_app') THEN
+    CREATE ROLE pai_trigger_processor_app NOLOGIN;
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_skill_registry_eventing_test') THEN
-    CREATE ROLE pai_skill_registry_eventing_test LOGIN PASSWORD 'eventing-runtime-test';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_eventing_recovery_runtime') THEN
+    CREATE ROLE pai_eventing_recovery_runtime LOGIN PASSWORD 'eventing-runtime-test';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
     CREATE ROLE anon NOLOGIN;
@@ -775,20 +815,47 @@ DO $$ BEGIN
     CREATE ROLE authenticated NOLOGIN;
   END IF;
 END $$;
-ALTER ROLE pai_skill_registry_app NOLOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
-ALTER ROLE pai_skill_registry_eventing_test LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD 'eventing-runtime-test';
-REVOKE pai_skill_registry_app FROM pai_skill_registry_eventing_test;
-GRANT pai_skill_registry_app TO pai_skill_registry_eventing_test WITH INHERIT TRUE, SET FALSE, ADMIN FALSE;
-DROP SCHEMA IF EXISTS skill_registry CASCADE;
-CREATE SCHEMA skill_registry AUTHORIZATION pai_migrator;
-REVOKE ALL ON SCHEMA skill_registry FROM PUBLIC, anon, authenticated, pai_skill_registry_eventing_test;
-GRANT USAGE ON SCHEMA skill_registry TO pai_skill_registry_app;
+ALTER ROLE pai_trigger_processor_app NOLOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
+ALTER ROLE pai_eventing_recovery_runtime LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD 'eventing-runtime-test';
+DO $$
+DECLARE inherited_role record;
+BEGIN
+  FOR inherited_role IN
+    SELECT parent.rolname
+      FROM pg_catalog.pg_auth_members membership
+      JOIN pg_catalog.pg_roles parent ON parent.oid = membership.roleid
+      JOIN pg_catalog.pg_roles member ON member.oid = membership.member
+     WHERE member.rolname = 'pai_eventing_recovery_runtime'
+  LOOP
+    EXECUTE format(
+      'REVOKE %I FROM pai_eventing_recovery_runtime',
+      inherited_role.rolname
+    );
+  END LOOP;
+END $$;
+GRANT pai_trigger_processor_app TO pai_eventing_recovery_runtime WITH INHERIT TRUE, SET FALSE, ADMIN FALSE;
+DROP SCHEMA IF EXISTS trigger_processor CASCADE;
+CREATE SCHEMA trigger_processor AUTHORIZATION pai_migrator;
+REVOKE ALL ON SCHEMA trigger_processor FROM PUBLIC, anon, authenticated, pai_eventing_recovery_runtime;
+GRANT USAGE ON SCHEMA trigger_processor TO pai_trigger_processor_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE pai_migrator
+  REVOKE ALL ON TABLES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE pai_migrator
+  REVOKE ALL ON SEQUENCES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE pai_migrator
+  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE pai_migrator IN SCHEMA trigger_processor
+  REVOKE ALL ON TABLES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE pai_migrator IN SCHEMA trigger_processor
+  REVOKE ALL ON SEQUENCES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE pai_migrator IN SCHEMA trigger_processor
+  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 SET ROLE pai_migrator;
-CREATE TABLE skill_registry.eventing_outbox (
+CREATE TABLE trigger_processor.eventing_outbox (
   id text PRIMARY KEY,
-  event_type text NOT NULL CHECK (event_type IN ('skill.version.published')),
+  event_type text NOT NULL CHECK (event_type IN ('trigger.rejected')),
   schema_version text NOT NULL,
-  producer text NOT NULL CHECK (producer = 'skill_registry'),
+  producer text NOT NULL CHECK (producer = 'trigger_processor'),
   occurred_at timestamptz NOT NULL,
   idempotency_key text NOT NULL UNIQUE,
   trace_id text NOT NULL,
@@ -813,22 +880,22 @@ CREATE TABLE skill_registry.eventing_outbox (
   created_at timestamptz NOT NULL,
   updated_at timestamptz NOT NULL
 );
-CREATE TABLE skill_registry.eventing_transport_epochs (
+CREATE TABLE trigger_processor.eventing_transport_epochs (
   transport_name text PRIMARY KEY,
   active_epoch text NOT NULL,
   active_generation bigint NOT NULL,
   activated_at timestamptz NOT NULL
 );
-ALTER TABLE skill_registry.eventing_transport_epochs
+ALTER TABLE trigger_processor.eventing_transport_epochs
   ADD CONSTRAINT eventing_transport_epochs_active_generation_safe_check
   CHECK (
     active_generation >= 1
     AND active_generation <= 9007199254740991
   );
-INSERT INTO skill_registry.eventing_transport_epochs(
+INSERT INTO trigger_processor.eventing_transport_epochs(
   transport_name, active_epoch, active_generation, activated_at
 ) VALUES ('redis_stream', 'epoch_1', 1, '2026-07-22T00:00:00.000Z');
-CREATE TABLE skill_registry.eventing_inbox (
+CREATE TABLE trigger_processor.eventing_inbox (
   id text PRIMARY KEY,
   source text NOT NULL,
   event_id text NOT NULL,
@@ -840,16 +907,25 @@ CREATE TABLE skill_registry.eventing_inbox (
   created_at timestamptz NOT NULL,
   UNIQUE (source, scope_fingerprint, idempotency_key)
 );
-CREATE TABLE skill_registry.eventing_dlq (
+CREATE TABLE trigger_processor.eventing_dlq (
   id text PRIMARY KEY,
   source_event_id text NOT NULL,
   event_type text NOT NULL,
   payload jsonb NOT NULL,
   last_error jsonb NOT NULL,
-  failed_at timestamptz NOT NULL,
-  resolved_at timestamptz
+  failed_at timestamptz NOT NULL
 );
-CREATE TABLE skill_registry.eventing_projection (
+CREATE TABLE trigger_processor.eventing_dlq_resolutions (
+  resolution_id text PRIMARY KEY,
+  dlq_id text NOT NULL UNIQUE
+    REFERENCES trigger_processor.eventing_dlq(id) ON DELETE NO ACTION,
+  idempotency_key text NOT NULL UNIQUE,
+  resolution_kind text NOT NULL,
+  resolution_payload jsonb NOT NULL,
+  resolved_by text NOT NULL,
+  resolved_at timestamptz NOT NULL
+);
+CREATE TABLE trigger_processor.eventing_projection (
   id text PRIMARY KEY,
   source text NOT NULL,
   scope_fingerprint text NOT NULL,
@@ -858,38 +934,38 @@ CREATE TABLE skill_registry.eventing_projection (
   applied_count integer NOT NULL DEFAULT 0,
   updated_at timestamptz NOT NULL
 );
-CREATE TABLE skill_registry.eventing_audit (
+CREATE TABLE trigger_processor.eventing_audit (
   id text PRIMARY KEY,
   inbox_id text NOT NULL,
   event_id text NOT NULL,
   semantic_hash text NOT NULL,
   created_at timestamptz NOT NULL
 );
-CREATE FUNCTION skill_registry.enqueue_eventing_outbox_v1(
+CREATE FUNCTION trigger_processor.enqueue_eventing_outbox_v1(
   p_event jsonb,
   p_idempotency_key text,
   p_payload_hash text
 ) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = skill_registry, pg_temp
+SET search_path = trigger_processor, pg_temp
 AS $$
 DECLARE result jsonb;
 BEGIN
-  INSERT INTO skill_registry.eventing_outbox(
+  INSERT INTO trigger_processor.eventing_outbox(
     id, event_type, schema_version, producer, occurred_at, idempotency_key,
     trace_id, payload, payload_hash, target, status, created_at, updated_at
   ) VALUES (
     p_event->>'event_id', p_event->>'event_type', p_event->>'schema_version',
     p_event->>'producer', (p_event->>'occurred_at')::timestamptz,
     p_idempotency_key, p_event->>'trace_id', p_event->'payload', p_payload_hash,
-    'trigger_processor.runtime_event_append', 'pending', clock_timestamp(), clock_timestamp()
+    'trigger_processor.admission_audit', 'pending', clock_timestamp(), clock_timestamp()
   )
   ON CONFLICT (idempotency_key) DO NOTHING
   RETURNING jsonb_build_object('outbox_id', id, 'status', status) INTO result;
   IF result IS NULL THEN
     SELECT jsonb_build_object('outbox_id', id, 'status', status)
       INTO result
-      FROM skill_registry.eventing_outbox
+      FROM trigger_processor.eventing_outbox
      WHERE idempotency_key = p_idempotency_key
        AND payload_hash = p_payload_hash;
     IF result IS NULL THEN
@@ -899,7 +975,7 @@ BEGIN
   RETURN result;
 END;
 $$;
-CREATE FUNCTION skill_registry.claim_eventing_outbox_v1(
+CREATE FUNCTION trigger_processor.claim_eventing_outbox_v1(
   p_worker_id text,
   p_limit integer,
   p_lease_seconds integer,
@@ -908,14 +984,14 @@ CREATE FUNCTION skill_registry.claim_eventing_outbox_v1(
   p_current_transport_generation bigint
 ) RETURNS SETOF jsonb
 LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = skill_registry, pg_temp
+SET search_path = trigger_processor, pg_temp
 AS $$
 BEGIN
   RETURN QUERY
   WITH candidates AS (
     SELECT outbox.id
-      FROM skill_registry.eventing_outbox outbox
-      JOIN skill_registry.eventing_transport_epochs active
+      FROM trigger_processor.eventing_outbox outbox
+      JOIN trigger_processor.eventing_transport_epochs active
         ON active.transport_name = 'redis_stream'
      WHERE active.active_epoch = p_current_transport_epoch
        AND active.active_generation = p_current_transport_generation
@@ -928,7 +1004,7 @@ BEGIN
     FOR UPDATE SKIP LOCKED
     LIMIT p_limit
   ), claimed AS (
-    UPDATE skill_registry.eventing_outbox outbox
+    UPDATE trigger_processor.eventing_outbox outbox
        SET status = 'dispatching',
            attempt_count = outbox.attempt_count + 1,
            claimed_by = p_worker_id,
@@ -961,7 +1037,7 @@ BEGIN
   ) FROM claimed;
 END;
 $$;
-CREATE FUNCTION skill_registry.ack_eventing_outbox_v1(
+CREATE FUNCTION trigger_processor.ack_eventing_outbox_v1(
   p_outbox_id text,
   p_claim_token text,
   p_outcome text,
@@ -975,10 +1051,10 @@ CREATE FUNCTION skill_registry.ack_eventing_outbox_v1(
   p_now timestamptz
 ) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = skill_registry, pg_temp
+SET search_path = trigger_processor, pg_temp
 AS $$
 DECLARE
-  current_event skill_registry.eventing_outbox%ROWTYPE;
+  current_event trigger_processor.eventing_outbox%ROWTYPE;
   active_epoch text;
   active_generation bigint;
 BEGIN
@@ -1004,14 +1080,14 @@ BEGIN
   END IF;
   SELECT active.active_epoch, active.active_generation
     INTO active_epoch, active_generation
-    FROM skill_registry.eventing_transport_epochs active
+    FROM trigger_processor.eventing_transport_epochs active
    WHERE active.transport_name = 'redis_stream'
    FOR UPDATE;
   IF active_epoch IS DISTINCT FROM p_current_transport_epoch
      OR active_generation IS DISTINCT FROM p_current_transport_generation THEN
     RAISE EXCEPTION 'stale active transport generation';
   END IF;
-  UPDATE skill_registry.eventing_outbox
+  UPDATE trigger_processor.eventing_outbox
      SET status = p_outcome,
          next_retry_at = p_next_retry_at,
          last_error = p_error,
@@ -1031,17 +1107,17 @@ BEGIN
     RAISE EXCEPTION 'stale outbox claim token';
   END IF;
   IF p_outcome = 'failed' THEN
-    INSERT INTO skill_registry.eventing_dlq(
-      id, source_event_id, event_type, payload, last_error, failed_at, resolved_at
+    INSERT INTO trigger_processor.eventing_dlq(
+      id, source_event_id, event_type, payload, last_error, failed_at
     ) VALUES (
       'dlq:' || p_outbox_id, p_outbox_id, current_event.event_type,
-      current_event.payload, p_error, p_now, NULL
+      current_event.payload, p_error, p_now
     );
   END IF;
-  RETURN jsonb_build_object('outbox_id', p_outbox_id, 'status', p_outcome);
+  RETURN jsonb_build_object('acknowledged', true);
 END;
 $$;
-CREATE FUNCTION skill_registry.consume_eventing_inbox_v1(
+CREATE FUNCTION trigger_processor.consume_eventing_inbox_v1(
   p_event jsonb,
   p_idempotency_key text,
   p_payload_hash text,
@@ -1049,7 +1125,7 @@ CREATE FUNCTION skill_registry.consume_eventing_inbox_v1(
   p_scope_fingerprint text
 ) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = skill_registry, pg_temp
+SET search_path = trigger_processor, pg_temp
 AS $$
 DECLARE
   existing_hash text;
@@ -1057,7 +1133,7 @@ DECLARE
   projection_id text;
 BEGIN
   projection_id := (p_event->>'producer') || ':' || p_scope_fingerprint || ':' || p_idempotency_key;
-  INSERT INTO skill_registry.eventing_inbox(
+  INSERT INTO trigger_processor.eventing_inbox(
     id, source, event_id, scope_fingerprint, idempotency_key, payload_hash,
     semantic_hash, processed_at, created_at
   ) VALUES (
@@ -1068,7 +1144,7 @@ BEGIN
   ) ON CONFLICT (source, scope_fingerprint, idempotency_key) DO NOTHING
   RETURNING id INTO applied_inbox_id;
   IF FOUND THEN
-    INSERT INTO skill_registry.eventing_projection(
+    INSERT INTO trigger_processor.eventing_projection(
       id, source, scope_fingerprint, idempotency_key, semantic_hash,
       applied_count, updated_at
     ) VALUES (
@@ -1077,9 +1153,9 @@ BEGIN
     )
     ON CONFLICT (id) DO UPDATE
       SET semantic_hash = EXCLUDED.semantic_hash,
-          applied_count = skill_registry.eventing_projection.applied_count + 1,
+          applied_count = trigger_processor.eventing_projection.applied_count + 1,
           updated_at = EXCLUDED.updated_at;
-    INSERT INTO skill_registry.eventing_audit(
+    INSERT INTO trigger_processor.eventing_audit(
       id, inbox_id, event_id, semantic_hash, created_at
     ) VALUES (
       'audit:' || projection_id, applied_inbox_id, p_event->>'event_id',
@@ -1088,7 +1164,7 @@ BEGIN
     RETURN jsonb_build_object('status', 'processed');
   END IF;
   SELECT semantic_hash INTO existing_hash
-    FROM skill_registry.eventing_inbox
+    FROM trigger_processor.eventing_inbox
    WHERE source = p_event->>'producer'
      AND scope_fingerprint = p_scope_fingerprint
      AND idempotency_key = p_idempotency_key
@@ -1102,7 +1178,7 @@ BEGIN
   RETURN jsonb_build_object('status', 'replayed');
 END;
 $$;
-CREATE FUNCTION skill_registry.record_eventing_consumer_dlq_v1(
+CREATE FUNCTION trigger_processor.record_eventing_consumer_dlq_v1(
   p_delivery_id text,
   p_delivery_ref text,
   p_consumer_service text,
@@ -1113,7 +1189,7 @@ CREATE FUNCTION skill_registry.record_eventing_consumer_dlq_v1(
   p_now timestamptz
 ) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = skill_registry, pg_temp
+SET search_path = trigger_processor, pg_temp
 AS $$
 DECLARE inserted_id text;
 BEGIN
@@ -1123,20 +1199,19 @@ BEGIN
      OR p_failure_code IS NULL OR btrim(p_failure_code) = '' THEN
     RAISE EXCEPTION 'invalid durable consumer DLQ identity';
   END IF;
-  INSERT INTO skill_registry.eventing_dlq(
-    id, source_event_id, event_type, payload, last_error, failed_at, resolved_at
+  INSERT INTO trigger_processor.eventing_dlq(
+    id, source_event_id, event_type, payload, last_error, failed_at
   ) VALUES (
     'consumer-dlq:' || p_consumer_service || ':' || p_delivery_ref,
     p_delivery_id,
     'consumer.delivery.invalid',
     jsonb_build_object('raw_fields', p_raw_fields, 'envelope', p_envelope),
     jsonb_build_object('code', p_failure_code, 'message', p_failure_message),
-    p_now,
-    NULL
+    p_now
   )
   ON CONFLICT (id) DO NOTHING
   RETURNING id INTO inserted_id;
-  INSERT INTO skill_registry.eventing_audit(
+  INSERT INTO trigger_processor.eventing_audit(
     id, inbox_id, event_id, semantic_hash, created_at
   ) VALUES (
     'audit:consumer-dlq:' || p_consumer_service || ':' || p_delivery_ref,
@@ -1150,7 +1225,62 @@ BEGIN
   );
 END;
 $$;
-CREATE FUNCTION skill_registry.activate_eventing_transport_epoch_v1(
+CREATE FUNCTION trigger_processor.resolve_eventing_dlq_v1(
+  p_resolution_id text,
+  p_dlq_id text,
+  p_idempotency_key text,
+  p_resolution_kind text,
+  p_resolution_payload jsonb,
+  p_resolved_by text,
+  p_resolved_at timestamptz
+) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = trigger_processor, pg_temp
+AS $$
+DECLARE result jsonb;
+BEGIN
+  IF p_resolution_id IS NULL OR btrim(p_resolution_id) = ''
+     OR p_dlq_id IS NULL OR btrim(p_dlq_id) = ''
+     OR p_idempotency_key IS NULL OR btrim(p_idempotency_key) = ''
+     OR p_resolution_kind IS NULL OR btrim(p_resolution_kind) = ''
+     OR p_resolution_payload IS NULL
+     OR p_resolved_by IS NULL OR btrim(p_resolved_by) = ''
+     OR p_resolved_at IS NULL THEN
+    RAISE EXCEPTION 'invalid durable DLQ resolution fact';
+  END IF;
+  INSERT INTO trigger_processor.eventing_dlq_resolutions(
+    resolution_id, dlq_id, idempotency_key, resolution_kind,
+    resolution_payload, resolved_by, resolved_at
+  ) VALUES (
+    p_resolution_id, p_dlq_id, p_idempotency_key, p_resolution_kind,
+    p_resolution_payload, p_resolved_by, p_resolved_at
+  )
+  ON CONFLICT (idempotency_key) DO NOTHING
+  RETURNING jsonb_build_object(
+    'resolution_id', resolution_id,
+    'status', 'recorded'
+  ) INTO result;
+  IF result IS NULL THEN
+    SELECT jsonb_build_object(
+      'resolution_id', resolution_id,
+      'status', 'replayed'
+    ) INTO result
+      FROM trigger_processor.eventing_dlq_resolutions
+     WHERE idempotency_key = p_idempotency_key
+       AND resolution_id = p_resolution_id
+       AND dlq_id = p_dlq_id
+       AND resolution_kind = p_resolution_kind
+       AND resolution_payload = p_resolution_payload
+       AND resolved_by = p_resolved_by
+       AND resolved_at = p_resolved_at;
+    IF result IS NULL THEN
+      RAISE EXCEPTION 'DLQ resolution idempotency conflict';
+    END IF;
+  END IF;
+  RETURN result;
+END;
+$$;
+CREATE FUNCTION trigger_processor.activate_eventing_transport_epoch_v1(
   p_transport_name text,
   p_expected_generation bigint,
   p_next_epoch text,
@@ -1158,7 +1288,7 @@ CREATE FUNCTION skill_registry.activate_eventing_transport_epoch_v1(
   p_now timestamptz
 ) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = skill_registry, pg_temp
+SET search_path = trigger_processor, pg_temp
 AS $$
 DECLARE updated_name text;
 BEGIN
@@ -1167,7 +1297,7 @@ BEGIN
      OR p_next_generation <= p_expected_generation THEN
     RAISE EXCEPTION 'invalid active transport epoch transition';
   END IF;
-  UPDATE skill_registry.eventing_transport_epochs
+  UPDATE trigger_processor.eventing_transport_epochs
      SET active_epoch = p_next_epoch,
          active_generation = p_next_generation,
          activated_at = p_now
@@ -1184,7 +1314,7 @@ BEGIN
   );
 END;
 $$;
-CREATE FUNCTION skill_registry.claim_sent_eventing_outbox_redrive_v1(
+CREATE FUNCTION trigger_processor.claim_sent_eventing_outbox_redrive_v1(
   p_worker_id text,
   p_limit integer,
   p_lease_seconds integer,
@@ -1193,14 +1323,14 @@ CREATE FUNCTION skill_registry.claim_sent_eventing_outbox_redrive_v1(
   p_current_transport_generation bigint
 ) RETURNS SETOF jsonb
 LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = skill_registry, pg_temp
+SET search_path = trigger_processor, pg_temp
 AS $$
 BEGIN
   RETURN QUERY
   WITH candidates AS (
     SELECT outbox.id
-      FROM skill_registry.eventing_outbox outbox
-      JOIN skill_registry.eventing_transport_epochs active
+      FROM trigger_processor.eventing_outbox outbox
+      JOIN trigger_processor.eventing_transport_epochs active
         ON active.transport_name = 'redis_stream'
      WHERE outbox.status = 'sent'
        AND active.active_epoch = p_current_transport_epoch
@@ -1217,7 +1347,7 @@ BEGIN
      FOR UPDATE SKIP LOCKED
      LIMIT p_limit
   ), claimed AS (
-    UPDATE skill_registry.eventing_outbox outbox
+    UPDATE trigger_processor.eventing_outbox outbox
        SET redrive_claimed_by = p_worker_id,
            redrive_claim_generation = outbox.redrive_claim_generation + 1,
           redrive_claim_token = p_worker_id || ':' || outbox.id || ':' ||
@@ -1254,9 +1384,10 @@ BEGIN
   ) FROM claimed;
 END;
 $$;
-CREATE FUNCTION skill_registry.ack_sent_eventing_outbox_redrive_v1(
+CREATE FUNCTION trigger_processor.ack_sent_eventing_outbox_redrive_v1(
   p_outbox_id text,
   p_claim_token text,
+  p_previous_transport_ref text,
   p_previous_transport_epoch text,
   p_previous_transport_generation bigint,
   p_transport_ref text,
@@ -1265,14 +1396,15 @@ CREATE FUNCTION skill_registry.ack_sent_eventing_outbox_redrive_v1(
   p_now timestamptz
 ) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = skill_registry, pg_temp
+SET search_path = trigger_processor, pg_temp
 AS $$
 DECLARE
   updated_id text;
   active_epoch text;
   active_generation bigint;
 BEGIN
-  IF p_transport_ref IS NULL OR btrim(p_transport_ref) = ''
+  IF p_previous_transport_ref IS NULL OR btrim(p_previous_transport_ref) = ''
+     OR p_transport_ref IS NULL OR btrim(p_transport_ref) = ''
      OR p_transport_epoch IS NULL OR btrim(p_transport_epoch) = ''
      OR (
        p_transport_epoch = p_previous_transport_epoch AND
@@ -1283,14 +1415,14 @@ BEGIN
   END IF;
   SELECT active.active_epoch, active.active_generation
     INTO active_epoch, active_generation
-    FROM skill_registry.eventing_transport_epochs active
+    FROM trigger_processor.eventing_transport_epochs active
    WHERE active.transport_name = 'redis_stream'
    FOR UPDATE;
   IF active_epoch IS DISTINCT FROM p_transport_epoch
      OR active_generation IS DISTINCT FROM p_current_transport_generation THEN
     RAISE EXCEPTION 'stale active transport generation';
   END IF;
-  UPDATE skill_registry.eventing_outbox
+  UPDATE trigger_processor.eventing_outbox
      SET transport_ref = p_transport_ref,
          transport_epoch = p_transport_epoch,
          transport_generation = p_current_transport_generation,
@@ -1301,37 +1433,40 @@ BEGIN
    WHERE id = p_outbox_id
      AND status = 'sent'
      AND redrive_claim_token = p_claim_token
+     AND transport_ref = p_previous_transport_ref
      AND transport_epoch IS NOT DISTINCT FROM p_previous_transport_epoch
      AND transport_generation IS NOT DISTINCT FROM p_previous_transport_generation
    RETURNING id INTO updated_id;
   IF updated_id IS NULL THEN
     RAISE EXCEPTION 'stale sent outbox redrive claim';
   END IF;
-  RETURN jsonb_build_object('outbox_id', updated_id, 'status', 'sent');
+  RETURN jsonb_build_object('acknowledged', true);
 END;
 $$;
 RESET ROLE;
-REVOKE ALL ON ALL TABLES IN SCHEMA skill_registry FROM PUBLIC, anon, authenticated, pai_skill_registry_app, pai_skill_registry_eventing_test;
-REVOKE ALL ON ALL FUNCTIONS IN SCHEMA skill_registry FROM PUBLIC, anon, authenticated, pai_skill_registry_app, pai_skill_registry_eventing_test;
-GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[0]!.select_columns.join(", ")}) ON skill_registry.eventing_outbox TO pai_skill_registry_app;
-GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[1]!.select_columns.join(", ")}) ON skill_registry.eventing_transport_epochs TO pai_skill_registry_app;
-GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[2]!.select_columns.join(", ")}) ON skill_registry.eventing_inbox TO pai_skill_registry_app;
-GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[3]!.select_columns.join(", ")}) ON skill_registry.eventing_dlq TO pai_skill_registry_app;
-GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[4]!.select_columns.join(", ")}) ON skill_registry.eventing_projection TO pai_skill_registry_app;
-GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[5]!.select_columns.join(", ")}) ON skill_registry.eventing_audit TO pai_skill_registry_app;
-GRANT EXECUTE ON FUNCTION skill_registry.enqueue_eventing_outbox_v1(jsonb, text, text) TO pai_skill_registry_app;
-GRANT EXECUTE ON FUNCTION skill_registry.claim_eventing_outbox_v1(text, integer, integer, timestamptz, text, bigint) TO pai_skill_registry_app;
-GRANT EXECUTE ON FUNCTION skill_registry.ack_eventing_outbox_v1(text, text, text, timestamptz, jsonb, text, text, bigint, text, bigint, timestamptz) TO pai_skill_registry_app;
-GRANT EXECUTE ON FUNCTION skill_registry.consume_eventing_inbox_v1(jsonb, text, text, text, text) TO pai_skill_registry_app;
-GRANT EXECUTE ON FUNCTION skill_registry.record_eventing_consumer_dlq_v1(text, text, text, text, text, jsonb, jsonb, timestamptz) TO pai_skill_registry_app;
-GRANT EXECUTE ON FUNCTION skill_registry.activate_eventing_transport_epoch_v1(text, bigint, text, bigint, timestamptz) TO pai_skill_registry_app;
-GRANT EXECUTE ON FUNCTION skill_registry.claim_sent_eventing_outbox_redrive_v1(text, integer, integer, timestamptz, text, bigint) TO pai_skill_registry_app;
-GRANT EXECUTE ON FUNCTION skill_registry.ack_sent_eventing_outbox_redrive_v1(text, text, text, bigint, text, text, bigint, timestamptz) TO pai_skill_registry_app;
+REVOKE ALL ON ALL TABLES IN SCHEMA trigger_processor FROM PUBLIC, anon, authenticated, pai_trigger_processor_app, pai_eventing_recovery_runtime;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA trigger_processor FROM PUBLIC, anon, authenticated, pai_trigger_processor_app, pai_eventing_recovery_runtime;
+GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[0]!.select_columns.join(", ")}) ON trigger_processor.eventing_outbox TO pai_trigger_processor_app;
+GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[1]!.select_columns.join(", ")}) ON trigger_processor.eventing_transport_epochs TO pai_trigger_processor_app;
+GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[2]!.select_columns.join(", ")}) ON trigger_processor.eventing_inbox TO pai_trigger_processor_app;
+GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[3]!.select_columns.join(", ")}) ON trigger_processor.eventing_dlq TO pai_trigger_processor_app;
+GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[4]!.select_columns.join(", ")}) ON trigger_processor.eventing_projection TO pai_trigger_processor_app;
+GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[5]!.select_columns.join(", ")}) ON trigger_processor.eventing_audit TO pai_trigger_processor_app;
+GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[6]!.select_columns.join(", ")}) ON trigger_processor.eventing_dlq_resolutions TO pai_trigger_processor_app;
+GRANT EXECUTE ON FUNCTION trigger_processor.enqueue_eventing_outbox_v1(jsonb, text, text) TO pai_trigger_processor_app;
+GRANT EXECUTE ON FUNCTION trigger_processor.claim_eventing_outbox_v1(text, integer, integer, timestamptz, text, bigint) TO pai_trigger_processor_app;
+GRANT EXECUTE ON FUNCTION trigger_processor.ack_eventing_outbox_v1(text, text, text, timestamptz, jsonb, text, text, bigint, text, bigint, timestamptz) TO pai_trigger_processor_app;
+GRANT EXECUTE ON FUNCTION trigger_processor.consume_eventing_inbox_v1(jsonb, text, text, text, text) TO pai_trigger_processor_app;
+GRANT EXECUTE ON FUNCTION trigger_processor.record_eventing_consumer_dlq_v1(text, text, text, text, text, jsonb, jsonb, timestamptz) TO pai_trigger_processor_app;
+GRANT EXECUTE ON FUNCTION trigger_processor.resolve_eventing_dlq_v1(text, text, text, text, jsonb, text, timestamptz) TO pai_trigger_processor_app;
+GRANT EXECUTE ON FUNCTION trigger_processor.activate_eventing_transport_epoch_v1(text, bigint, text, bigint, timestamptz) TO pai_trigger_processor_app;
+GRANT EXECUTE ON FUNCTION trigger_processor.claim_sent_eventing_outbox_redrive_v1(text, integer, integer, timestamptz, text, bigint) TO pai_trigger_processor_app;
+GRANT EXECUTE ON FUNCTION trigger_processor.ack_sent_eventing_outbox_redrive_v1(text, text, text, text, bigint, text, text, bigint, timestamptz) TO pai_trigger_processor_app;
 `;
 
 function generatedWriterBody(functionName: string): string {
   const functionStart = setupSql.indexOf(
-    `CREATE FUNCTION skill_registry.${functionName}(`,
+    `CREATE FUNCTION trigger_processor.${functionName}(`,
   );
   const bodyMarker = setupSql.indexOf("AS $$", functionStart);
   const bodyStart = setupSql.indexOf("\n", bodyMarker) + 1;
@@ -1342,17 +1477,87 @@ function generatedWriterBody(functionName: string): string {
   return setupSql.slice(bodyStart, bodyEnd);
 }
 
-const EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
+const CANONICAL_EVENTING_CONTRACT = defineOwnerRepositoryContractV1({
   ...EVENTING_CONTRACT_INPUT,
   writer_artifacts: EVENTING_CONTRACT_INPUT.function_signatures.map(
     (signature) =>
       ownerWriterArtifactV1({
         signature,
         generator_source:
-          "pai-infra/supabase/generated/permissions/0450_skill_registry.sql",
+          "pai-infra/supabase/generated/permissions/0100_trigger_processor.sql",
         function_body: generatedWriterBody(signature.function_name),
       }),
   ),
+});
+
+// Production owner contracts intentionally pin canonical schema/role targets.
+// This integration fixture preserves that validated contract shape at compile
+// time, then isolates only its PostgreSQL deployment target to avoid dropping
+// a canonical owner schema while parallel CI suites are running.
+const EVENTING_TEST_FUNCTION_SIGNATURES =
+  CANONICAL_EVENTING_CONTRACT.function_signatures.map((signature) =>
+    Object.freeze({
+      ...signature,
+      schema: EVENTING_TEST_SCHEMA,
+      search_path: [EVENTING_TEST_SCHEMA, "pg_temp"] as const,
+    }),
+  );
+const EVENTING_CONTRACT = Object.freeze({
+  ...CANONICAL_EVENTING_CONTRACT,
+  schema: EVENTING_TEST_SCHEMA,
+  app_role: EVENTING_TEST_APP_ROLE,
+  function_signatures: EVENTING_TEST_FUNCTION_SIGNATURES,
+  foreign_keys: CANONICAL_EVENTING_CONTRACT.foreign_keys.map((foreignKey) =>
+    Object.freeze({
+      ...foreignKey,
+      referenced_schema: EVENTING_TEST_SCHEMA,
+    }),
+  ),
+  database_indexes: CANONICAL_EVENTING_CONTRACT.database_indexes?.map(
+    (index) =>
+      Object.freeze({
+        ...index,
+        definition: index.definition.replace(
+          " ON trigger_processor.",
+          ` ON ${EVENTING_TEST_SCHEMA}.`,
+        ),
+      }),
+  ),
+  writer_artifacts: EVENTING_TEST_FUNCTION_SIGNATURES.map((signature) =>
+    ownerWriterArtifactV1({
+      signature,
+      generator_source:
+        "pai-infra/supabase/generated/permissions/0100_trigger_processor.sql",
+      function_body: generatedWriterBody(signature.function_name),
+    }),
+  ),
+}) as unknown as typeof CANONICAL_EVENTING_CONTRACT;
+
+describe("eventing deployment contract guard", () => {
+  it("rejects an unmapped DLQ before querying either PostgreSQL identity", async () => {
+    const { dlq_resolutions: _mapping, ...unmapped } =
+      CANONICAL_EVENTING_CONTRACT;
+    const queries: string[] = [];
+    const postgres = {
+      async query<TRow extends Record<string, unknown>>(sql: string) {
+        queries.push(sql);
+        return { rows: [] as TRow[] };
+      },
+    };
+
+    await expect(
+      verifyOwnerRepositoryDeploymentFromPostgresV1(
+        unmapped as typeof CANONICAL_EVENTING_CONTRACT,
+        postgres,
+        {
+          expected_schema_owner: "pai_migrator",
+          runtime_postgres: postgres,
+        },
+      ),
+    ).rejects.toThrow(/canonical immutable DLQ resolution mapping is required/u);
+    expect(queries).toEqual([]);
+    void _mapping;
+  });
 });
 
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;
@@ -1374,7 +1579,7 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
   function runtimeUrl(): string {
     if (databaseUrl === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
     const url = new URL(databaseUrl);
-    url.username = "pai_skill_registry_eventing_test";
+    url.username = "pai_eventing_recovery_runtime";
     url.password = "eventing-runtime-test";
     return url.toString();
   }
@@ -1415,7 +1620,7 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
         );
       },
       async acknowledge(request) {
-        await composition.unit_of_work.withTransaction(
+        const confirmation = await composition.unit_of_work.withTransaction(
           {
             operation: "ack_eventing_outbox",
             idempotency_key: `${request.outbox_id}:${request.claim_token}`,
@@ -1424,10 +1629,9 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
             retry: "none",
           },
           async (transaction, repositories) =>
-            repositories.owner.executeWriter<
-              Readonly<{ outbox_id: string; status: string }>,
-              "ack_eventing_outbox_v1"
-            >(transaction, {
+            repositories.owner.executeWriter<unknown, "ack_eventing_outbox_v1">(
+              transaction,
+              {
               writer: "ack_eventing_outbox_v1",
               arguments: {
                 p_outbox_id: request.outbox_id,
@@ -1447,8 +1651,10 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
                 p_now: request.now,
               },
               expected_rows: 1,
-            }),
+              },
+            ),
         );
+        assertOwnerOutboxAcknowledgeConfirmationV1(confirmation);
       },
     };
   }
@@ -1489,24 +1695,12 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
 
   it("replays a committed outbox after process restart and dedupes the inbox", async () => {
     await reset();
-    const envelope = {
+    const envelope = triggerRejectedEvent({
       event_id: "evt_restart_001",
-      event_type: "skill.version.published",
-      schema_version: "skill_registry_event.v1",
-      producer: "skill_registry",
-      occurred_at: "2026-07-21T05:00:00.000Z",
-      idempotency_key: "skill_version_001:published",
+      idempotency_key: "submit_attempt_restart_001:rejected",
       trace_id: "trace_restart_001",
-      payload: {
-        scope_kind: "bot",
-        workspace_id: "workspace_001",
-        bot_id: "bot_001",
-        owner_agent_id: "owner_agent_001",
-        deployment_environment: "dev",
-        release_channel: "stable",
-        skill_version_id: "skill_version_001",
-      },
-    } as const;
+      submit_attempt_id: "submit_attempt_restart_001",
+    });
     const payloadHash = canonicalPayloadHashV1(envelope.payload);
 
     const firstProcess = await openVerifiedOwnerPostgresCompositionV1(
@@ -1553,9 +1747,9 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
       postgresOutboxStore(secondProcess),
       transport,
       {
-        owner_service: "skill_registry",
+        owner_service: "trigger_processor",
         worker_id: "eventing_worker_001",
-        batch_size: 100,
+        batch_size: 16,
         lease_seconds: 5,
         max_attempts: 3,
         retry_base_delay_ms: 250,
@@ -1611,7 +1805,7 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     await expect(consume(envelope.payload)).resolves.toEqual({ status: "processed" });
     await expect(consume(envelope.payload)).resolves.toEqual({ status: "replayed" });
     await expect(
-      consume({ ...envelope.payload, skill_version_id: "skill_version_drift" }),
+      consume({ ...envelope.payload, rejection_code: "semantic_drift" }),
     ).rejects.toThrow(/semantic hash conflict/);
 
     if (admin === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
@@ -1619,7 +1813,7 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
       applied_count: number;
       semantic_hash: string;
     }>(
-      "SELECT applied_count, semantic_hash FROM skill_registry.eventing_projection WHERE id = $1",
+      "SELECT applied_count, semantic_hash FROM trigger_processor.eventing_projection WHERE id = $1",
       [
         `${envelope.producer}:${durableEventScopeFingerprintV1(envelope)}:${envelope.idempotency_key}`,
       ],
@@ -1631,7 +1825,7 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
       },
     ]);
     const audit = await admin.query<{ count: string }>(
-      "SELECT count(*)::text AS count FROM skill_registry.eventing_audit",
+      "SELECT count(*)::text AS count FROM trigger_processor.eventing_audit",
     );
     expect(audit.rows).toEqual([{ count: "1" }]);
     const persisted = await admin.query<{
@@ -1643,7 +1837,7 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     }>(
       `SELECT status, attempt_count, transport_ref, transport_epoch,
               transport_generation::text AS transport_generation
-         FROM skill_registry.eventing_outbox
+         FROM trigger_processor.eventing_outbox
         WHERE id = $1`,
       [envelope.event_id],
     );
@@ -1664,24 +1858,12 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
       runtimeUrl(),
     );
     try {
-      const envelope = {
+      const envelope = triggerRejectedEvent({
         event_id: "evt_cutover_claim_001",
-        event_type: "skill.version.published",
-        schema_version: "skill_registry_event.v1",
-        producer: "skill_registry",
-        occurred_at: "2026-07-21T05:00:00.000Z",
-        idempotency_key: "skill_version_cutover_claim_001:published",
+        idempotency_key: "submit_attempt_cutover_claim_001:rejected",
         trace_id: "trace_cutover_claim_001",
-        payload: {
-          scope_kind: "bot",
-          workspace_id: "workspace_001",
-          bot_id: "bot_001",
-          owner_agent_id: "owner_agent_001",
-          deployment_environment: "dev",
-          release_channel: "stable",
-          skill_version_id: "skill_version_cutover_claim_001",
-        },
-      } as const;
+        submit_attempt_id: "submit_attempt_cutover_claim_001",
+      });
       await composition.unit_of_work.withTransaction(
         {
           operation: "enqueue_cutover_fixture",
@@ -1726,9 +1908,9 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
           postgresOutboxStore(composition),
           transport,
           {
-            owner_service: "skill_registry",
+            owner_service: "trigger_processor",
             worker_id: `eventing_worker_${generation}`,
-            batch_size: 100,
+            batch_size: 16,
             lease_seconds: 5,
             max_attempts: 3,
             retry_base_delay_ms: 250,
@@ -1766,7 +1948,7 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
       }>(
         `SELECT status, transport_epoch,
                 transport_generation::text AS transport_generation
-           FROM skill_registry.eventing_outbox
+           FROM trigger_processor.eventing_outbox
           WHERE id = $1`,
         [envelope.event_id],
       );
@@ -1825,40 +2007,28 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     let oldPhysicalStream: string | undefined;
     let newPhysicalStream: string | undefined;
     try {
-    const envelope = {
+    const envelope = triggerRejectedEvent({
       event_id: "evt_epoch_redrive_001",
-      event_type: "skill.version.published",
-      schema_version: "skill_registry_event.v1",
-      producer: "skill_registry",
-      occurred_at: "2026-07-21T05:00:00.000Z",
-      idempotency_key: "skill_version_redrive_001:published",
+      idempotency_key: "submit_attempt_redrive_001:rejected",
       trace_id: "trace_epoch_redrive_001",
-      payload: {
-        scope_kind: "bot",
-        workspace_id: "workspace_001",
-        bot_id: "bot_001",
-        owner_agent_id: "owner_agent_001",
-        deployment_environment: "dev",
-        release_channel: "stable",
-        skill_version_id: "skill_version_redrive_001",
-      },
-    } as const;
+      submit_attempt_id: "submit_attempt_redrive_001",
+    });
     const oldNamespace = createRedisNamespaceV1({
       deployment_environment: "dev",
       release_channel: "stable",
-      owner_service: "skill_registry",
+      owner_service: "trigger_processor",
       stream_epoch: "epoch_1",
       stream_generation: 1,
     });
     const newNamespace = createRedisNamespaceV1({
       deployment_environment: "dev",
       release_channel: "stable",
-      owner_service: "skill_registry",
+      owner_service: "trigger_processor",
       stream_epoch: "epoch_new",
       stream_generation: 2,
     });
-    const target = "trigger_processor.runtime_event_append";
-    const logicalStream = "stream:skill_events";
+    const target = "trigger_processor.admission_audit";
+    const logicalStream = "stream:trigger_events";
     oldPhysicalStream = namespacedRedisKeyV1(oldNamespace, logicalStream);
     newPhysicalStream = namespacedRedisKeyV1(newNamespace, logicalStream);
     await reader.del(oldPhysicalStream, newPhysicalStream);
@@ -1895,7 +2065,7 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
       postgresOutboxStore(composition),
       oldRedis.transport,
       {
-        owner_service: "skill_registry",
+        owner_service: "trigger_processor",
         worker_id: "publisher_old",
         batch_size: 10,
         lease_seconds: 30,
@@ -2019,7 +2189,7 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
         );
       },
       async acknowledgeSentRedrive(request) {
-        await composition.unit_of_work.withTransaction(
+        const confirmation = await composition.unit_of_work.withTransaction(
           {
             operation: "ack_sent_redrive",
             idempotency_key: request.outbox_id,
@@ -2028,11 +2198,15 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
             retry: "none",
           },
           async (transaction, repositories) =>
-            repositories.owner.executeWriter(transaction, {
+            repositories.owner.executeWriter<
+              unknown,
+              "ack_sent_eventing_outbox_redrive_v1"
+            >(transaction, {
               writer: "ack_sent_eventing_outbox_redrive_v1",
               arguments: {
                 p_outbox_id: request.outbox_id,
                 p_claim_token: request.claim_token,
+                p_previous_transport_ref: request.previous_transport_ref,
                 p_previous_transport_epoch: request.previous_transport_epoch,
                 p_previous_transport_generation:
                   request.previous_transport_generation === null
@@ -2046,6 +2220,12 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
               },
               expected_rows: 1,
             }),
+        );
+        assertOwnerOutboxAcknowledgeConfirmationV1(confirmation);
+      },
+      async acknowledgeSentRedrivePermanentFailure() {
+        throw new Error(
+          "the PostgreSQL quarantine writer is an explicit pai-infra boundary",
         );
       },
     };
@@ -2062,12 +2242,14 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
         }
         await postgresRedriveStore.acknowledgeSentRedrive(request);
       },
+      acknowledgeSentRedrivePermanentFailure: (request) =>
+        postgresRedriveStore.acknowledgeSentRedrivePermanentFailure(request),
     };
     const redriver = (at: string) => createDurableSentOutboxRedriverV1(
       redriveStore,
       newRedis.transport,
       {
-        owner_service: "skill_registry",
+        owner_service: "trigger_processor",
         worker_id: "redrive_worker",
         batch_size: 10,
         lease_seconds: 30,
@@ -2106,6 +2288,7 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
       postgresRedriveStore.acknowledgeSentRedrive({
         outbox_id: envelope.event_id,
         claim_token: redriveClaimTokens[0]!,
+        previous_transport_ref: "redis_stream:stale-claim:1-0",
         previous_transport_epoch: "epoch_1",
         previous_transport_generation: 1,
         transport_ref: "redis_stream:stale:1-0",
@@ -2153,8 +2336,8 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
       `SELECT outbox.transport_ref, outbox.transport_epoch,
               outbox.transport_generation::text AS transport_generation,
               projection.applied_count AS projection_count
-         FROM skill_registry.eventing_outbox outbox
-         JOIN skill_registry.eventing_projection projection
+         FROM trigger_processor.eventing_outbox outbox
+         JOIN trigger_processor.eventing_projection projection
            ON projection.id = $2
         WHERE outbox.id = $1`,
       [
@@ -2164,11 +2347,79 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     );
     expect(persisted.rows).toEqual([{
       transport_ref: expect.stringMatching(
-        /^redis_stream:pai:dev:stable:skill_registry:v1:epoch_new:generation_2:stream:skill_events:\d+-\d+$/u,
+        /^redis_stream:pai:dev:stable:trigger_processor:v1:epoch_new:generation_2:stream:trigger_events:\d+-\d+$/u,
       ),
       transport_epoch: "epoch_new",
       transport_generation: "2",
       projection_count: 1,
+    }]);
+
+    await activateTransportEpoch(composition, {
+      expected_generation: 2,
+      next_epoch: "epoch_ref_cas",
+      next_generation: 3,
+      now: "2026-07-22T04:02:30.000Z",
+    });
+    const [refRaceClaim] = await postgresRedriveStore.claimSentForRedrive({
+      worker_id: "redrive_ref_race",
+      limit: 1,
+      lease_seconds: 30,
+      now: "2026-07-22T04:02:31.000Z",
+      current_transport_epoch: "epoch_ref_cas",
+      current_transport_generation: 3,
+    });
+    if (
+      refRaceClaim === undefined ||
+      typeof refRaceClaim.transport_ref !== "string" ||
+      typeof refRaceClaim.transport_epoch !== "string" ||
+      (refRaceClaim.transport_generation !== null &&
+        !Number.isSafeInteger(refRaceClaim.transport_generation))
+    ) {
+      throw new Error("expected a valid sent outbox ref-CAS claim");
+    }
+    const concurrentlyRemappedRef = `${refRaceClaim.transport_ref}:concurrent`;
+    await admin.query(
+      `UPDATE trigger_processor.eventing_outbox
+          SET transport_ref = $2,
+              updated_at = $3
+        WHERE id = $1`,
+      [
+        refRaceClaim.outbox_id,
+        concurrentlyRemappedRef,
+        "2026-07-22T04:02:32.000Z",
+      ],
+    );
+    await expect(
+      postgresRedriveStore.acknowledgeSentRedrive({
+        outbox_id: refRaceClaim.outbox_id,
+        claim_token: refRaceClaim.claim_token,
+        previous_transport_ref: refRaceClaim.transport_ref,
+        previous_transport_epoch: refRaceClaim.transport_epoch,
+        previous_transport_generation:
+          refRaceClaim.transport_generation === null
+            ? null
+            : (refRaceClaim.transport_generation as number),
+        transport_ref: "redis_stream:stale_ref_ack:1-0",
+        transport_epoch: "epoch_ref_cas",
+        current_transport_generation: 3,
+        now: "2026-07-22T04:02:33.000Z",
+      }),
+    ).rejects.toThrow(/stale sent outbox redrive claim/u);
+    const refAfterRejectedAck = await admin.query<{
+      transport_ref: string;
+      transport_epoch: string;
+      transport_generation: string;
+    }>(
+      `SELECT transport_ref, transport_epoch,
+              transport_generation::text AS transport_generation
+         FROM trigger_processor.eventing_outbox
+        WHERE id = $1`,
+      [refRaceClaim.outbox_id],
+    );
+    expect(refAfterRejectedAck.rows).toEqual([{
+      transport_ref: concurrentlyRemappedRef,
+      transport_epoch: "epoch_new",
+      transport_generation: "2",
     }]);
     } finally {
       await oldRedis?.close();
@@ -2209,9 +2460,9 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
           audit_count: string;
         }>(
           `SELECT
-             (SELECT count(*)::text FROM skill_registry.eventing_dlq
+             (SELECT count(*)::text FROM trigger_processor.eventing_dlq
                WHERE source_event_id = $1) AS dlq_count,
-             (SELECT count(*)::text FROM skill_registry.eventing_audit
+             (SELECT count(*)::text FROM trigger_processor.eventing_audit
                WHERE event_id = $1 AND id LIKE 'audit:consumer-dlq:%') AS audit_count`,
           [request.delivery_ids[0]],
         );
@@ -2266,9 +2517,9 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     if (admin === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
     const dlq = await admin.query<{ dlq_count: string; audit_count: string }>(
       `SELECT
-         (SELECT count(*)::text FROM skill_registry.eventing_dlq
+         (SELECT count(*)::text FROM trigger_processor.eventing_dlq
            WHERE source_event_id = 'poison-1-0') AS dlq_count,
-         (SELECT count(*)::text FROM skill_registry.eventing_audit
+         (SELECT count(*)::text FROM trigger_processor.eventing_audit
            WHERE event_id = 'poison-1-0' AND id LIKE 'audit:consumer-dlq:%') AS audit_count`,
     );
     expect(dlq.rows).toEqual([{ dlq_count: "1", audit_count: "1" }]);
@@ -2279,11 +2530,11 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     await reset();
     if (admin === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
     await admin.query(`
-      ALTER TABLE skill_registry.eventing_outbox
+      ALTER TABLE trigger_processor.eventing_outbox
         DROP CONSTRAINT eventing_outbox_event_type_check;
-      ALTER TABLE skill_registry.eventing_outbox
+      ALTER TABLE trigger_processor.eventing_outbox
         ADD CONSTRAINT eventing_outbox_event_type_check CHECK (
-          event_type IN ('skill.version.published', 'skill.version.attacker')
+          event_type IN ('trigger.rejected', 'trigger.attacker')
         );
     `);
     await expect(
@@ -2295,11 +2546,11 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     await reset();
     if (admin === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
     await admin.query(`
-      ALTER TABLE skill_registry.eventing_outbox
+      ALTER TABLE trigger_processor.eventing_outbox
         DROP CONSTRAINT eventing_outbox_producer_check;
-      ALTER TABLE skill_registry.eventing_outbox
+      ALTER TABLE trigger_processor.eventing_outbox
         ADD CONSTRAINT eventing_outbox_producer_check CHECK (
-          producer IN ('skill_registry', 'trigger_processor')
+          producer IN ('trigger_processor', 'action_runtime')
         );
     `);
     await expect(

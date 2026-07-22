@@ -77,6 +77,67 @@ describe("createServiceApp", () => {
     });
   });
 
+  it("snapshots the validated readiness proof against options mutation", async () => {
+    const mutableCheck: {
+      name: string;
+      check: () => Promise<void>;
+    } = {
+      name: "owner_postgres",
+      check: async () => {
+        throw new Error("database unavailable");
+      },
+    };
+    const app = createServiceApp("trigger_processor", {
+      readinessChecks: [mutableCheck],
+    });
+    apps.push(app);
+
+    mutableCheck.name = "forged_ready";
+    mutableCheck.check = async () => undefined;
+
+    const ready = await app.inject({ method: "GET", url: "/ready" });
+    expect(ready.statusCode).toBe(503);
+    expect(ready.json()).toMatchObject({
+      status: "not_ready",
+      checks: [{ name: "owner_postgres", status: "down" }],
+    });
+  });
+
+  it("rejects accessor-backed app options and readiness checks without invoking them", () => {
+    let optionGetterCalls = 0;
+    const options = {} as Record<string, unknown>;
+    Object.defineProperty(options, "readinessChecks", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        optionGetterCalls += 1;
+        return [];
+      },
+    });
+    expect(() => createServiceApp("memory", options as never)).toThrow(
+      "own data properties",
+    );
+    expect(optionGetterCalls).toBe(0);
+
+    let checkGetterCalls = 0;
+    const check = {
+      name: "owner_postgres",
+      check: async () => undefined,
+    } as Record<string, unknown>;
+    Object.defineProperty(check, "check", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        checkGetterCalls += 1;
+        return async () => undefined;
+      },
+    });
+    expect(() =>
+      createServiceApp("memory", { readinessChecks: [check as never] }),
+    ).toThrow("readiness check names");
+    expect(checkGetterCalls).toBe(0);
+  });
+
   it("aborts a timed-out readiness check so probes do not accumulate work", async () => {
     let observedAbort = false;
     const app = createServiceApp("memory", {
@@ -116,6 +177,58 @@ describe("createServiceApp", () => {
     expect(ready.json()).toMatchObject({
       checks: [{ name: "slow_dependency", status: "down" }],
     });
+  });
+
+  it("single-flights an uncooperative readiness check across concurrent probes", async () => {
+    let calls = 0;
+    let settleFirstCheck: (() => void) | undefined;
+    const app = createServiceApp("memory", {
+      runtimeConfig: {
+        host: "127.0.0.1",
+        port: 3004,
+        log_level: "silent",
+        request_timeout_ms: 30_000,
+        readiness_timeout_ms: 100,
+        shutdown_grace_ms: 10_000,
+        deployment_environment: "local",
+        release_channel: "stable",
+      },
+      readinessChecks: [
+        {
+          name: "uncooperative_dependency",
+          check: async () => {
+            calls += 1;
+            if (calls !== 1) return;
+            await new Promise<void>((resolve) => {
+              settleFirstCheck = resolve;
+            });
+          },
+        },
+      ],
+    });
+    apps.push(app);
+
+    const firstWave = await Promise.all(
+      Array.from({ length: 20 }, async () =>
+        app.inject({ method: "GET", url: "/ready" }),
+      ),
+    );
+    expect(firstWave.every(({ statusCode }) => statusCode === 503)).toBe(true);
+    expect(calls).toBe(1);
+
+    const secondWave = await Promise.all(
+      Array.from({ length: 5 }, async () =>
+        app.inject({ method: "GET", url: "/ready" }),
+      ),
+    );
+    expect(secondWave.every(({ statusCode }) => statusCode === 503)).toBe(true);
+    expect(calls).toBe(1);
+
+    settleFirstCheck?.();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const recovered = await app.inject({ method: "GET", url: "/ready" });
+    expect(recovered.statusCode).toBe(200);
+    expect(calls).toBe(2);
   });
 
   it("inherits W3C trace ids and uses the shared error envelope", async () => {

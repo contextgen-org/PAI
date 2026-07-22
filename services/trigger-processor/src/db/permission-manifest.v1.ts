@@ -1,6 +1,7 @@
 import {
   META_ENQUEUE_REASONS_V1,
   OWNER_DURABLE_EVENT_TYPES_V1,
+  TERMINAL_OUTCOMES_V1,
 } from "@pai/contracts";
 import {
   defineOwnerRepositoryContractV1,
@@ -76,7 +77,7 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "trigger_processes",
-      select_columns: ["id","trigger_id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","phase","status","wait_reason","current_runtime_run_id","runtime_policy_created_at","runtime_policy_expires_at","current_snapshot_id","inherited_from_process_id","blocked_by_process_id","canonical_process_id","preempted_by_process_id","successor_process_id","superseded_by_process_id","preempt_commit_result","preempt_isolation_proof_ref","merged_into_process_id","merged_into_queue_item_id","terminal_reason","terminal_outcome","meta_enqueue_reason","cancel_requested_at","cancellation_status","cancel_reason_code","cancel_actor_principal_id","cancel_actor_role","runtime_cancel_signal_id","cancellation_isolation_status","cancelled_at","cooldown_until","snapshot_retention_until","context_snapshot_ref","intent_ref","created_at","updated_at"],
+      select_columns: ["id","trigger_id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","admission_time","phase","status","wait_reason","current_reason_code","current_runtime_run_id","runtime_policy_created_at","runtime_policy_expires_at","current_snapshot_id","inherited_from_process_id","blocked_by_process_id","canonical_process_id","preempted_by_process_id","successor_process_id","superseded_by_process_id","preempt_commit_result","preempt_isolation_proof_ref","merged_into_process_id","merged_into_queue_item_id","terminal_reason","terminal_outcome","meta_enqueue_reason","cancel_requested_at","cancellation_status","cancel_reason_code","cancel_actor_principal_id","cancel_actor_role","runtime_cancel_signal_id","cancellation_isolation_status","cancelled_at","cooldown_until","snapshot_retention_until","context_snapshot_ref","intent_ref","created_at","updated_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -84,7 +85,7 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "trigger_process_transitions",
-      select_columns: ["id","trigger_process_id","from_phase","to_phase","from_status","to_status","reason","actor","source_ref","evidence_refs","previous_state","next_state","schema_version","created_at"],
+      select_columns: ["id","trigger_process_id","from_phase","to_phase","from_status","to_status","reason_code","actor","source_ref","evidence_refs","previous_state","next_state","schema_version","created_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -302,12 +303,37 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
     ],
     mutable_writers: [
       "admit_trigger_v1",
+      "record_trigger_submit_attempt_v1",
       "upsert_bot_authority_projection_v1",
-      "transition_trigger_process_v1",
+      "advance_trigger_stage_v1",
+      "schedule_trigger_stage_retry_v1",
+      "claim_trigger_stage_retry_v1",
+      "append_trigger_context_source_outcome_v1",
+      "upsert_trigger_meta_projection_v1",
+      "finalize_trigger_meta_projection_v1",
+      "reserve_runtime_start_v1",
+      "record_runtime_started_v1",
+      "record_runtime_start_uncertain_v1",
+      "request_runtime_start_recompose_v1",
+      "claim_runtime_recompose_v1",
+      "request_runtime_preempt_v1",
+      "create_trigger_confirmation_challenge_v1",
+      "accept_trigger_confirmation_v1",
+      "reject_trigger_confirmation_v1",
+      "expire_trigger_confirmation_v1",
+      "request_trigger_cancel_v1",
+      "transition_trigger_cancel_request_v1",
+      "claim_weak_trigger_queue_v1",
+      "retry_weak_trigger_queue_item_v1",
+      "complete_weak_trigger_queue_item_v1",
+      "transition_weak_trigger_group_v1",
+      "promote_weak_trigger_queue_head_v1",
+      "promote_strong_fifo_head_v1",
       "cas_bot_intent_policy_current_v1",
-      "cas_bot_foreground_slot_v1",
+      "release_bot_foreground_slot_v1",
       "append_trigger_snapshot_v1",
       "transition_trigger_snapshot_pending_event_v1",
+      "enqueue_trigger_snapshot_repair_job_v1",
       "transition_trigger_snapshot_repair_job_v1",
       "claim_trigger_event_outbox_v1",
       "ack_trigger_event_outbox_v1",
@@ -331,13 +357,12 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
       ],
       reads_tables: [
         "bots", "bot_permission_bindings", "bot_foreground_slots", "triggers",
-        "trigger_processes", "weak_trigger_groups", "trigger_confirmation_challenges",
+        "trigger_processes", "weak_trigger_groups",
       ],
       writes_tables: [
         "triggers", "trigger_processes", "trigger_process_transitions",
         "weak_trigger_queue_items", "bot_foreground_slots", "trigger_submit_attempts",
-        "weak_trigger_groups", "trigger_confirmation_challenges", "trigger_event_inbox",
-        "trigger_event_outbox",
+        "weak_trigger_groups", "trigger_event_outbox", "trigger_command_outbox",
       ],
       effects: [
         { table_name: "triggers", operation: "append", concurrency_control: "idempotency_key" },
@@ -347,9 +372,38 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
         { table_name: "bot_foreground_slots", operation: "cas", concurrency_control: "slot_and_process_state_fence" },
         { table_name: "trigger_submit_attempts", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "weak_trigger_groups", operation: "transition", concurrency_control: "slot_and_process_state_fence" },
-        { table_name: "trigger_confirmation_challenges", operation: "append", concurrency_control: "idempotency_key" },
-        { table_name: "trigger_event_inbox", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_command_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "record_trigger_submit_attempt_v1",
+      primary_table: "trigger_submit_attempts",
+      writer_kind: "immutable_append",
+      arguments: [
+        ["p_attempt_id", "text"],
+        ["p_claimed_scope", "jsonb"],
+        ["p_claimed_source", "text", { nullable: true }],
+        ["p_claimed_actor", "jsonb"],
+        ["p_claimed_dedupe_key", "text", { nullable: true }],
+        ["p_audit_request_hash", "text", { nullable: true }],
+        ["p_outcome", "text"],
+        ["p_result_code", "text"],
+        ["p_retryable", "boolean"],
+        ["p_authenticated_context", "jsonb", { nullable: true }],
+        ["p_audit_payload", "jsonb"],
+        ["p_trace_id", "text"],
+      ],
+      reads_tables: ["trigger_submit_attempts"],
+      writes_tables: ["trigger_submit_attempts"],
+      effects: [
+        {
+          table_name: "trigger_submit_attempts",
+          operation: "append",
+          concurrency_control: "idempotency_key",
+        },
       ],
       returns: "jsonb",
     }),
@@ -377,31 +431,441 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
     }),
     ownerFunctionSignatureV1({
       schema: "trigger_processor",
-      function_name: "transition_trigger_process_v1",
+      function_name: "advance_trigger_stage_v1",
       primary_table: "trigger_processes",
       writer_kind: "state_transition",
       arguments: [
         ["p_process_id", "text"], ["p_expected_phase", "text"],
-        ["p_expected_status", "text"],
-        ["p_expected_updated_at", "timestamptz"],
-        ["p_next_state", "jsonb"],
-        ["p_evidence", "jsonb"], ["p_request_hash", "text"],
-        ["p_trace_id", "text"],
+        ["p_expected_status", "text"], ["p_expected_updated_at", "timestamptz"],
+        ["p_next_state", "jsonb"], ["p_stage_progression_evidence", "jsonb"],
+        ["p_request_hash", "text"], ["p_trace_id", "text"],
       ],
-      reads_tables: ["trigger_processes", "runtime_start_reservations"],
-      writes_tables: [
-        "trigger_processes", "trigger_process_transitions",
-        "trigger_context_source_outcomes", "trigger_process_meta_projections",
-        "runtime_start_reservations", "trigger_process_cancel_requests",
-        "trigger_event_outbox",
-      ],
+      reads_tables: ["trigger_processes", "trigger_context_source_outcomes"],
+      writes_tables: ["trigger_processes", "trigger_process_transitions", "trigger_event_outbox"],
       effects: [
         { table_name: "trigger_processes", operation: "transition", concurrency_control: "expected_state_version" },
         { table_name: "trigger_process_transitions", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "schedule_trigger_stage_retry_v1",
+      primary_table: "trigger_processes",
+      writer_kind: "state_transition",
+      arguments: [
+        ["p_process_id", "text"], ["p_expected_phase", "text"],
+        ["p_expected_status", "text"], ["p_expected_updated_at", "timestamptz"],
+        ["p_next_state", "jsonb"], ["p_stage_retry_scheduled_evidence", "jsonb"],
+        ["p_request_hash", "text"], ["p_trace_id", "text"],
+      ],
+      reads_tables: ["trigger_processes"],
+      writes_tables: ["trigger_processes", "trigger_process_transitions", "trigger_event_outbox"],
+      effects: [
+        { table_name: "trigger_processes", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_process_transitions", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "claim_trigger_stage_retry_v1",
+      primary_table: "trigger_processes",
+      writer_kind: "state_transition",
+      arguments: [
+        ["p_process_id", "text"], ["p_expected_phase", "text"],
+        ["p_expected_status", "text"], ["p_expected_updated_at", "timestamptz"],
+        ["p_worker_claim_ref", "text"], ["p_next_state", "jsonb"],
+        ["p_stage_retry_claimed_evidence", "jsonb"],
+        ["p_request_hash", "text"], ["p_trace_id", "text"],
+      ],
+      reads_tables: ["trigger_processes"],
+      writes_tables: ["trigger_processes", "trigger_process_transitions", "trigger_event_outbox"],
+      effects: [
+        { table_name: "trigger_processes", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_process_transitions", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "append_trigger_context_source_outcome_v1",
+      primary_table: "trigger_context_source_outcomes",
+      writer_kind: "immutable_append",
+      arguments: [["p_process_id", "text"], ["p_expected_context_version", "bigint"], ["p_source_outcome", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["trigger_processes", "trigger_context_source_outcomes"],
+      writes_tables: ["trigger_context_source_outcomes", "trigger_event_outbox"],
+      effects: [
         { table_name: "trigger_context_source_outcomes", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "upsert_trigger_meta_projection_v1",
+      primary_table: "trigger_process_meta_projections",
+      writer_kind: "projection_upsert",
+      arguments: [["p_process_id", "text"], ["p_expected_projection_version", "bigint"], ["p_projection", "jsonb"], ["p_source_event", "jsonb"], ["p_idempotency_key", "text"], ["p_payload_hash", "text"], ["p_semantic_hash", "text"], ["p_scope_fingerprint", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["trigger_processes", "trigger_process_meta_projections", "trigger_event_inbox"],
+      writes_tables: ["trigger_process_meta_projections", "trigger_event_inbox", "trigger_event_outbox"],
+      effects: [
         { table_name: "trigger_process_meta_projections", operation: "upsert", concurrency_control: "expected_version" },
-        { table_name: "runtime_start_reservations", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_event_inbox", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    // Database Design revision 476, writer registry decision comments
+    // 7665350795528768797: terminal Meta projection and Process closure are
+    // one owner transaction, not a generic projection upsert side effect.
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "finalize_trigger_meta_projection_v1",
+      primary_table: "trigger_processes",
+      writer_kind: "state_transition",
+      arguments: [
+        ["p_process_id", "text"],
+        ["p_expected_projection_version", "bigint"],
+        ["p_expected_process_phase", "text"],
+        ["p_expected_process_status", "text"],
+        ["p_expected_process_updated_at", "timestamptz"],
+        ["p_expected_meta_enqueue_reason", "text"],
+        ["p_projection", "jsonb"],
+        ["p_source_event", "jsonb"],
+        ["p_meta_finalization_evidence", "jsonb"],
+        ["p_idempotency_key", "text"],
+        ["p_payload_hash", "text"],
+        ["p_semantic_hash", "text"],
+        ["p_scope_fingerprint", "text"],
+        ["p_request_hash", "text"],
+        ["p_trace_id", "text"],
+      ],
+      reads_tables: [
+        "trigger_process_meta_projections",
+        "trigger_processes",
+        "trigger_event_inbox",
+      ],
+      writes_tables: [
+        "trigger_process_meta_projections",
+        "trigger_processes",
+        "trigger_process_transitions",
+        "trigger_event_inbox",
+        "trigger_event_outbox",
+      ],
+      effects: [
+        {
+          table_name: "trigger_process_meta_projections",
+          operation: "upsert",
+          concurrency_control: "expected_version",
+        },
+        {
+          table_name: "trigger_processes",
+          operation: "transition",
+          concurrency_control: "expected_state_version",
+        },
+        {
+          table_name: "trigger_process_transitions",
+          operation: "append",
+          concurrency_control: "idempotency_key",
+        },
+        {
+          table_name: "trigger_event_inbox",
+          operation: "append",
+          concurrency_control: "idempotency_key",
+        },
+        {
+          table_name: "trigger_event_outbox",
+          operation: "enqueue",
+          concurrency_control: "idempotency_key",
+        },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "reserve_runtime_start_v1",
+      primary_table: "runtime_start_reservations",
+      writer_kind: "state_transition",
+      arguments: [["p_process_id", "text"], ["p_expected_phase", "text"], ["p_expected_status", "text"], ["p_expected_updated_at", "timestamptz"], ["p_expected_slot_fence", "jsonb"], ["p_reservation", "jsonb"], ["p_runtime_start_reserved_evidence", "jsonb"], ["p_command", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["trigger_processes", "bot_foreground_slots", "runtime_start_reservations"],
+      writes_tables: ["runtime_start_reservations", "trigger_processes", "trigger_process_transitions", "trigger_command_outbox", "trigger_event_outbox"],
+      effects: [
+        { table_name: "runtime_start_reservations", operation: "transition", concurrency_control: "generation_fence" },
+        { table_name: "trigger_processes", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_process_transitions", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_command_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "record_runtime_started_v1",
+      primary_table: "runtime_start_reservations",
+      writer_kind: "state_transition",
+      arguments: [["p_process_id", "text"], ["p_reservation_id", "text"], ["p_expected_reservation_status", "text"], ["p_expected_reservation_updated_at", "timestamptz"], ["p_expected_start_fence_generation", "bigint"], ["p_expected_process_phase", "text"], ["p_expected_process_status", "text"], ["p_expected_process_updated_at", "timestamptz"], ["p_source_event", "jsonb"], ["p_runtime_started_evidence", "jsonb"], ["p_idempotency_key", "text"], ["p_payload_hash", "text"], ["p_semantic_hash", "text"], ["p_scope_fingerprint", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["runtime_start_reservations", "trigger_processes", "trigger_event_inbox"],
+      writes_tables: ["runtime_start_reservations", "trigger_processes", "trigger_process_transitions", "trigger_event_inbox", "trigger_event_outbox"],
+      effects: [
+        { table_name: "runtime_start_reservations", operation: "transition", concurrency_control: "generation_fence" },
+        { table_name: "trigger_processes", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_process_transitions", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_event_inbox", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "record_runtime_start_uncertain_v1",
+      primary_table: "runtime_start_reservations",
+      writer_kind: "state_transition",
+      arguments: [["p_process_id", "text"], ["p_reservation_id", "text"], ["p_expected_reservation_status", "text"], ["p_expected_reservation_updated_at", "timestamptz"], ["p_expected_start_fence_generation", "bigint"], ["p_expected_process_phase", "text"], ["p_expected_process_status", "text"], ["p_expected_process_updated_at", "timestamptz"], ["p_transport_uncertainty_ref", "text"], ["p_runtime_start_uncertain_evidence", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["runtime_start_reservations", "trigger_processes"],
+      writes_tables: ["runtime_start_reservations", "trigger_processes", "trigger_process_transitions", "trigger_event_outbox"],
+      effects: [
+        { table_name: "runtime_start_reservations", operation: "transition", concurrency_control: "generation_fence" },
+        { table_name: "trigger_processes", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_process_transitions", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "request_runtime_start_recompose_v1",
+      primary_table: "runtime_start_reservations",
+      writer_kind: "state_transition",
+      arguments: [["p_process_id", "text"], ["p_reservation_id", "text"], ["p_expected_reservation_status", "text"], ["p_expected_reservation_updated_at", "timestamptz"], ["p_expected_start_fence_generation", "bigint"], ["p_expected_process_phase", "text"], ["p_expected_process_status", "text"], ["p_expected_process_updated_at", "timestamptz"], ["p_runtime_start_recompose_evidence", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["runtime_start_reservations", "trigger_processes"],
+      writes_tables: ["runtime_start_reservations", "trigger_processes", "trigger_process_transitions", "trigger_event_outbox"],
+      effects: [
+        { table_name: "runtime_start_reservations", operation: "transition", concurrency_control: "generation_fence" },
+        { table_name: "trigger_processes", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_process_transitions", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "claim_runtime_recompose_v1",
+      primary_table: "trigger_processes",
+      writer_kind: "state_transition",
+      arguments: [["p_process_id", "text"], ["p_expected_phase", "text"], ["p_expected_status", "text"], ["p_expected_updated_at", "timestamptz"], ["p_recompose_claim_ref", "text"], ["p_runtime_recompose_claimed_evidence", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["trigger_processes", "runtime_start_reservations"],
+      writes_tables: ["trigger_processes", "trigger_process_transitions", "trigger_event_outbox"],
+      effects: [
+        { table_name: "trigger_processes", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_process_transitions", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "request_runtime_preempt_v1",
+      primary_table: "trigger_processes",
+      writer_kind: "state_transition",
+      arguments: [["p_process_id", "text"], ["p_expected_phase", "text"], ["p_expected_status", "text"], ["p_expected_updated_at", "timestamptz"], ["p_expected_slot_fence", "jsonb"], ["p_runtime_control_requested_evidence", "jsonb"], ["p_command", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["trigger_processes", "bot_foreground_slots"],
+      writes_tables: ["trigger_processes", "trigger_process_transitions", "trigger_command_outbox", "trigger_event_outbox"],
+      effects: [
+        { table_name: "trigger_processes", operation: "transition", concurrency_control: "generation_fence" },
+        { table_name: "trigger_process_transitions", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_command_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "create_trigger_confirmation_challenge_v1",
+      primary_table: "trigger_confirmation_challenges",
+      writer_kind: "state_transition",
+      arguments: [["p_challenge_id", "text"], ["p_process_id", "text"], ["p_expected_phase", "text"], ["p_expected_status", "text"], ["p_expected_updated_at", "timestamptz"], ["p_challenge", "jsonb"], ["p_confirmation_challenge_created_evidence", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["trigger_processes", "trigger_confirmation_challenges"],
+      writes_tables: ["trigger_confirmation_challenges", "trigger_processes", "trigger_process_transitions", "trigger_event_outbox"],
+      effects: [
+        { table_name: "trigger_confirmation_challenges", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_processes", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_process_transitions", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "accept_trigger_confirmation_v1",
+      primary_table: "trigger_confirmation_challenges",
+      writer_kind: "state_transition",
+      arguments: [["p_challenge_id", "text"], ["p_expected_challenge_status", "text"], ["p_expected_challenge_updated_at", "timestamptz"], ["p_expected_process_phase", "text"], ["p_expected_process_status", "text"], ["p_expected_process_updated_at", "timestamptz"], ["p_response", "jsonb"], ["p_confirmation_accepted_evidence", "jsonb"], ["p_command", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["trigger_confirmation_challenges", "trigger_processes"],
+      writes_tables: ["trigger_confirmation_challenges", "trigger_processes", "trigger_process_transitions", "trigger_command_outbox", "trigger_event_outbox"],
+      effects: [
+        { table_name: "trigger_confirmation_challenges", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_processes", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_process_transitions", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_command_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "reject_trigger_confirmation_v1",
+      primary_table: "trigger_confirmation_challenges",
+      writer_kind: "state_transition",
+      arguments: [["p_challenge_id", "text"], ["p_expected_challenge_status", "text"], ["p_expected_challenge_updated_at", "timestamptz"], ["p_expected_process_phase", "text"], ["p_expected_process_status", "text"], ["p_expected_process_updated_at", "timestamptz"], ["p_response", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["trigger_confirmation_challenges", "trigger_processes"],
+      writes_tables: ["trigger_confirmation_challenges", "trigger_processes", "trigger_process_transitions", "trigger_event_outbox"],
+      effects: [
+        { table_name: "trigger_confirmation_challenges", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_processes", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_process_transitions", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "expire_trigger_confirmation_v1",
+      primary_table: "trigger_confirmation_challenges",
+      writer_kind: "state_transition",
+      arguments: [["p_challenge_id", "text"], ["p_expected_challenge_status", "text"], ["p_expected_challenge_updated_at", "timestamptz"], ["p_expected_process_phase", "text"], ["p_expected_process_status", "text"], ["p_expected_process_updated_at", "timestamptz"], ["p_expired_at", "timestamptz"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["trigger_confirmation_challenges", "trigger_processes"],
+      writes_tables: ["trigger_confirmation_challenges", "trigger_processes", "trigger_process_transitions", "trigger_event_outbox"],
+      effects: [
+        { table_name: "trigger_confirmation_challenges", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_processes", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_process_transitions", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "request_trigger_cancel_v1",
+      primary_table: "trigger_process_cancel_requests",
+      writer_kind: "state_transition",
+      arguments: [["p_cancel_request_id", "text"], ["p_process_id", "text"], ["p_expected_phase", "text"], ["p_expected_status", "text"], ["p_expected_updated_at", "timestamptz"], ["p_cancel_request", "jsonb"], ["p_runtime_control_requested_evidence", "jsonb"], ["p_command", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["trigger_processes", "trigger_process_cancel_requests"],
+      writes_tables: ["trigger_process_cancel_requests", "trigger_processes", "trigger_process_transitions", "trigger_command_outbox", "trigger_event_outbox"],
+      effects: [
         { table_name: "trigger_process_cancel_requests", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_processes", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_process_transitions", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_command_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "transition_trigger_cancel_request_v1",
+      primary_table: "trigger_process_cancel_requests",
+      writer_kind: "state_transition",
+      arguments: [["p_cancel_request_id", "text"], ["p_expected_cancel_status", "text"], ["p_expected_process_phase", "text"], ["p_expected_process_status", "text"], ["p_expected_process_updated_at", "timestamptz"], ["p_next_cancel_state", "jsonb"], ["p_process_evidence", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["trigger_process_cancel_requests", "trigger_processes"],
+      writes_tables: ["trigger_process_cancel_requests", "trigger_processes", "trigger_process_transitions", "trigger_event_outbox"],
+      effects: [
+        { table_name: "trigger_process_cancel_requests", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_processes", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_process_transitions", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "claim_weak_trigger_queue_v1",
+      primary_table: "weak_trigger_queue_items",
+      writer_kind: "state_transition",
+      arguments: [["p_queue_item_id", "text"], ["p_expected_status", "text"], ["p_expected_updated_at", "timestamptz"], ["p_worker_id", "text"], ["p_lease_seconds", "integer"], ["p_now", "timestamptz"], ["p_request_hash", "text"]],
+      reads_tables: ["weak_trigger_queue_items", "weak_trigger_groups"],
+      writes_tables: ["weak_trigger_queue_items"],
+      effects: [{ table_name: "weak_trigger_queue_items", operation: "transition", concurrency_control: "lease_fence" }],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "retry_weak_trigger_queue_item_v1",
+      primary_table: "weak_trigger_queue_items",
+      writer_kind: "state_transition",
+      arguments: [["p_queue_item_id", "text"], ["p_expected_status", "text"], ["p_expected_updated_at", "timestamptz"], ["p_claim_token", "text"], ["p_next_available_at", "timestamptz"], ["p_error", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["weak_trigger_queue_items"],
+      writes_tables: ["weak_trigger_queue_items", "trigger_event_outbox"],
+      effects: [
+        { table_name: "weak_trigger_queue_items", operation: "transition", concurrency_control: "lease_fence" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "complete_weak_trigger_queue_item_v1",
+      primary_table: "weak_trigger_queue_items",
+      writer_kind: "state_transition",
+      arguments: [["p_queue_item_id", "text"], ["p_group_id", "text"], ["p_expected_status", "text"], ["p_expected_updated_at", "timestamptz"], ["p_expected_group_status", "text"], ["p_expected_group_updated_at", "timestamptz"], ["p_claim_token", "text"], ["p_result", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["weak_trigger_queue_items", "weak_trigger_groups"],
+      writes_tables: ["weak_trigger_queue_items", "weak_trigger_groups", "trigger_event_outbox"],
+      effects: [
+        { table_name: "weak_trigger_queue_items", operation: "transition", concurrency_control: "lease_fence" },
+        { table_name: "weak_trigger_groups", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "transition_weak_trigger_group_v1",
+      primary_table: "weak_trigger_groups",
+      writer_kind: "state_transition",
+      arguments: [["p_group_id", "text"], ["p_expected_status", "text"], ["p_expected_updated_at", "timestamptz"], ["p_next_status", "text"], ["p_expected_head_item_id", "text"], ["p_next_state", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["weak_trigger_groups", "weak_trigger_queue_items"],
+      writes_tables: ["weak_trigger_groups", "trigger_event_outbox"],
+      effects: [
+        { table_name: "weak_trigger_groups", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "promote_weak_trigger_queue_head_v1",
+      primary_table: "bot_foreground_slots",
+      writer_kind: "lease_fence",
+      arguments: [["p_bot_id", "text"], ["p_queue_item_id", "text"], ["p_group_id", "text"], ["p_expected_queue_status", "text"], ["p_expected_queue_updated_at", "timestamptz"], ["p_expected_group_status", "text"], ["p_expected_group_updated_at", "timestamptz"], ["p_expected_process_phase", "text"], ["p_expected_process_status", "text"], ["p_expected_process_updated_at", "timestamptz"], ["p_expected_slot_fence", "jsonb"], ["p_expected_strong_fifo_revision", "bigint"], ["p_expected_strong_fifo_empty_fence", "jsonb"], ["p_strong_fifo_empty_lock_ref", "text"], ["p_worker_id", "text"], ["p_lease_seconds", "integer"], ["p_now", "timestamptz"], ["p_next_slot_generation", "bigint"], ["p_evidence", "jsonb"], ["p_command", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["weak_trigger_queue_items", "weak_trigger_groups", "trigger_processes", "bot_foreground_slots"],
+      writes_tables: ["weak_trigger_queue_items", "weak_trigger_groups", "bot_foreground_slots", "trigger_processes", "trigger_process_transitions", "trigger_command_outbox", "trigger_event_outbox"],
+      effects: [
+        { table_name: "weak_trigger_queue_items", operation: "transition", concurrency_control: "lease_fence" },
+        { table_name: "weak_trigger_groups", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "bot_foreground_slots", operation: "cas", concurrency_control: "generation_fence" },
+        { table_name: "trigger_processes", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_process_transitions", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_command_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "promote_strong_fifo_head_v1",
+      primary_table: "bot_foreground_slots",
+      writer_kind: "lease_fence",
+      arguments: [["p_bot_id", "text"], ["p_expected_slot_fence", "jsonb"], ["p_expected_strong_fifo_revision", "bigint"], ["p_expected_head_process_id", "text"], ["p_expected_head_admission_time", "timestamptz"], ["p_strong_fifo_head_lock_ref", "text"], ["p_expected_preempt_commit_fence", "jsonb"], ["p_expected_head_phase", "text"], ["p_expected_head_status", "text"], ["p_expected_head_updated_at", "timestamptz"], ["p_next_slot_generation", "bigint"], ["p_evidence", "jsonb"], ["p_command", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["bot_foreground_slots", "trigger_processes"],
+      writes_tables: ["bot_foreground_slots", "trigger_processes", "trigger_process_transitions", "trigger_command_outbox", "trigger_event_outbox"],
+      effects: [
+        { table_name: "bot_foreground_slots", operation: "cas", concurrency_control: "generation_fence" },
+        { table_name: "trigger_processes", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "trigger_process_transitions", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_command_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
         { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
       ],
       returns: "jsonb",
@@ -432,12 +896,13 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
     }),
     ownerFunctionSignatureV1({
       schema: "trigger_processor",
-      function_name: "cas_bot_foreground_slot_v1",
+      function_name: "release_bot_foreground_slot_v1",
       primary_table: "bot_foreground_slots",
       writer_kind: "lease_fence",
       arguments: [
-        ["p_bot_id", "text"], ["p_expected_process_id", "text"],
-        ["p_expected_generation", "bigint"], ["p_next_process_id", "text"],
+        ["p_bot_id", "text"], ["p_expected_slot_fence", "jsonb"],
+        ["p_expected_process_phase", "text"], ["p_expected_process_status", "text"],
+        ["p_expected_process_updated_at", "timestamptz"],
         ["p_next_generation", "bigint"], ["p_evidence", "jsonb"],
         ["p_request_hash", "text"], ["p_trace_id", "text"],
       ],
@@ -497,6 +962,20 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
       effects: [
         { table_name: "trigger_snapshot_pending_events", operation: "transition", concurrency_control: "expected_state_version" },
         { table_name: "trigger_snapshot_append_audits", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "enqueue_trigger_snapshot_repair_job_v1",
+      primary_table: "trigger_snapshot_repair_jobs",
+      writer_kind: "state_transition",
+      arguments: [["p_repair_job_id", "text"], ["p_process_id", "text"], ["p_expected_snapshot_version", "bigint"], ["p_repair_job", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["trigger_processes", "trigger_process_snapshots", "trigger_snapshot_repair_jobs"],
+      writes_tables: ["trigger_snapshot_repair_jobs", "trigger_event_outbox"],
+      effects: [
+        { table_name: "trigger_snapshot_repair_jobs", operation: "enqueue", concurrency_control: "idempotency_key" },
         { table_name: "trigger_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
       ],
       returns: "jsonb",
@@ -659,6 +1138,20 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
         },
       },
       {
+        constraint_name: "trigger_processes_terminal_outcome_check",
+        table_name: "trigger_processes",
+        required_definition_fragments: [
+          "terminal_outcome",
+          "preempted_and_handed_off",
+          "interrupted_with_reason",
+        ],
+        semantic_constraint: {
+          kind: "nullable_text_enum",
+          column_name: "terminal_outcome",
+          allowed_values: TERMINAL_OUTCOMES_V1,
+        },
+      },
+      {
         constraint_name: "trigger_processes_meta_enqueue_reason_check",
         table_name: "trigger_processes",
         required_definition_fragments: [
@@ -708,7 +1201,8 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
     ],
   foreign_key_snapshot: {
     status: "complete",
-    source: "Database Design revision 466 / fresh 0100_trigger_processor canonical DDL applied to PostgreSQL 17",
+    source:
+      "Database Design revision 476 plus pre-admission audit decision comment 7665309975702474029 / canonical fresh 0100_trigger_processor foreign-key snapshot",
   },
   foreign_keys: ownerForeignKeysV1("trigger_processor", [
     ["bot_intent_policy_audit_logs_revision_id_fkey","bot_intent_policy_audit_logs",["revision_id"],"bot_intent_policy_revisions",["id"]],
@@ -747,7 +1241,6 @@ export const TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 =
     ["trigger_snapshot_repair_jobs_previous_snapshot_id_fkey","trigger_snapshot_repair_jobs",["previous_snapshot_id"],"trigger_process_snapshots",["id"]],
     ["trigger_snapshot_repair_jobs_trigger_process_id_fkey","trigger_snapshot_repair_jobs",["trigger_process_id"],"trigger_processes",["id"]],
     ["trigger_submit_attempts_trigger_id_fkey","trigger_submit_attempts",["trigger_id"],"triggers",["id"]],
-    ["trigger_submit_attempts_workspace_id_bot_id_owner_agent_id_fkey","trigger_submit_attempts",["workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel"],"bots",["workspace_id","id","owner_agent_id","deployment_environment","release_channel"]],
     ["triggers_workspace_id_bot_id_owner_agent_id_deployment_env_fkey","triggers",["workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel"],"bots",["workspace_id","id","owner_agent_id","deployment_environment","release_channel"]],
     ["weak_trigger_groups_canonical_process_id_fkey","weak_trigger_groups",["canonical_process_id"],"trigger_processes",["id"]],
     ["weak_trigger_groups_cooldown_process_id_fkey","weak_trigger_groups",["cooldown_process_id"],"trigger_processes",["id"]],
@@ -790,3 +1283,392 @@ export type TriggerProcessorUnitOfWorkPortV1 = OwnerUnitOfWorkPortV1<
   "trigger_processor",
   Readonly<{ owner: TriggerProcessorRepositoryPortV1 }>
 >;
+
+type TriggerProcessorManifestSemanticViewV1 = Readonly<{
+  function_signatures: readonly Readonly<{
+    function_name: string;
+    arguments: readonly Readonly<{ argument_name: string }>[];
+    reads_tables: readonly string[];
+    writes_tables: readonly string[];
+    effects: readonly Readonly<{
+      table_name: string;
+      operation: string;
+      concurrency_control: string;
+    }>[];
+  }>[];
+  table_permissions: readonly Readonly<{
+    table_name: string;
+    writer_kind: string;
+  }>[];
+  append_only_tables: readonly string[];
+  database_checks?: readonly Readonly<{
+    constraint_name: string;
+    semantic_constraint?: Readonly<{
+      kind: string;
+      column_name: string;
+      allowed_values?: readonly string[];
+    }>;
+  }>[];
+}>;
+
+export function assertTriggerProcessorLifecycleWriterSemanticsV1(
+  contract: TriggerProcessorManifestSemanticViewV1,
+): void {
+  const writer = (name: string) => {
+    const value = contract.function_signatures.find(
+      ({ function_name }) => function_name === name,
+    );
+    if (value === undefined) {
+      throw new Error(`missing Trigger lifecycle writer: ${name}`);
+    }
+    return value;
+  };
+  const assertIncludes = (
+    label: string,
+    actual: readonly string[],
+    expected: readonly string[],
+  ) => {
+    if (expected.some((value) => !actual.includes(value))) {
+      throw new Error(`${label} is missing a required Trigger lifecycle fence`);
+    }
+  };
+  const effectKey = (
+    effect: Readonly<{
+      table_name: string;
+      operation: string;
+      concurrency_control: string;
+    }>,
+  ) => `${effect.table_name}:${effect.operation}:${effect.concurrency_control}`;
+  const assertEffects = (
+    name: string,
+    expected: readonly string[],
+  ) => {
+    const signature = writer(name);
+    const actual = signature.effects.map(effectKey);
+    assertIncludes(`${name}.effects`, actual, expected);
+  };
+  const assertExactEffects = (
+    name: string,
+    expected: readonly string[],
+  ) => {
+    const actual = writer(name).effects.map(effectKey);
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      throw new Error(
+        `${name}.effects must match its Trigger lifecycle edge exactly`,
+      );
+    }
+  };
+
+  assertIncludes(
+    "promote_weak_trigger_queue_head_v1.arguments",
+    writer("promote_weak_trigger_queue_head_v1").arguments.map(
+      ({ argument_name }) => argument_name,
+    ),
+    [
+      "p_expected_queue_status",
+      "p_expected_queue_updated_at",
+      "p_expected_slot_fence",
+      "p_expected_strong_fifo_revision",
+      "p_expected_strong_fifo_empty_fence",
+      "p_strong_fifo_empty_lock_ref",
+      "p_worker_id",
+      "p_lease_seconds",
+    ],
+  );
+  assertExactEffects("promote_weak_trigger_queue_head_v1", [
+    "weak_trigger_queue_items:transition:lease_fence",
+    "weak_trigger_groups:transition:expected_state_version",
+    "bot_foreground_slots:cas:generation_fence",
+    "trigger_processes:transition:expected_state_version",
+    "trigger_process_transitions:append:idempotency_key",
+    "trigger_command_outbox:enqueue:idempotency_key",
+    "trigger_event_outbox:enqueue:idempotency_key",
+  ]);
+  assertIncludes(
+    "promote_strong_fifo_head_v1.arguments",
+    writer("promote_strong_fifo_head_v1").arguments.map(
+      ({ argument_name }) => argument_name,
+    ),
+    [
+      "p_expected_slot_fence",
+      "p_expected_strong_fifo_revision",
+      "p_expected_head_process_id",
+      "p_expected_head_admission_time",
+      "p_strong_fifo_head_lock_ref",
+      "p_expected_preempt_commit_fence",
+      "p_expected_head_phase",
+      "p_expected_head_status",
+      "p_expected_head_updated_at",
+    ],
+  );
+  assertExactEffects("promote_strong_fifo_head_v1", [
+    "bot_foreground_slots:cas:generation_fence",
+    "trigger_processes:transition:expected_state_version",
+    "trigger_process_transitions:append:idempotency_key",
+    "trigger_command_outbox:enqueue:idempotency_key",
+    "trigger_event_outbox:enqueue:idempotency_key",
+  ]);
+
+  if (
+    contract.function_signatures.some(
+      ({ function_name }) =>
+        function_name === "transition_trigger_process_v1" ||
+        function_name === "transition_trigger_process_aggregate_local_v1" ||
+        function_name === "transition_trigger_confirmation_v1" ||
+        function_name === "transition_weak_trigger_queue_item_v1",
+    )
+  ) {
+    throw new Error("generic Trigger lifecycle writer is not permitted");
+  }
+  const processWriterAllowlist = new Set([
+    "admit_trigger_v1",
+    "advance_trigger_stage_v1",
+    "schedule_trigger_stage_retry_v1",
+    "claim_trigger_stage_retry_v1",
+    "reserve_runtime_start_v1",
+    "record_runtime_started_v1",
+    "record_runtime_start_uncertain_v1",
+    "request_runtime_start_recompose_v1",
+    "claim_runtime_recompose_v1",
+    "request_runtime_preempt_v1",
+    "finalize_trigger_meta_projection_v1",
+    "create_trigger_confirmation_challenge_v1",
+    "accept_trigger_confirmation_v1",
+    "reject_trigger_confirmation_v1",
+    "expire_trigger_confirmation_v1",
+    "request_trigger_cancel_v1",
+    "transition_trigger_cancel_request_v1",
+    "promote_weak_trigger_queue_head_v1",
+    "promote_strong_fifo_head_v1",
+  ]);
+  const unexpectedProcessWriters = contract.function_signatures
+    .filter(
+      ({ function_name, writes_tables }) =>
+        writes_tables.includes("trigger_processes") &&
+        !processWriterAllowlist.has(function_name),
+    )
+    .map(({ function_name }) => function_name);
+  if (unexpectedProcessWriters.length > 0) {
+    throw new Error(
+      `generic Trigger process authority is forbidden: ${unexpectedProcessWriters.join(", ")}`,
+    );
+  }
+
+  const processTransitionEffects = [
+    "trigger_processes:transition:expected_state_version",
+    "trigger_process_transitions:append:idempotency_key",
+    "trigger_event_outbox:enqueue:idempotency_key",
+  ] as const;
+  assertIncludes(
+    "finalize_trigger_meta_projection_v1.arguments",
+    writer("finalize_trigger_meta_projection_v1").arguments.map(
+      ({ argument_name }) => argument_name,
+    ),
+    [
+      "p_expected_projection_version",
+      "p_expected_process_phase",
+      "p_expected_process_status",
+      "p_expected_process_updated_at",
+      "p_expected_meta_enqueue_reason",
+      "p_source_event",
+      "p_meta_finalization_evidence",
+      "p_idempotency_key",
+    ],
+  );
+  assertIncludes(
+    "finalize_trigger_meta_projection_v1.reads_tables",
+    writer("finalize_trigger_meta_projection_v1").reads_tables,
+    [
+      "trigger_process_meta_projections",
+      "trigger_processes",
+      "trigger_event_inbox",
+    ],
+  );
+  const coupledWriters = [
+    {
+      name: "advance_trigger_stage_v1",
+      evidenceArgument: "p_stage_progression_evidence",
+      effects: processTransitionEffects,
+    },
+    {
+      name: "schedule_trigger_stage_retry_v1",
+      evidenceArgument: "p_stage_retry_scheduled_evidence",
+      effects: processTransitionEffects,
+    },
+    {
+      name: "claim_trigger_stage_retry_v1",
+      evidenceArgument: "p_stage_retry_claimed_evidence",
+      effects: processTransitionEffects,
+    },
+    {
+      name: "create_trigger_confirmation_challenge_v1",
+      evidenceArgument: "p_confirmation_challenge_created_evidence",
+      effects: [
+        "trigger_confirmation_challenges:append:idempotency_key",
+        ...processTransitionEffects,
+      ],
+    },
+    {
+      name: "accept_trigger_confirmation_v1",
+      evidenceArgument: "p_confirmation_accepted_evidence",
+      effects: [
+        "trigger_confirmation_challenges:transition:expected_state_version",
+        "trigger_processes:transition:expected_state_version",
+        "trigger_process_transitions:append:idempotency_key",
+        "trigger_command_outbox:enqueue:idempotency_key",
+        "trigger_event_outbox:enqueue:idempotency_key",
+      ],
+    },
+    {
+      name: "reserve_runtime_start_v1",
+      evidenceArgument: "p_runtime_start_reserved_evidence",
+      effects: [
+        "runtime_start_reservations:transition:generation_fence",
+        "trigger_processes:transition:expected_state_version",
+        "trigger_process_transitions:append:idempotency_key",
+        "trigger_command_outbox:enqueue:idempotency_key",
+        "trigger_event_outbox:enqueue:idempotency_key",
+      ],
+    },
+    {
+      name: "record_runtime_started_v1",
+      evidenceArgument: "p_runtime_started_evidence",
+      effects: [
+        "runtime_start_reservations:transition:generation_fence",
+        "trigger_processes:transition:expected_state_version",
+        "trigger_process_transitions:append:idempotency_key",
+        "trigger_event_inbox:append:idempotency_key",
+        "trigger_event_outbox:enqueue:idempotency_key",
+      ],
+    },
+    {
+      name: "record_runtime_start_uncertain_v1",
+      evidenceArgument: "p_runtime_start_uncertain_evidence",
+      effects: [
+        "runtime_start_reservations:transition:generation_fence",
+        ...processTransitionEffects,
+      ],
+    },
+    {
+      name: "request_runtime_start_recompose_v1",
+      evidenceArgument: "p_runtime_start_recompose_evidence",
+      effects: [
+        "runtime_start_reservations:transition:generation_fence",
+        ...processTransitionEffects,
+      ],
+    },
+    {
+      name: "claim_runtime_recompose_v1",
+      evidenceArgument: "p_runtime_recompose_claimed_evidence",
+      effects: processTransitionEffects,
+    },
+    {
+      name: "request_runtime_preempt_v1",
+      evidenceArgument: "p_runtime_control_requested_evidence",
+      effects: [
+        "trigger_processes:transition:generation_fence",
+        "trigger_process_transitions:append:idempotency_key",
+        "trigger_command_outbox:enqueue:idempotency_key",
+        "trigger_event_outbox:enqueue:idempotency_key",
+      ],
+    },
+    {
+      name: "request_trigger_cancel_v1",
+      evidenceArgument: "p_runtime_control_requested_evidence",
+      effects: [
+        "trigger_process_cancel_requests:append:idempotency_key",
+        "trigger_processes:transition:expected_state_version",
+        "trigger_process_transitions:append:idempotency_key",
+        "trigger_command_outbox:enqueue:idempotency_key",
+        "trigger_event_outbox:enqueue:idempotency_key",
+      ],
+    },
+    {
+      name: "finalize_trigger_meta_projection_v1",
+      evidenceArgument: "p_meta_finalization_evidence",
+      effects: [
+        "trigger_process_meta_projections:upsert:expected_version",
+        "trigger_processes:transition:expected_state_version",
+        "trigger_process_transitions:append:idempotency_key",
+        "trigger_event_inbox:append:idempotency_key",
+        "trigger_event_outbox:enqueue:idempotency_key",
+      ],
+    },
+  ] as const;
+  for (const { name, evidenceArgument, effects } of coupledWriters) {
+    assertIncludes(
+      `${name}.arguments`,
+      writer(name).arguments.map(({ argument_name }) => argument_name),
+      [evidenceArgument],
+    );
+    assertExactEffects(name, effects);
+  }
+  for (const name of [
+    "reject_trigger_confirmation_v1",
+    "expire_trigger_confirmation_v1",
+  ]) {
+    assertExactEffects(name, [
+      "trigger_confirmation_challenges:transition:expected_state_version",
+      ...processTransitionEffects,
+    ]);
+  }
+  assertExactEffects("transition_trigger_cancel_request_v1", [
+    "trigger_process_cancel_requests:transition:expected_state_version",
+    ...processTransitionEffects,
+  ]);
+  assertExactEffects("claim_weak_trigger_queue_v1", [
+    "weak_trigger_queue_items:transition:lease_fence",
+  ]);
+  assertExactEffects("retry_weak_trigger_queue_item_v1", [
+    "weak_trigger_queue_items:transition:lease_fence",
+    "trigger_event_outbox:enqueue:idempotency_key",
+  ]);
+  assertExactEffects("complete_weak_trigger_queue_item_v1", [
+    "weak_trigger_queue_items:transition:lease_fence",
+    "weak_trigger_groups:transition:expected_state_version",
+    "trigger_event_outbox:enqueue:idempotency_key",
+  ]);
+  assertExactEffects("transition_weak_trigger_group_v1", [
+    "weak_trigger_groups:transition:expected_state_version",
+    "trigger_event_outbox:enqueue:idempotency_key",
+  ]);
+  assertIncludes(
+    "admit_trigger_v1.writes_tables",
+    writer("admit_trigger_v1").writes_tables,
+    ["trigger_command_outbox"],
+  );
+
+  for (const table of [
+    "weak_trigger_queue_items",
+    "weak_trigger_groups",
+    "trigger_confirmation_challenges",
+    "trigger_process_cancel_requests",
+    "trigger_snapshot_pending_events",
+    "trigger_snapshot_repair_jobs",
+  ]) {
+    if (
+      contract.append_only_tables.includes(table) ||
+      contract.table_permissions.find(
+        ({ table_name }) => table_name === table,
+      )?.writer_kind !== "state_transition"
+    ) {
+      throw new Error(`${table} must remain a mutable state-transition table`);
+    }
+  }
+  const terminalCheck = contract.database_checks?.find(
+    ({ constraint_name }) =>
+      constraint_name === "trigger_processes_terminal_outcome_check",
+  )?.semantic_constraint;
+  if (
+    terminalCheck?.kind !== "nullable_text_enum" ||
+    terminalCheck.column_name !== "terminal_outcome" ||
+    JSON.stringify(terminalCheck.allowed_values) !==
+      JSON.stringify(TERMINAL_OUTCOMES_V1)
+  ) {
+    throw new Error("Trigger terminal_outcome CHECK must contain all nine outcomes");
+  }
+}
+
+assertTriggerProcessorLifecycleWriterSemanticsV1(
+  TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+);

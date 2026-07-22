@@ -35,10 +35,24 @@ export function assertTriggerAdmissionCommitPreconditionV1(
     readonly status: "running" | "waiting";
     readonly updated_at: string;
   } | null,
+  currentStrongFifo: {
+    readonly revision: number;
+    readonly head_process_id: string | null;
+    readonly head_admission_time: string | null;
+    readonly preempt_commit_process_id: string | null;
+  },
 ): void {
   const expected = decision.admission_precondition;
+  const queueMatches =
+    expected.strong_fifo_revision === currentStrongFifo.revision &&
+    expected.strong_fifo_head_process_id === currentStrongFifo.head_process_id &&
+    expected.strong_fifo_head_admission_time ===
+      currentStrongFifo.head_admission_time &&
+    expected.strong_fifo_preempt_commit_process_id ===
+      currentStrongFifo.preempt_commit_process_id;
   const matches =
-    expected.kind === "idle"
+    queueMatches &&
+    (expected.kind === "idle"
       ? expected.process_id === null &&
         currentSlot.process_id === null &&
         expected.slot_generation === currentSlot.generation &&
@@ -49,7 +63,7 @@ export function assertTriggerAdmissionCommitPreconditionV1(
         currentProcess.process_id === expected.process_id &&
         currentProcess.phase === expected.phase &&
         currentProcess.status === expected.status &&
-        currentProcess.updated_at === expected.process_updated_at;
+        currentProcess.updated_at === expected.process_updated_at);
   if (!matches) {
     throw new StaleTriggerAdmissionDecisionError();
   }
@@ -73,9 +87,20 @@ function assertConsistentForegroundState(
       typeof facts.active_process_updated_at !== "string" ||
       typeof facts.foreground_slot_process_id !== "string" ||
       !Number.isSafeInteger(facts.active_process_slot_generation));
+  const queueHeadShapeMatches =
+    (facts.strong_fifo_head_process_id === null) ===
+    (facts.strong_fifo_head_admission_time === null);
+  const validPreemptHead =
+    facts.strong_fifo_preempt_commit_process_id === null ||
+    facts.strong_fifo_preempt_commit_process_id ===
+      facts.strong_fifo_head_process_id;
   if (
     !Number.isSafeInteger(facts.foreground_slot_generation) ||
     facts.foreground_slot_generation < 0 ||
+    !Number.isSafeInteger(facts.strong_fifo_revision) ||
+    facts.strong_fifo_revision < 0 ||
+    !queueHeadShapeMatches ||
+    !validPreemptHead ||
     invalidIdleShape ||
     invalidOccupiedShape ||
     facts.active_process_id !== facts.foreground_slot_process_id ||
@@ -88,7 +113,7 @@ function assertConsistentForegroundState(
         !Number.isFinite(Date.parse(facts.active_process_updated_at))))
   ) {
     throw new InvalidTrustedAdmissionFactsError(
-      "active process identity and foreground slot generation must come from one consistent admission snapshot",
+      "foreground slot, process state, and Strong FIFO head must come from one consistent admission snapshot",
     );
   }
 }
@@ -145,6 +170,12 @@ function decideTriggerAdmissionUncheckedV1(
           kind: "idle" as const,
           process_id: null,
           slot_generation: facts.foreground_slot_generation,
+          strong_fifo_revision: facts.strong_fifo_revision,
+          strong_fifo_head_process_id: facts.strong_fifo_head_process_id,
+          strong_fifo_head_admission_time:
+            facts.strong_fifo_head_admission_time,
+          strong_fifo_preempt_commit_process_id:
+            facts.strong_fifo_preempt_commit_process_id,
         }
       : facts.active_process === "execution_running"
         ? {
@@ -154,6 +185,12 @@ function decideTriggerAdmissionUncheckedV1(
             phase: "execution",
             status: "running",
             process_updated_at: facts.active_process_updated_at,
+            strong_fifo_revision: facts.strong_fifo_revision,
+            strong_fifo_head_process_id: facts.strong_fifo_head_process_id,
+            strong_fifo_head_admission_time:
+              facts.strong_fifo_head_admission_time,
+            strong_fifo_preempt_commit_process_id:
+              facts.strong_fifo_preempt_commit_process_id,
           }
         : {
             kind: "occupied" as const,
@@ -162,6 +199,12 @@ function decideTriggerAdmissionUncheckedV1(
             phase: "cooldown",
             status: "waiting",
             process_updated_at: facts.active_process_updated_at,
+            strong_fifo_revision: facts.strong_fifo_revision,
+            strong_fifo_head_process_id: facts.strong_fifo_head_process_id,
+            strong_fifo_head_admission_time:
+              facts.strong_fifo_head_admission_time,
+            strong_fifo_preempt_commit_process_id:
+              facts.strong_fifo_preempt_commit_process_id,
           };
   const commitPrecondition = {
     admission_precondition: admissionPrecondition,
@@ -183,6 +226,26 @@ function decideTriggerAdmissionUncheckedV1(
       action: "reject",
       reason_code: "safety_blocked",
     };
+  }
+
+  if (facts.strong_fifo_head_process_id !== null) {
+    return priority === "strong"
+      ? {
+          ...commitPrecondition,
+          trigger_status: "accepted",
+          priority: "strong",
+          action: "enqueue_strong_fifo",
+          reason_code: "strong_fifo_waiting",
+          initial_process_state: waitingAdmissionState("deferred_strong_queue"),
+        }
+      : {
+          ...commitPrecondition,
+          trigger_status: "accepted",
+          priority: "weak",
+          action: "enqueue_weak",
+          reason_code: "strong_fifo_waiting",
+          initial_process_state: waitingAdmissionState("weak_queue"),
+        };
   }
 
   if (facts.source === "timer" && facts.is_catch_up) {

@@ -54,6 +54,33 @@ describe("service runtime config", () => {
     ).toThrow(ServiceConfigError);
   });
 
+  it("snapshots config from own data properties without invoking accessors", () => {
+    let getterCalls = 0;
+    const config = {
+      host: "127.0.0.1",
+      port: 3001,
+      log_level: "info",
+      request_timeout_ms: 30_000,
+      readiness_timeout_ms: 2_000,
+      shutdown_grace_ms: 10_000,
+      deployment_environment: "local",
+      release_channel: "stable",
+    } as Record<string, unknown>;
+    Object.defineProperty(config, "port", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return 3001;
+      },
+    });
+    expect(() => assertServiceRuntimeConfig(config)).toThrow(ServiceConfigError);
+    expect(getterCalls).toBe(0);
+
+    const loaded = loadServiceRuntimeConfig({ port: 3001 }, {});
+    expect(Object.isFrozen(loaded)).toBe(true);
+  });
+
   it("requires strong dependencies for either production authority signal", () => {
     expect(
       requiresProductionDependenciesV1({

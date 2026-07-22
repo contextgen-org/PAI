@@ -16,9 +16,13 @@ import Fastify, {
   type FastifyInstance,
   type FastifyLogFn,
   type FastifyLoggerOptions,
+  type FastifyRequest,
 } from "fastify";
 
-import type { ServiceRuntimeConfigV1 } from "./config.js";
+import {
+  assertServiceRuntimeConfig,
+  type ServiceRuntimeConfigV1,
+} from "./config.js";
 import {
   PINO_REDACTION_PATHS,
   REDACTED_VALUE,
@@ -46,6 +50,11 @@ export interface ServiceAppOptions {
   readonly runtimeConfig?: ServiceRuntimeConfigV1;
   readonly readinessChecks?: readonly ReadinessCheck[];
   readonly auth?: WorkloadAuthOptions;
+  /** Route-aware mapping into a service's published error envelope. */
+  readonly errorMapper?: (
+    error: unknown,
+    request: FastifyRequest,
+  ) => ServiceError | undefined | Promise<ServiceError | undefined>;
 }
 
 export interface ServiceLoggerStreamDestination {
@@ -60,6 +69,10 @@ interface ReadinessResult {
   readonly name: string;
   readonly status: "up" | "down";
   readonly latency_ms: number;
+}
+
+interface ReadinessExecutionState {
+  inFlight?: Promise<void>;
 }
 
 const lifecycleStates = new WeakMap<FastifyInstance, ServiceLifecycleState>();
@@ -168,21 +181,50 @@ function validationDetails(error: unknown): unknown | undefined {
 
 async function runReadinessCheck(
   readinessCheck: ReadinessCheck,
+  executionState: ReadinessExecutionState,
   timeoutMs: number,
 ): Promise<ReadinessResult> {
   const startedAt = performance.now();
-  const controller = new AbortController();
-  let timer: NodeJS.Timeout | undefined;
+  let execution = executionState.inFlight;
+  if (execution === undefined) {
+    const controller = new AbortController();
+    const timeoutError = new Error("readiness check timed out");
+    let deadlineExceeded = false;
+    const executionTimer = setTimeout(() => {
+      deadlineExceeded = true;
+      controller.abort(timeoutError);
+    }, timeoutMs);
+    executionTimer.unref();
+
+    const currentExecution = Promise.resolve()
+      .then(() => readinessCheck.check(controller.signal))
+      .then(() => {
+        if (deadlineExceeded) throw timeoutError;
+      })
+      .finally(() => {
+        clearTimeout(executionTimer);
+        if (executionState.inFlight === currentExecution) {
+          delete executionState.inFlight;
+        }
+      });
+    executionState.inFlight = currentExecution;
+    // A probe can time out before an uncooperative dependency eventually
+    // rejects. Keep that late rejection observed while retaining the task as
+    // the single shared bulkhead until it actually settles.
+    void currentExecution.catch(() => undefined);
+    execution = currentExecution;
+  }
+
+  let observerTimer: NodeJS.Timeout | undefined;
 
   try {
     await Promise.race([
-      readinessCheck.check(controller.signal),
+      execution,
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          controller.abort();
+        observerTimer = setTimeout(() => {
           reject(new Error("readiness check timed out"));
         }, timeoutMs);
-        timer.unref();
+        observerTimer.unref();
       }),
     ]);
     return {
@@ -197,7 +239,7 @@ async function runReadinessCheck(
       latency_ms: Math.round(performance.now() - startedAt),
     };
   } finally {
-    if (timer !== undefined) clearTimeout(timer);
+    if (observerTimer !== undefined) clearTimeout(observerTimer);
   }
 }
 
@@ -206,33 +248,222 @@ export function beginServiceShutdown(app: FastifyInstance): void {
   if (lifecycle !== undefined) lifecycle.acceptingTraffic = false;
 }
 
-export function createServiceApp(
-  serviceId: ServiceIdV1,
-  options: ServiceAppOptions = {},
-): FastifyInstance {
-  const readinessChecks = options.readinessChecks ?? [];
-  const readinessNames = new Set(readinessChecks.map((check) => check.name));
+function snapshotServiceAppOptions(value: unknown): ServiceAppOptions {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("service app options must contain only own data properties");
+  }
+  let prototype: object | null;
+  let descriptors: PropertyDescriptorMap;
+  try {
+    prototype = Object.getPrototypeOf(value);
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    throw new Error("service app options must contain only own data properties");
+  }
+  const allowedKeys = new Set([
+    "auth",
+    "errorMapper",
+    "logger",
+    "loggerStream",
+    "readinessChecks",
+    "runtimeConfig",
+  ]);
+  const keys = Reflect.ownKeys(descriptors);
   if (
-    readinessNames.size !== readinessChecks.length ||
-    readinessChecks.some(
-      (check) => !/^[a-z][a-z0-9_.-]{0,63}$/.test(check.name),
-    )
+    (prototype !== Object.prototype && prototype !== null) ||
+    keys.some((key) => typeof key !== "string") ||
+    (keys as string[]).some((key) => !allowedKeys.has(key))
+  ) {
+    throw new Error("service app options must contain only own data properties");
+  }
+  const snapshot = Object.create(null) as Record<string, unknown>;
+  for (const key of keys as string[]) {
+    const descriptor = descriptors[key];
+    if (
+      descriptor === undefined ||
+      !("value" in descriptor) ||
+      descriptor.enumerable !== true
+    ) {
+      throw new Error("service app options must contain only own data properties");
+    }
+    snapshot[key] = descriptor.value;
+  }
+  const logger = snapshot.logger;
+  const errorMapper = snapshot.errorMapper;
+  const loggerStream = snapshot.loggerStream;
+  const loggerWrite =
+    typeof loggerStream === "object" && loggerStream !== null
+      ? (loggerStream as Partial<ServiceLoggerStreamDestination>).write
+      : undefined;
+  if (
+    (logger !== undefined && typeof logger !== "boolean") ||
+    (errorMapper !== undefined && typeof errorMapper !== "function") ||
+    (loggerStream !== undefined &&
+      (typeof loggerStream !== "object" ||
+        loggerStream === null ||
+        typeof loggerWrite !== "function"))
+  ) {
+    throw new Error("invalid service app options");
+  }
+  const runtimeConfig =
+    snapshot.runtimeConfig === undefined
+      ? undefined
+      : assertServiceRuntimeConfig(snapshot.runtimeConfig);
+  const capturedLoggerStream =
+    loggerStream === undefined
+      ? undefined
+      : Object.freeze({
+          write: loggerWrite!.bind(loggerStream),
+        });
+  return Object.freeze({
+    ...(logger === undefined ? {} : { logger }),
+    ...(capturedLoggerStream === undefined
+      ? {}
+      : { loggerStream: capturedLoggerStream }),
+    ...(runtimeConfig === undefined ? {} : { runtimeConfig }),
+    ...(snapshot.readinessChecks === undefined
+      ? {}
+      : { readinessChecks: snapshot.readinessChecks as readonly ReadinessCheck[] }),
+    ...(snapshot.auth === undefined
+      ? {}
+      : { auth: snapshot.auth as WorkloadAuthOptions }),
+    ...(errorMapper === undefined
+      ? {}
+      : { errorMapper: errorMapper.bind(value) }),
+  });
+}
+
+function snapshotReadinessChecks(value: unknown): readonly ReadinessCheck[] {
+  if (value === undefined) return Object.freeze([]);
+  if (!Array.isArray(value)) {
+    throw new Error(
+      "readiness check names must be unique low-cardinality identifiers",
+    );
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(
+    descriptors,
+    "length",
+  )?.value as PropertyDescriptor | undefined;
+  const lengthValue = lengthDescriptor?.value as unknown;
+  if (
+    typeof lengthValue !== "number" ||
+    !Number.isSafeInteger(lengthValue) ||
+    lengthValue < 0 ||
+    lengthValue > 64
   ) {
     throw new Error(
       "readiness check names must be unique low-cardinality identifiers",
     );
   }
+  const expectedKeys = new Set([
+    "length",
+    ...Array.from({ length: lengthValue }, (_entry, index) => String(index)),
+  ]);
+  const keys = Reflect.ownKeys(descriptors);
+  if (
+    keys.some((key) => typeof key !== "string") ||
+    (keys as string[]).some((key) => !expectedKeys.has(key)) ||
+    keys.length !== expectedKeys.size
+  ) {
+    throw new Error(
+      "readiness check names must be unique low-cardinality identifiers",
+    );
+  }
+  const checks: ReadinessCheck[] = [];
+  for (let index = 0; index < lengthValue; index += 1) {
+    const elementDescriptor = descriptors[String(index)];
+    if (
+      elementDescriptor === undefined ||
+      !("value" in elementDescriptor) ||
+      elementDescriptor.enumerable !== true
+    ) {
+      throw new Error(
+        "readiness check names must be unique low-cardinality identifiers",
+      );
+    }
+    const checkValue = elementDescriptor.value as unknown;
+    if (
+      typeof checkValue !== "object" ||
+      checkValue === null ||
+      Array.isArray(checkValue)
+    ) {
+      throw new Error(
+        "readiness check names must be unique low-cardinality identifiers",
+      );
+    }
+    let checkPrototype: object | null;
+    let checkDescriptors: PropertyDescriptorMap;
+    try {
+      checkPrototype = Object.getPrototypeOf(checkValue);
+      checkDescriptors = Object.getOwnPropertyDescriptors(checkValue);
+    } catch {
+      throw new Error(
+        "readiness check names must be unique low-cardinality identifiers",
+      );
+    }
+    const checkKeys = Reflect.ownKeys(checkDescriptors);
+    const nameDescriptor = checkDescriptors.name;
+    const methodDescriptor = checkDescriptors.check;
+    if (
+      (checkPrototype !== Object.prototype && checkPrototype !== null) ||
+      checkKeys.some((key) => typeof key !== "string") ||
+      (checkKeys as string[]).sort().join(",") !== "check,name" ||
+      nameDescriptor === undefined ||
+      !("value" in nameDescriptor) ||
+      nameDescriptor.enumerable !== true ||
+      typeof nameDescriptor.value !== "string" ||
+      methodDescriptor === undefined ||
+      !("value" in methodDescriptor) ||
+      methodDescriptor.enumerable !== true ||
+      typeof methodDescriptor.value !== "function"
+    ) {
+      throw new Error(
+        "readiness check names must be unique low-cardinality identifiers",
+      );
+    }
+    checks.push(
+      Object.freeze({
+        name: nameDescriptor.value,
+        check: methodDescriptor.value.bind(checkValue),
+      }),
+    );
+  }
+  const names = new Set(checks.map((check) => check.name));
+  if (
+    names.size !== checks.length ||
+    checks.some((check) => !/^[a-z][a-z0-9_.-]{0,63}$/.test(check.name))
+  ) {
+    throw new Error(
+      "readiness check names must be unique low-cardinality identifiers",
+    );
+  }
+  return Object.freeze(checks);
+}
+
+export function createServiceApp(
+  serviceId: ServiceIdV1,
+  options: ServiceAppOptions = {},
+): FastifyInstance {
+  const appOptions = snapshotServiceAppOptions(options);
+  const readinessChecks = snapshotReadinessChecks(appOptions.readinessChecks);
+  const readinessExecutionStates = readinessChecks.map(
+    (): ReadinessExecutionState => ({}),
+  );
+  const readinessTimeoutMs =
+    appOptions.runtimeConfig?.readiness_timeout_ms ?? 2_000;
+  const errorMapper = appOptions.errorMapper;
 
   const logger =
-    options.logger === false
+    appOptions.logger === false
       ? false
-      : options.logger === true
-        ? secureLoggerOptions(options.runtimeConfig, options.loggerStream)
-        : defaultLogger(options.runtimeConfig, options.loggerStream);
+      : appOptions.logger === true
+        ? secureLoggerOptions(appOptions.runtimeConfig, appOptions.loggerStream)
+        : defaultLogger(appOptions.runtimeConfig, appOptions.loggerStream);
   const app = Fastify({
     logger,
     logController: new LogController({ disableRequestLogging: true }),
-    requestTimeout: options.runtimeConfig?.request_timeout_ms ?? 30_000,
+    requestTimeout: appOptions.runtimeConfig?.request_timeout_ms ?? 30_000,
     genReqId: (request) => extractInboundTraceId(request.headers),
   });
   if (logger !== false) secureChildLoggerBindings(app.log);
@@ -276,7 +507,7 @@ export function createServiceApp(
     context.with(requestContext, () => done(shutdownError));
   });
 
-  installWorkloadAuth(app, serviceId, options.auth);
+  installWorkloadAuth(app, serviceId, appOptions.auth);
 
   app.addHook("onResponse", async (request, reply) => {
     request.log.info(
@@ -344,10 +575,11 @@ export function createServiceApp(
     }
 
     const checks = await Promise.all(
-      readinessChecks.map(async (check) =>
+      readinessChecks.map(async (check, index) =>
         runReadinessCheck(
           check,
-          options.runtimeConfig?.readiness_timeout_ms ?? 2_000,
+          readinessExecutionStates[index]!,
+          readinessTimeoutMs,
         ),
       ),
     );
@@ -359,10 +591,11 @@ export function createServiceApp(
     });
   });
 
-  app.setErrorHandler((error, request, reply) => {
+  app.setErrorHandler(async (error, request, reply) => {
     const details = validationDetails(error);
     const serviceError =
-      error instanceof ServiceError
+      (await errorMapper?.(error, request)) ??
+      (error instanceof ServiceError
         ? error
         : details === undefined
           ? new ServiceError({
@@ -377,7 +610,7 @@ export function createServiceApp(
               statusCode: 400,
               retryable: false,
               details,
-            });
+            }));
     const envelope: ResponseEnvelopeV1 = {
       code: serviceError.code,
       message: serviceError.message,
@@ -402,7 +635,7 @@ export function createServiceApp(
         "request failed",
       );
     }
-    void reply.code(serviceError.statusCode).send(envelope);
+    return reply.code(serviceError.statusCode).send(envelope);
   });
 
   return app;
