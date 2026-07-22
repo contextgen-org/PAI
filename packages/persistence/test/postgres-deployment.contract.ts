@@ -305,8 +305,11 @@ DO $$ BEGIN
     CREATE ROLE authenticated NOLOGIN;
   END IF;
 END $$;
+ALTER ROLE pai_migrator NOLOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
 ALTER ROLE pai_timer_app NOLOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
 ALTER ROLE pai_timer_runtime LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD 'timer-runtime-test';
+REVOKE pai_memory_app FROM pai_migrator;
+REVOKE pai_runtime_bridge FROM pai_migrator;
 REVOKE pai_timer_app FROM pai_timer_runtime;
 REVOKE pai_runtime_bridge FROM pai_timer_runtime;
 REVOKE pai_memory_app FROM pai_timer_runtime;
@@ -314,8 +317,12 @@ DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_timer_intruder') THEN
     EXECUTE 'REVOKE pai_timer_app FROM pai_timer_intruder';
   END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_owner_rogue') THEN
+    EXECUTE 'REVOKE pai_migrator FROM pai_owner_rogue';
+  END IF;
 END $$;
 GRANT pai_timer_app TO pai_timer_runtime WITH INHERIT TRUE, SET FALSE, ADMIN FALSE;
+DROP SCHEMA IF EXISTS timer_shadow CASCADE;
 DROP SCHEMA IF EXISTS timer CASCADE;
 CREATE SCHEMA timer AUTHORIZATION pai_migrator;
 REVOKE ALL ON SCHEMA timer FROM PUBLIC, anon, authenticated, pai_timer_runtime, pai_runtime_bridge, pai_memory_app;
@@ -581,6 +588,43 @@ describePostgres("PostgreSQL owner deployment verification", () => {
        END $$;
        ALTER ROLE pai_timer_intruder LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD 'timer-intruder-test';
        GRANT pai_timer_app TO pai_timer_intruder WITH INHERIT TRUE, SET FALSE, ADMIN FALSE`,
+    ],
+    [
+      "schema owner LOGIN flag",
+      "ALTER ROLE pai_migrator LOGIN PASSWORD 'timer-owner-test'",
+    ],
+    [
+      "extra LOGIN inheriting the schema owner role",
+      `DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_owner_rogue') THEN
+           CREATE ROLE pai_owner_rogue LOGIN PASSWORD 'timer-owner-rogue-test';
+         END IF;
+       END $$;
+       ALTER ROLE pai_owner_rogue LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD 'timer-owner-rogue-test';
+       GRANT pai_migrator TO pai_owner_rogue WITH INHERIT TRUE, SET FALSE, ADMIN FALSE`,
+    ],
+    [
+      "schema owner inheriting another role",
+      "GRANT pai_memory_app TO pai_migrator WITH INHERIT TRUE, SET FALSE, ADMIN FALSE",
+    ],
+    [
+      "RLS policy on a contract table",
+      `ALTER TABLE timer.contract_children ENABLE ROW LEVEL SECURITY;
+       CREATE POLICY contract_children_contract_policy
+       ON timer.contract_children
+       FOR SELECT TO pai_timer_app USING (true)`,
+    ],
+    [
+      "inheritance child outside the owner schema",
+      `CREATE SCHEMA timer_shadow AUTHORIZATION pai_migrator;
+       SET ROLE pai_migrator;
+       CREATE TABLE timer_shadow.contract_children_shadow ()
+       INHERITS (timer.contract_children);
+       RESET ROLE`,
+    ],
+    [
+      "disabled internal FK enforcement trigger",
+      "ALTER TABLE timer.contract_children DISABLE TRIGGER ALL",
     ],
     ["missing composite FK", "ALTER TABLE timer.contract_children DROP CONSTRAINT contract_children_parent_fk"],
     [
@@ -876,7 +920,7 @@ describePostgres("PostgreSQL owner deployment verification", () => {
         expected_schema_owner: "pai_migrator",
         runtime_postgres: runtime(),
       }),
-    ).rejects.toThrow(/drift|missing|forbidden|undeclared/);
+    ).rejects.toThrow(/drift|missing|forbidden|undeclared|least-privilege|enforcement/);
   });
 
   it("proves rollback and function-level atomic side effects", async () => {

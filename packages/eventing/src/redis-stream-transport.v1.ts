@@ -222,6 +222,7 @@ export interface RedisNamespaceV1 {
   readonly release_channel: ReleaseChannelV1;
   readonly owner_service: ServiceIdV1;
   readonly stream_epoch: string;
+  readonly stream_generation: number;
   readonly schema_version: "v1";
   readonly prefix: string;
 }
@@ -231,12 +232,15 @@ export function createRedisNamespaceV1(input: Readonly<{
   release_channel: ReleaseChannelV1;
   owner_service: ServiceIdV1;
   stream_epoch: string;
+  stream_generation: number;
 }>): RedisNamespaceV1 {
   if (
     !DEPLOYMENT_ENVIRONMENTS.includes(input.deployment_environment) ||
     !RELEASE_CHANNELS.includes(input.release_channel) ||
     !SERVICE_IDS.includes(input.owner_service) ||
-    !redisSegmentPattern.test(input.stream_epoch)
+    !redisSegmentPattern.test(input.stream_epoch) ||
+    !Number.isSafeInteger(input.stream_generation) ||
+    input.stream_generation < 1
   ) {
     throw new Error("invalid Redis namespace identity");
   }
@@ -245,6 +249,7 @@ export function createRedisNamespaceV1(input: Readonly<{
     release_channel: input.release_channel,
     owner_service: input.owner_service,
     stream_epoch: input.stream_epoch,
+    stream_generation: input.stream_generation,
     schema_version: "v1",
     prefix: [
       "pai",
@@ -253,6 +258,7 @@ export function createRedisNamespaceV1(input: Readonly<{
       input.owner_service,
       "v1",
       input.stream_epoch,
+      `generation_${input.stream_generation}`,
     ].join(":"),
   });
 }
@@ -888,6 +894,8 @@ export async function openVerifiedRedisStreamCompositionV1(options: Readonly<{
         target: string;
         envelope: DurableEventEnvelopeV1;
         payload_hash: string;
+        current_transport_epoch: string;
+        current_transport_generation: number;
       }>) {
         try {
           assertOwnerDurableEventEnvelopeV1(request.envelope);
@@ -920,6 +928,17 @@ export async function openVerifiedRedisStreamCompositionV1(options: Readonly<{
             "transport_rejected",
             false,
             "event scope does not match the Redis environment/channel namespace",
+          );
+        }
+        if (
+          request.current_transport_epoch !== options.namespace.stream_epoch ||
+          request.current_transport_generation !==
+            options.namespace.stream_generation
+        ) {
+          throw new EventTransportErrorV1(
+            "transport_rejected",
+            false,
+            "dispatcher transport generation is outside the Redis namespace",
           );
         }
         if (!isDurableEventTargetAllowedV1(request.envelope, request.target)) {
@@ -971,6 +990,7 @@ export async function openVerifiedRedisStreamCompositionV1(options: Readonly<{
           return {
             transport_ref: `redis_stream:${stream}:${streamId}`,
             transport_epoch: options.namespace.stream_epoch,
+            transport_generation: options.namespace.stream_generation,
           };
         } catch (error) {
           dependencyMonitor.recordFailure();

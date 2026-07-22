@@ -43,9 +43,20 @@ describe("Redis Stream transport V1", () => {
       release_channel: "canary",
       owner_service: "timer_trigger_app",
       stream_epoch: "epoch_20260722",
+      stream_generation: 1,
     });
     expect(namespacedRedisKeyV1(namespace, "stream:timer_events")).toBe(
-      "pai:dev:canary:timer_trigger_app:v1:epoch_20260722:stream:timer_events",
+      "pai:dev:canary:timer_trigger_app:v1:epoch_20260722:generation_1:stream:timer_events",
+    );
+    const nextGeneration = createRedisNamespaceV1({
+      deployment_environment: "dev",
+      release_channel: "canary",
+      owner_service: "timer_trigger_app",
+      stream_epoch: "epoch_20260722",
+      stream_generation: 2,
+    });
+    expect(namespacedRedisKeyV1(nextGeneration, "stream:timer_events")).toBe(
+      "pai:dev:canary:timer_trigger_app:v1:epoch_20260722:generation_2:stream:timer_events",
     );
     expect(() => namespacedRedisKeyV1(namespace, "../escape")).toThrow();
     expect(() =>
@@ -54,6 +65,7 @@ describe("Redis Stream transport V1", () => {
         release_channel: "canary",
         owner_service: "timer_trigger_app",
         stream_epoch: "epoch_20260722",
+        stream_generation: 1,
       } as never),
     ).toThrow(/namespace identity/);
   });
@@ -129,6 +141,7 @@ describe("Redis Stream transport V1", () => {
       release_channel: "stable",
       owner_service: "memory",
       stream_epoch: "epoch_20260722",
+      stream_generation: 1,
     });
     await expect(
       openVerifiedRedisStreamCompositionV1({
@@ -172,6 +185,7 @@ describe("Redis Stream transport V1", () => {
       release_channel: "stable",
       owner_service: "timer_trigger_app",
       stream_epoch: "epoch_20260722",
+      stream_generation: 1,
     });
     const commands: string[][] = [];
     const client = {
@@ -183,7 +197,7 @@ describe("Redis Stream transport V1", () => {
         if (args[0] === "XREADGROUP") {
           return [
             [
-              "pai:dev:stable:timer_trigger_app:v1:epoch_20260722:stream:timer_events",
+              "pai:dev:stable:timer_trigger_app:v1:epoch_20260722:generation_1:stream:timer_events",
               [
                 [
                   "1-0",
@@ -205,7 +219,7 @@ describe("Redis Stream transport V1", () => {
       },
     };
     const consumer = createRedisStreamConsumerGroupPortV1(client, {
-      stream: "pai:dev:stable:timer_trigger_app:v1:epoch_20260722:stream:timer_events",
+      stream: "pai:dev:stable:timer_trigger_app:v1:epoch_20260722:generation_1:stream:timer_events",
       group: "trigger_processor",
       consumer: "worker_001",
       namespace,
@@ -216,7 +230,7 @@ describe("Redis Stream transport V1", () => {
         kind: "event",
         delivery_id: "1-0",
         delivery_ref:
-          "pai:dev:stable:timer_trigger_app:v1:epoch_20260722:stream:timer_events#1-0",
+          "pai:dev:stable:timer_trigger_app:v1:epoch_20260722:generation_1:stream:timer_events#1-0",
         envelope,
       },
     ]);
@@ -232,7 +246,7 @@ describe("Redis Stream transport V1", () => {
         kind: "event",
         delivery_id: "1-0",
         delivery_ref:
-          "pai:dev:stable:timer_trigger_app:v1:epoch_20260722:stream:timer_events#1-0",
+          "pai:dev:stable:timer_trigger_app:v1:epoch_20260722:generation_1:stream:timer_events#1-0",
         envelope,
       }],
       deleted_ids: ["0-9"],
@@ -254,6 +268,7 @@ describe("Redis Stream transport V1", () => {
       release_channel: "stable",
       owner_service: "timer_trigger_app",
       stream_epoch: "epoch_20260722",
+      stream_generation: 1,
     });
     const validFields = Object.entries(buildRedisStreamMessageV1(envelope)).flat();
     const invalidFields = [...validFields];
@@ -307,7 +322,7 @@ describe("Redis Stream transport V1", () => {
       kind: "event",
       delivery_id: "2-0",
       delivery_ref:
-        "pai:dev:stable:timer_trigger_app:v1:epoch_20260722:stream:timer_events#2-0",
+        "pai:dev:stable:timer_trigger_app:v1:epoch_20260722:generation_1:stream:timer_events#2-0",
       envelope,
     });
     expect(deliveries[2]).toMatchObject({

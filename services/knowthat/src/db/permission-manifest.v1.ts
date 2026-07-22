@@ -1,6 +1,8 @@
 import { OWNER_DURABLE_EVENT_TYPES_V1 } from "@pai/contracts";
 import {
   defineOwnerRepositoryContractV1,
+  ownerEventingTransportEpochActivationSignatureV1,
+  ownerEventingTransportEpochTablePermissionV1,
   ownerForeignKeysV1,
   ownerFunctionSignatureV1,
   type OwnerRepositoryPortV1,
@@ -34,6 +36,7 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
       "semantic_key_aliases",
       "semantic_key_synonyms",
       "knowthat_memory_command_outbox",
+      "eventing_transport_epochs",
     ],
     table_permissions: [
     {
@@ -156,6 +159,7 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
       delete_allowed: false,
       writer_kind: "outbox_claim_ack",
     },
+    ownerEventingTransportEpochTablePermissionV1(),
     ],
     mutable_writers: [
       "transition_knowthat_fact_v1",
@@ -165,6 +169,7 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
       "ack_knowthat_event_outbox_v1",
       "claim_knowthat_memory_command_outbox_v1",
       "ack_knowthat_memory_command_outbox_v1",
+      "activate_eventing_transport_epoch_v1",
     ],
     function_signatures: [
     ownerFunctionSignatureV1({
@@ -224,7 +229,7 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
       function_name: "claim_knowthat_event_outbox_v1",
       primary_table: "knowthat_event_outbox",
       writer_kind: "outbox_claim_ack",
-      arguments: [["p_worker_id", "text"], ["p_limit", "integer"], ["p_lease_seconds", "integer"], ["p_now", "timestamptz"]], reads_tables: ["knowthat_event_outbox"], writes_tables: ["knowthat_event_outbox"],
+      arguments: [["p_worker_id", "text"], ["p_limit", "integer"], ["p_lease_seconds", "integer"], ["p_now", "timestamptz"], ["p_current_transport_epoch", "text"], ["p_current_transport_generation", "bigint"]], reads_tables: ["knowthat_event_outbox", "eventing_transport_epochs"], writes_tables: ["knowthat_event_outbox"],
       effects: [{ table_name: "knowthat_event_outbox", operation: "claim", concurrency_control: "lease_fence" }],
       returns: "setof jsonb",
     }),
@@ -233,7 +238,7 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
       function_name: "ack_knowthat_event_outbox_v1",
       primary_table: "knowthat_event_outbox",
       writer_kind: "outbox_claim_ack",
-      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_transport_ref", "text"], ["p_transport_epoch", "text"], ["p_now", "timestamptz"]], reads_tables: ["knowthat_event_outbox"], writes_tables: ["knowthat_event_outbox", "knowthat_event_dlq"],
+      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_transport_ref", "text"], ["p_transport_epoch", "text"], ["p_transport_generation", "bigint"], ["p_current_transport_epoch", "text"], ["p_current_transport_generation", "bigint"], ["p_now", "timestamptz"]], reads_tables: ["knowthat_event_outbox", "eventing_transport_epochs"], writes_tables: ["knowthat_event_outbox", "knowthat_event_dlq"],
       effects: [
         { table_name: "knowthat_event_outbox", operation: "ack", concurrency_control: "lease_fence" },
         { table_name: "knowthat_event_dlq", operation: "append", concurrency_control: "idempotency_key" },
@@ -245,7 +250,7 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
       function_name: "claim_knowthat_memory_command_outbox_v1",
       primary_table: "knowthat_memory_command_outbox",
       writer_kind: "outbox_claim_ack",
-      arguments: [["p_worker_id", "text"], ["p_limit", "integer"], ["p_lease_seconds", "integer"], ["p_now", "timestamptz"]], reads_tables: ["knowthat_memory_command_outbox"], writes_tables: ["knowthat_memory_command_outbox"],
+      arguments: [["p_worker_id", "text"], ["p_limit", "integer"], ["p_lease_seconds", "integer"], ["p_now", "timestamptz"], ["p_current_transport_epoch", "text"], ["p_current_transport_generation", "bigint"]], reads_tables: ["knowthat_memory_command_outbox", "eventing_transport_epochs"], writes_tables: ["knowthat_memory_command_outbox"],
       effects: [{ table_name: "knowthat_memory_command_outbox", operation: "claim", concurrency_control: "lease_fence" }],
       returns: "setof jsonb",
     }),
@@ -254,12 +259,27 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
       function_name: "ack_knowthat_memory_command_outbox_v1",
       primary_table: "knowthat_memory_command_outbox",
       writer_kind: "outbox_claim_ack",
-      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_transport_ref", "text"], ["p_transport_epoch", "text"], ["p_now", "timestamptz"]], reads_tables: ["knowthat_memory_command_outbox"], writes_tables: ["knowthat_memory_command_outbox"],
+      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_transport_ref", "text"], ["p_transport_epoch", "text"], ["p_transport_generation", "bigint"], ["p_current_transport_epoch", "text"], ["p_current_transport_generation", "bigint"], ["p_now", "timestamptz"]], reads_tables: ["knowthat_memory_command_outbox", "eventing_transport_epochs"], writes_tables: ["knowthat_memory_command_outbox"],
       effects: [{ table_name: "knowthat_memory_command_outbox", operation: "ack", concurrency_control: "lease_fence" }],
       returns: "jsonb",
     }),
+    ownerEventingTransportEpochActivationSignatureV1("knowthat"),
     ],
     database_checks: [
+      {
+        constraint_name: "eventing_transport_epochs_active_generation_safe_check",
+        table_name: "eventing_transport_epochs",
+        required_definition_fragments: [
+          "active_generation >= 1",
+          "active_generation <= 9007199254740991",
+        ],
+        semantic_constraint: {
+          kind: "integer_range",
+          column_name: "active_generation",
+          min: 1,
+          max: Number.MAX_SAFE_INTEGER,
+        },
+      },
       {
         constraint_name: "knowthat_event_outbox_event_type_check",
         table_name: "knowthat_event_outbox",

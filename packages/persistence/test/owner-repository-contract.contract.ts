@@ -15,6 +15,9 @@ import { TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 } from "../../../services/trig
 import {
   defineOwnerRepositoryContractV1,
   OWNER_DATABASE_TARGETS_V1,
+  OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1,
+  OWNER_EVENTING_TRANSPORT_EPOCH_WRITER_V1,
+  OWNER_SAFE_BIGINT_MAX_V1,
   ownerDatabaseApplicationDependenciesV1,
   ownerFunctionSignatureV1,
   ownerWriterArtifactV1,
@@ -156,6 +159,8 @@ describe("owner repository contracts", () => {
         ["p_limit", "integer"],
         ["p_lease_seconds", "integer"],
         ["p_now", "timestamptz"],
+        ["p_current_transport_epoch", "text"],
+        ["p_current_transport_generation", "bigint"],
       ],
       ack: [
         ["p_outbox_id", "text"],
@@ -165,10 +170,50 @@ describe("owner repository contracts", () => {
         ["p_error", "jsonb"],
         ["p_transport_ref", "text"],
         ["p_transport_epoch", "text"],
+        ["p_transport_generation", "bigint"],
+        ["p_current_transport_epoch", "text"],
+        ["p_current_transport_generation", "bigint"],
         ["p_now", "timestamptz"],
       ],
     } as const;
     for (const contract of contracts) {
+      const authorityPermission = contract.table_permissions.find(
+        ({ table_name }) =>
+          table_name === OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1,
+      );
+      expect(authorityPermission).toMatchObject({
+        table_name: OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1,
+        writer_kind: "pointer_cas",
+      });
+      expect(authorityPermission?.select_columns).toEqual([
+        "transport_name",
+        "active_epoch",
+        "active_generation",
+        "activated_at",
+      ]);
+      expect(
+        contract.mutable_writers,
+      ).toContain(OWNER_EVENTING_TRANSPORT_EPOCH_WRITER_V1);
+      expect(
+        contract.function_signatures.filter(
+          ({ function_name, primary_table }) =>
+            function_name === OWNER_EVENTING_TRANSPORT_EPOCH_WRITER_V1 &&
+            primary_table === OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1,
+        ),
+      ).toHaveLength(1);
+      expect(contract.database_checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            table_name: OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1,
+            semantic_constraint: {
+              kind: "integer_range",
+              column_name: "active_generation",
+              min: 1,
+              max: OWNER_SAFE_BIGINT_MAX_V1,
+            },
+          }),
+        ]),
+      );
       for (const table of contract.outbox_tables) {
         for (const operation of ["claim", "ack"] as const) {
           const signatures = contract.function_signatures.filter(
@@ -190,6 +235,9 @@ describe("owner repository contracts", () => {
           ).toEqual(expectedArguments[operation]);
           expect(signatures[0]?.returns).toBe(
             operation === "claim" ? "setof jsonb" : "jsonb",
+          );
+          expect(signatures[0]?.reads_tables).toContain(
+            OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1,
           );
         }
       }
@@ -1368,6 +1416,25 @@ $writer$`;
         ],
       } as never),
     ).toThrow(/semantic effect/);
+
+    expect(() =>
+      defineOwnerRepositoryContractV1({
+        ...ACTION_RUNTIME_REPOSITORY_CONTRACT_V1,
+        function_signatures:
+          ACTION_RUNTIME_REPOSITORY_CONTRACT_V1.function_signatures.map(
+            (signature) =>
+              signature.function_name === "claim_runtime_event_outbox_v1"
+                ? {
+                    ...signature,
+                    reads_tables: signature.reads_tables.filter(
+                      (table) =>
+                        table !== OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1,
+                    ),
+                  }
+                : signature,
+          ),
+      } as never),
+    ).toThrow(/active eventing transport epoch/);
   });
 
 });

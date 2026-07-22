@@ -19,6 +19,7 @@ describeRedis("locked Redis 8.8 Stream integration", () => {
     release_channel: "stable",
     owner_service: "timer_trigger_app",
     stream_epoch: "epoch_20260722",
+    stream_generation: 1,
   });
   const target = "trigger_processor.timer_submit";
   const logicalStream = "stream:timer_events";
@@ -76,9 +77,12 @@ describeRedis("locked Redis 8.8 Stream integration", () => {
       target,
       envelope,
       payload_hash: canonicalPayloadHashV1(envelope.payload),
+      current_transport_epoch: "epoch_20260722",
+      current_transport_generation: 1,
     });
     expect(published.transport_ref).toMatch(/^redis_stream:/);
     expect(published.transport_epoch).toBe("epoch_20260722");
+    expect(published.transport_generation).toBe(1);
     await expect(composition!.checkReadiness()).resolves.toBeUndefined();
     expect(composition!.baseline).toMatchObject({ server_version: "8.8.0" });
 
@@ -133,6 +137,8 @@ describeRedis("locked Redis 8.8 Stream integration", () => {
         target,
         envelope: baseEnvelope,
         payload_hash: canonicalPayloadHashV1(baseEnvelope.payload),
+        current_transport_epoch: "epoch_20260722",
+        current_transport_generation: 1,
       }),
     ).rejects.toThrow(/environment\/channel namespace/u);
     const channelDrift = {
@@ -150,6 +156,8 @@ describeRedis("locked Redis 8.8 Stream integration", () => {
         target,
         envelope: channelDrift,
         payload_hash: canonicalPayloadHashV1(channelDrift.payload),
+        current_transport_epoch: "epoch_20260722",
+        current_transport_generation: 1,
       }),
     ).rejects.toThrow(/environment\/channel namespace/u);
     expect(await reader!.xLen(physicalStream)).toBe(before);
@@ -181,6 +189,8 @@ describeRedis("locked Redis 8.8 Stream integration", () => {
         target,
         envelope: actionEnvelope,
         payload_hash: canonicalPayloadHashV1(actionEnvelope.payload),
+        current_transport_epoch: "epoch_20260722",
+        current_transport_generation: 1,
       }),
     ).rejects.toMatchObject({ code: "transport_rejected", retryable: false });
 
@@ -196,6 +206,8 @@ describeRedis("locked Redis 8.8 Stream integration", () => {
         target,
         envelope: unknownTimerEnvelope,
         payload_hash: canonicalPayloadHashV1(unknownTimerEnvelope.payload),
+        current_transport_epoch: "epoch_20260722",
+        current_transport_generation: 1,
       }),
     ).rejects.toMatchObject({ code: "transport_rejected", retryable: false });
     expect(await reader!.xLen(physicalStream)).toBe(before);

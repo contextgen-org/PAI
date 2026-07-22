@@ -17,13 +17,14 @@ import {
   createDurableInboxConsumerV1,
   createDurableOutboxDispatcherV1,
   createDurableSentOutboxRedriverV1,
-  createPostgresOwnerOutboxStoreV1,
   createRedisNamespaceV1,
   createRedisStreamConsumerGroupPortV1,
   namespacedRedisKeyV1,
   openVerifiedRedisStreamCompositionV1,
   type DurableEventDeliveryConsumerPortV1,
+  type ClaimedOutboxRecordV1,
   type ClaimedSentOutboxRecordV1,
+  type DurableOutboxStorePortV1,
   type DurableSentOutboxRedriveStorePortV1,
   type DurableEventTransportPortV1,
 } from "../src/index.js";
@@ -226,8 +227,10 @@ const EVENTING_CONTRACT_INPUT = {
         ["p_limit", "integer"],
         ["p_lease_seconds", "integer"],
         ["p_now", "timestamptz"],
+        ["p_current_transport_epoch", "text"],
+        ["p_current_transport_generation", "bigint"],
       ],
-      reads_tables: ["eventing_outbox"],
+      reads_tables: ["eventing_outbox", "eventing_transport_epochs"],
       writes_tables: ["eventing_outbox"],
       effects: [
         {
@@ -251,9 +254,12 @@ const EVENTING_CONTRACT_INPUT = {
         ["p_error", "jsonb"],
         ["p_transport_ref", "text"],
         ["p_transport_epoch", "text"],
+        ["p_transport_generation", "bigint"],
+        ["p_current_transport_epoch", "text"],
+        ["p_current_transport_generation", "bigint"],
         ["p_now", "timestamptz"],
       ],
-      reads_tables: ["eventing_outbox"],
+      reads_tables: ["eventing_outbox", "eventing_transport_epochs"],
       writes_tables: ["eventing_outbox", "eventing_dlq"],
       effects: [
         {
@@ -343,7 +349,6 @@ const EVENTING_CONTRACT_INPUT = {
         ["p_limit", "integer"],
         ["p_lease_seconds", "integer"],
         ["p_now", "timestamptz"],
-        ["p_sent_after", "timestamptz"],
         ["p_current_transport_epoch", "text"],
         ["p_current_transport_generation", "bigint"],
       ],
@@ -684,6 +689,20 @@ const EVENTING_CONTRACT_INPUT = {
   ],
   database_checks: [
     {
+      constraint_name: "eventing_transport_epochs_active_generation_safe_check",
+      table_name: "eventing_transport_epochs",
+      required_definition_fragments: [
+        "active_generation >= 1",
+        "active_generation <= 9007199254740991",
+      ],
+      semantic_constraint: {
+        kind: "integer_range",
+        column_name: "active_generation",
+        min: 1,
+        max: Number.MAX_SAFE_INTEGER,
+      },
+    },
+    {
       constraint_name: "eventing_outbox_event_type_check",
       table_name: "eventing_outbox",
       required_definition_fragments: ["event_type", "skill.version.published"],
@@ -800,9 +819,15 @@ CREATE TABLE skill_registry.eventing_transport_epochs (
   active_generation bigint NOT NULL,
   activated_at timestamptz NOT NULL
 );
+ALTER TABLE skill_registry.eventing_transport_epochs
+  ADD CONSTRAINT eventing_transport_epochs_active_generation_safe_check
+  CHECK (
+    active_generation >= 1
+    AND active_generation <= 9007199254740991
+  );
 INSERT INTO skill_registry.eventing_transport_epochs(
   transport_name, active_epoch, active_generation, activated_at
-) VALUES ('redis_stream', 'epoch_new', 2, '2026-07-22T00:00:00.000Z');
+) VALUES ('redis_stream', 'epoch_1', 1, '2026-07-22T00:00:00.000Z');
 CREATE TABLE skill_registry.eventing_inbox (
   id text PRIMARY KEY,
   source text NOT NULL,
@@ -878,7 +903,9 @@ CREATE FUNCTION skill_registry.claim_eventing_outbox_v1(
   p_worker_id text,
   p_limit integer,
   p_lease_seconds integer,
-  p_now timestamptz
+  p_now timestamptz,
+  p_current_transport_epoch text,
+  p_current_transport_generation bigint
 ) RETURNS SETOF jsonb
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = skill_registry, pg_temp
@@ -886,12 +913,17 @@ AS $$
 BEGIN
   RETURN QUERY
   WITH candidates AS (
-    SELECT id FROM skill_registry.eventing_outbox
-    WHERE (
-      status IN ('pending','retry_wait')
-      OR (status = 'dispatching' AND locked_until <= p_now)
-    )
-      AND (next_retry_at IS NULL OR next_retry_at <= p_now)
+    SELECT outbox.id
+      FROM skill_registry.eventing_outbox outbox
+      JOIN skill_registry.eventing_transport_epochs active
+        ON active.transport_name = 'redis_stream'
+     WHERE active.active_epoch = p_current_transport_epoch
+       AND active.active_generation = p_current_transport_generation
+       AND (
+         outbox.status IN ('pending','retry_wait')
+         OR (outbox.status = 'dispatching' AND outbox.locked_until <= p_now)
+       )
+       AND (outbox.next_retry_at IS NULL OR outbox.next_retry_at <= p_now)
     ORDER BY created_at, id
     FOR UPDATE SKIP LOCKED
     LIMIT p_limit
@@ -900,7 +932,10 @@ BEGIN
        SET status = 'dispatching',
            attempt_count = outbox.attempt_count + 1,
            claimed_by = p_worker_id,
-           claim_token = p_worker_id || ':' || outbox.id || ':' || (outbox.attempt_count + 1)::text,
+           claim_token = p_worker_id || ':' || outbox.id || ':' ||
+             (outbox.attempt_count + 1)::text || ':' ||
+             p_current_transport_epoch || ':' ||
+             p_current_transport_generation::text,
            locked_until = p_now + make_interval(secs => p_lease_seconds),
            updated_at = p_now
       FROM candidates
@@ -934,22 +969,47 @@ CREATE FUNCTION skill_registry.ack_eventing_outbox_v1(
   p_error jsonb,
   p_transport_ref text,
   p_transport_epoch text,
+  p_transport_generation bigint,
+  p_current_transport_epoch text,
+  p_current_transport_generation bigint,
   p_now timestamptz
 ) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = skill_registry, pg_temp
 AS $$
-DECLARE current_event skill_registry.eventing_outbox%ROWTYPE;
+DECLARE
+  current_event skill_registry.eventing_outbox%ROWTYPE;
+  active_epoch text;
+  active_generation bigint;
 BEGIN
   IF p_outcome NOT IN ('sent', 'retry_wait', 'failed')
      OR ((p_outcome = 'sent') <> (
        p_transport_ref IS NOT NULL AND btrim(p_transport_ref) <> '' AND
-       p_transport_epoch IS NOT NULL AND btrim(p_transport_epoch) <> ''
+       p_transport_epoch IS NOT NULL AND btrim(p_transport_epoch) <> '' AND
+       p_transport_generation IS NOT NULL
+     ))
+     OR (p_outcome = 'sent' AND (
+       p_transport_epoch IS DISTINCT FROM p_current_transport_epoch OR
+       p_transport_generation IS DISTINCT FROM p_current_transport_generation
      ))
      OR ((p_outcome = 'retry_wait') <> (p_next_retry_at IS NOT NULL))
      OR (p_outcome = 'sent' AND p_error IS NOT NULL)
-     OR (p_outcome <> 'sent' AND p_error IS NULL) THEN
+     OR (p_outcome <> 'sent' AND p_error IS NULL)
+     OR (p_outcome <> 'sent' AND (
+       p_transport_ref IS NOT NULL OR
+       p_transport_epoch IS NOT NULL OR
+       p_transport_generation IS NOT NULL
+     )) THEN
     RAISE EXCEPTION 'invalid outbox acknowledgement outcome';
+  END IF;
+  SELECT active.active_epoch, active.active_generation
+    INTO active_epoch, active_generation
+    FROM skill_registry.eventing_transport_epochs active
+   WHERE active.transport_name = 'redis_stream'
+   FOR UPDATE;
+  IF active_epoch IS DISTINCT FROM p_current_transport_epoch
+     OR active_generation IS DISTINCT FROM p_current_transport_generation THEN
+    RAISE EXCEPTION 'stale active transport generation';
   END IF;
   UPDATE skill_registry.eventing_outbox
      SET status = p_outcome,
@@ -957,6 +1017,7 @@ BEGIN
          last_error = p_error,
          transport_ref = p_transport_ref,
          transport_epoch = p_transport_epoch,
+         transport_generation = p_transport_generation,
          sent_at = CASE WHEN p_outcome = 'sent' THEN p_now ELSE sent_at END,
          claimed_by = NULL,
          claim_token = NULL,
@@ -1128,7 +1189,6 @@ CREATE FUNCTION skill_registry.claim_sent_eventing_outbox_redrive_v1(
   p_limit integer,
   p_lease_seconds integer,
   p_now timestamptz,
-  p_sent_after timestamptz,
   p_current_transport_epoch text,
   p_current_transport_generation bigint
 ) RETURNS SETOF jsonb
@@ -1143,7 +1203,6 @@ BEGIN
       JOIN skill_registry.eventing_transport_epochs active
         ON active.transport_name = 'redis_stream'
      WHERE outbox.status = 'sent'
-       AND outbox.sent_at >= p_sent_after
        AND active.active_epoch = p_current_transport_epoch
        AND active.active_generation = p_current_transport_generation
        AND (
@@ -1261,12 +1320,12 @@ GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[3]!.select_columns.joi
 GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[4]!.select_columns.join(", ")}) ON skill_registry.eventing_projection TO pai_skill_registry_app;
 GRANT SELECT (${EVENTING_CONTRACT_INPUT.table_permissions[5]!.select_columns.join(", ")}) ON skill_registry.eventing_audit TO pai_skill_registry_app;
 GRANT EXECUTE ON FUNCTION skill_registry.enqueue_eventing_outbox_v1(jsonb, text, text) TO pai_skill_registry_app;
-GRANT EXECUTE ON FUNCTION skill_registry.claim_eventing_outbox_v1(text, integer, integer, timestamptz) TO pai_skill_registry_app;
-GRANT EXECUTE ON FUNCTION skill_registry.ack_eventing_outbox_v1(text, text, text, timestamptz, jsonb, text, text, timestamptz) TO pai_skill_registry_app;
+GRANT EXECUTE ON FUNCTION skill_registry.claim_eventing_outbox_v1(text, integer, integer, timestamptz, text, bigint) TO pai_skill_registry_app;
+GRANT EXECUTE ON FUNCTION skill_registry.ack_eventing_outbox_v1(text, text, text, timestamptz, jsonb, text, text, bigint, text, bigint, timestamptz) TO pai_skill_registry_app;
 GRANT EXECUTE ON FUNCTION skill_registry.consume_eventing_inbox_v1(jsonb, text, text, text, text) TO pai_skill_registry_app;
 GRANT EXECUTE ON FUNCTION skill_registry.record_eventing_consumer_dlq_v1(text, text, text, text, text, jsonb, jsonb, timestamptz) TO pai_skill_registry_app;
 GRANT EXECUTE ON FUNCTION skill_registry.activate_eventing_transport_epoch_v1(text, bigint, text, bigint, timestamptz) TO pai_skill_registry_app;
-GRANT EXECUTE ON FUNCTION skill_registry.claim_sent_eventing_outbox_redrive_v1(text, integer, integer, timestamptz, timestamptz, text, bigint) TO pai_skill_registry_app;
+GRANT EXECUTE ON FUNCTION skill_registry.claim_sent_eventing_outbox_redrive_v1(text, integer, integer, timestamptz, text, bigint) TO pai_skill_registry_app;
 GRANT EXECUTE ON FUNCTION skill_registry.ack_sent_eventing_outbox_redrive_v1(text, text, text, bigint, text, text, bigint, timestamptz) TO pai_skill_registry_app;
 `;
 
@@ -1318,6 +1377,114 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     url.username = "pai_skill_registry_eventing_test";
     url.password = "eventing-runtime-test";
     return url.toString();
+  }
+
+  function postgresOutboxStore(
+    composition: Awaited<ReturnType<typeof openVerifiedOwnerPostgresCompositionV1>>,
+  ): DurableOutboxStorePortV1 {
+    return {
+      async claim(request) {
+        return composition.unit_of_work.withTransaction(
+          {
+            operation: "claim_eventing_outbox",
+            idempotency_key:
+              `${request.worker_id}:${request.now}:` +
+              `${request.current_transport_epoch}:` +
+              `${request.current_transport_generation}`,
+            trace_id: "trace_claim_eventing_outbox",
+            isolation: "read_committed",
+            retry: "none",
+          },
+          async (transaction, repositories) =>
+            repositories.owner.executeWriter<
+              readonly ClaimedOutboxRecordV1[],
+              "claim_eventing_outbox_v1"
+            >(transaction, {
+              writer: "claim_eventing_outbox_v1",
+              arguments: {
+                p_worker_id: request.worker_id,
+                p_limit: request.limit,
+                p_lease_seconds: request.lease_seconds,
+                p_now: request.now,
+                p_current_transport_epoch: request.current_transport_epoch,
+                p_current_transport_generation:
+                  String(request.current_transport_generation),
+              },
+              expected_rows: "zero_or_more",
+            }),
+        );
+      },
+      async acknowledge(request) {
+        await composition.unit_of_work.withTransaction(
+          {
+            operation: "ack_eventing_outbox",
+            idempotency_key: `${request.outbox_id}:${request.claim_token}`,
+            trace_id: "trace_ack_eventing_outbox",
+            isolation: "read_committed",
+            retry: "none",
+          },
+          async (transaction, repositories) =>
+            repositories.owner.executeWriter<
+              Readonly<{ outbox_id: string; status: string }>,
+              "ack_eventing_outbox_v1"
+            >(transaction, {
+              writer: "ack_eventing_outbox_v1",
+              arguments: {
+                p_outbox_id: request.outbox_id,
+                p_claim_token: request.claim_token,
+                p_outcome: request.outcome,
+                p_next_retry_at: request.next_retry_at,
+                p_error: request.error,
+                p_transport_ref: request.transport_ref,
+                p_transport_epoch: request.transport_epoch,
+                p_transport_generation:
+                  request.transport_generation === null
+                    ? null
+                    : String(request.transport_generation),
+                p_current_transport_epoch: request.current_transport_epoch,
+                p_current_transport_generation:
+                  String(request.current_transport_generation),
+                p_now: request.now,
+              },
+              expected_rows: 1,
+            }),
+        );
+      },
+    };
+  }
+
+  async function activateTransportEpoch(
+    composition: Awaited<ReturnType<typeof openVerifiedOwnerPostgresCompositionV1>>,
+    request: Readonly<{
+      expected_generation: number;
+      next_epoch: string;
+      next_generation: number;
+      now: string;
+    }>,
+  ): Promise<void> {
+    await composition.unit_of_work.withTransaction(
+      {
+        operation: "activate_transport_epoch",
+        idempotency_key:
+          `redis_stream:${request.expected_generation}:` +
+          `${request.next_epoch}:${request.next_generation}`,
+        trace_id: "trace_activate_transport_epoch",
+        isolation: "read_committed",
+        retry: "none",
+      },
+      async (transaction, repositories) =>
+        repositories.owner.executeWriter(transaction, {
+          writer: "activate_eventing_transport_epoch_v1",
+          arguments: {
+            p_transport_name: "redis_stream",
+            p_expected_generation: String(request.expected_generation),
+            p_next_epoch: request.next_epoch,
+            p_next_generation: String(request.next_generation),
+            p_now: request.now,
+          },
+          expected_rows: 1,
+        }),
+    );
   }
 
   it("replays a committed outbox after process restart and dedupes the inbox", async () => {
@@ -1375,14 +1542,15 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     const transport: DurableEventTransportPortV1 = {
       async publish({ envelope: event }) {
         published.push(event.event_id);
-        return { transport_ref: "redis_stream:1-0", transport_epoch: "epoch_1" };
+        return {
+          transport_ref: "redis_stream:1-0",
+          transport_epoch: "epoch_1",
+          transport_generation: 1,
+        };
       },
     };
     const dispatcher = createDurableOutboxDispatcherV1(
-      createPostgresOwnerOutboxStoreV1(
-        secondProcess.outbox,
-        "eventing_outbox",
-      ),
+      postgresOutboxStore(secondProcess),
       transport,
       {
         owner_service: "skill_registry",
@@ -1393,6 +1561,8 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
         retry_base_delay_ms: 250,
         retry_max_delay_ms: 15_000,
         retry_jitter: "full",
+        current_transport_epoch: "epoch_1",
+        current_transport_generation: 1,
       },
       {
         now: () => new Date("2026-07-21T05:00:01.000Z"),
@@ -1469,8 +1639,12 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
       attempt_count: number;
       transport_ref: string;
       transport_epoch: string;
+      transport_generation: string;
     }>(
-      "SELECT status, attempt_count, transport_ref, transport_epoch FROM skill_registry.eventing_outbox WHERE id = $1",
+      `SELECT status, attempt_count, transport_ref, transport_epoch,
+              transport_generation::text AS transport_generation
+         FROM skill_registry.eventing_outbox
+        WHERE id = $1`,
       [envelope.event_id],
     );
     expect(persisted.rows).toEqual([{
@@ -1478,8 +1652,158 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
       attempt_count: 1,
       transport_ref: "redis_stream:1-0",
       transport_epoch: "epoch_1",
+      transport_generation: "1",
     }]);
     await secondProcess.close();
+  });
+
+  it("does not let an old normal dispatcher claim a pending row after transport cutover", async () => {
+    await reset();
+    const composition = await openVerifiedOwnerPostgresCompositionV1(
+      EVENTING_CONTRACT,
+      runtimeUrl(),
+    );
+    try {
+      const envelope = {
+        event_id: "evt_cutover_claim_001",
+        event_type: "skill.version.published",
+        schema_version: "skill_registry_event.v1",
+        producer: "skill_registry",
+        occurred_at: "2026-07-21T05:00:00.000Z",
+        idempotency_key: "skill_version_cutover_claim_001:published",
+        trace_id: "trace_cutover_claim_001",
+        payload: {
+          scope_kind: "bot",
+          workspace_id: "workspace_001",
+          bot_id: "bot_001",
+          owner_agent_id: "owner_agent_001",
+          deployment_environment: "dev",
+          release_channel: "stable",
+          skill_version_id: "skill_version_cutover_claim_001",
+        },
+      } as const;
+      await composition.unit_of_work.withTransaction(
+        {
+          operation: "enqueue_cutover_fixture",
+          idempotency_key: envelope.idempotency_key,
+          trace_id: envelope.trace_id,
+          isolation: "read_committed",
+          retry: "none",
+        },
+        async (transaction, repositories) =>
+          repositories.owner.executeWriter(transaction, {
+            writer: "enqueue_eventing_outbox_v1",
+            arguments: {
+              p_event: envelope,
+              p_idempotency_key: envelope.idempotency_key,
+              p_payload_hash: canonicalPayloadHashV1(envelope.payload),
+            },
+            expected_rows: 1,
+          }),
+      );
+      await activateTransportEpoch(composition, {
+        expected_generation: 1,
+        next_epoch: "epoch_2",
+        next_generation: 2,
+        now: "2026-07-21T05:00:00.500Z",
+      });
+      const published: string[] = [];
+      const transport: DurableEventTransportPortV1 = {
+        async publish(request) {
+          published.push(
+            `${request.envelope.event_id}:${request.current_transport_epoch}:` +
+              `${request.current_transport_generation}`,
+          );
+          return {
+            transport_ref: `redis_stream:${published.length}-0`,
+            transport_epoch: request.current_transport_epoch,
+            transport_generation: request.current_transport_generation,
+          };
+        },
+      };
+      const makeDispatcher = (epoch: string, generation: number) =>
+        createDurableOutboxDispatcherV1(
+          postgresOutboxStore(composition),
+          transport,
+          {
+            owner_service: "skill_registry",
+            worker_id: `eventing_worker_${generation}`,
+            batch_size: 100,
+            lease_seconds: 5,
+            max_attempts: 3,
+            retry_base_delay_ms: 250,
+            retry_max_delay_ms: 15_000,
+            retry_jitter: "none",
+            current_transport_epoch: epoch,
+            current_transport_generation: generation,
+          },
+          {
+            now: () => new Date("2026-07-21T05:00:01.000Z"),
+            random: () => 0.5,
+          },
+        );
+
+      await expect(makeDispatcher("epoch_1", 1).dispatchBatch()).resolves.toEqual({
+        claimed: 0,
+        sent: 0,
+        retry_wait: 0,
+        failed: 0,
+      });
+      expect(published).toEqual([]);
+
+      await expect(makeDispatcher("epoch_2", 2).dispatchBatch()).resolves.toEqual({
+        claimed: 1,
+        sent: 1,
+        retry_wait: 0,
+        failed: 0,
+      });
+      expect(published).toEqual(["evt_cutover_claim_001:epoch_2:2"]);
+      if (admin === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
+      const persisted = await admin.query<{
+        status: string;
+        transport_epoch: string;
+        transport_generation: string;
+      }>(
+        `SELECT status, transport_epoch,
+                transport_generation::text AS transport_generation
+           FROM skill_registry.eventing_outbox
+          WHERE id = $1`,
+        [envelope.event_id],
+      );
+      expect(persisted.rows).toEqual([{
+        status: "sent",
+        transport_epoch: "epoch_2",
+        transport_generation: "2",
+      }]);
+      const redriveCandidates = await composition.unit_of_work.withTransaction(
+        {
+          operation: "claim_current_generation_redrive_probe",
+          idempotency_key: "claim_current_generation_redrive_probe",
+          trace_id: "trace_current_generation_redrive_probe",
+          isolation: "read_committed",
+          retry: "none",
+        },
+        async (transaction, repositories) =>
+          repositories.owner.executeWriter<
+            readonly ClaimedSentOutboxRecordV1[],
+            "claim_sent_eventing_outbox_redrive_v1"
+          >(transaction, {
+            writer: "claim_sent_eventing_outbox_redrive_v1",
+            arguments: {
+              p_worker_id: "redrive_probe",
+              p_limit: 10,
+              p_lease_seconds: 30,
+              p_now: "2026-07-21T05:00:02.000Z",
+              p_current_transport_epoch: "epoch_2",
+              p_current_transport_generation: "2",
+            },
+            expected_rows: "zero_or_more",
+          }),
+      );
+      expect(redriveCandidates).toEqual([]);
+    } finally {
+      await composition.close();
+    }
   });
 
   itPostgresRedis("redrives retained sent rows after real Redis loss and dedupes the PostgreSQL inbox", async () => {
@@ -1523,13 +1847,15 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
       deployment_environment: "dev",
       release_channel: "stable",
       owner_service: "skill_registry",
-      stream_epoch: "epoch_old",
+      stream_epoch: "epoch_1",
+      stream_generation: 1,
     });
     const newNamespace = createRedisNamespaceV1({
       deployment_environment: "dev",
       release_channel: "stable",
       owner_service: "skill_registry",
       stream_epoch: "epoch_new",
+      stream_generation: 2,
     });
     const target = "trigger_processor.runtime_event_append";
     const logicalStream = "stream:skill_events";
@@ -1566,7 +1892,7 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
         }),
     );
     const dispatcher = createDurableOutboxDispatcherV1(
-      createPostgresOwnerOutboxStoreV1(composition.outbox, "eventing_outbox"),
+      postgresOutboxStore(composition),
       oldRedis.transport,
       {
         owner_service: "skill_registry",
@@ -1577,6 +1903,8 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
         retry_base_delay_ms: 100,
         retry_max_delay_ms: 1_000,
         retry_jitter: "none",
+        current_transport_epoch: "epoch_1",
+        current_transport_generation: 1,
       },
       { now: () => new Date("2026-07-21T05:00:01.000Z") },
     );
@@ -1653,6 +1981,12 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     ).resolves.toEqual({ acknowledged: 1 });
 
     await reader.del(oldPhysicalStream);
+    await activateTransportEpoch(composition, {
+      expected_generation: 1,
+      next_epoch: "epoch_new",
+      next_generation: 2,
+      now: "2026-07-22T03:59:59.000Z",
+    });
     const postgresRedriveStore: DurableSentOutboxRedriveStorePortV1 = {
       async claimSentForRedrive(request) {
         return composition.unit_of_work.withTransaction(
@@ -1676,12 +2010,11 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
                 p_limit: request.limit,
                 p_lease_seconds: request.lease_seconds,
                 p_now: request.now,
-                p_sent_after: request.sent_after,
                 p_current_transport_epoch: request.current_transport_epoch,
                 p_current_transport_generation:
                   String(request.current_transport_generation),
               },
-              expected_rows: "one_or_more",
+              expected_rows: "zero_or_more",
             }),
         );
       },
@@ -1740,7 +2073,6 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
         lease_seconds: 30,
         current_transport_epoch: "epoch_new",
         current_transport_generation: 2,
-        sent_after: "2026-07-01T00:00:00.000Z",
       },
       { now: () => new Date(at) },
     );
@@ -1763,11 +2095,19 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     expect(redriveClaimTokens).toHaveLength(2);
     expect(redriveClaimTokens[0]).not.toBe(redriveClaimTokens[1]);
     await expect(
+      redriver("2026-07-22T04:02:00.000Z").redriveBatch(),
+    ).resolves.toEqual({
+      claimed: 0,
+      redriven: 0,
+      retryable_failures: 0,
+      permanent_failures: 0,
+    });
+    await expect(
       postgresRedriveStore.acknowledgeSentRedrive({
         outbox_id: envelope.event_id,
         claim_token: redriveClaimTokens[0]!,
-        previous_transport_epoch: "epoch_old",
-        previous_transport_generation: null,
+        previous_transport_epoch: "epoch_1",
+        previous_transport_generation: 1,
         transport_ref: "redis_stream:stale:1-0",
         transport_epoch: "epoch_new",
         current_transport_generation: 2,
@@ -1824,7 +2164,7 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     );
     expect(persisted.rows).toEqual([{
       transport_ref: expect.stringMatching(
-        /^redis_stream:pai:dev:stable:skill_registry:v1:epoch_new:stream:skill_events:\d+-\d+$/u,
+        /^redis_stream:pai:dev:stable:skill_registry:v1:epoch_new:generation_2:stream:skill_events:\d+-\d+$/u,
       ),
       transport_epoch: "epoch_new",
       transport_generation: "2",

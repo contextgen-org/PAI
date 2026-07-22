@@ -101,11 +101,14 @@ interface StoredRecord extends ClaimedOutboxRecordV1 {
   locked_until: string | null;
   transport_ref: string | null;
   transport_epoch: string | null;
+  transport_generation: number | null;
   sent_at: string | null;
 }
 
 class DurableStoreFake implements DurableOutboxStorePortV1 {
   public failNextAckBeforeCommit = false;
+  public activeTransportEpoch = "epoch_1";
+  public activeTransportGeneration = 1;
   public readonly records: StoredRecord[];
   public readonly acknowledgements: Array<{
     outbox_id: string;
@@ -115,6 +118,9 @@ class DurableStoreFake implements DurableOutboxStorePortV1 {
     error: Readonly<Record<string, unknown>> | null;
     transport_ref: string | null;
     transport_epoch: string | null;
+    transport_generation: number | null;
+    current_transport_epoch: string;
+    current_transport_generation: number;
     now: string;
   }> = [];
 
@@ -131,6 +137,7 @@ class DurableStoreFake implements DurableOutboxStorePortV1 {
       locked_until: null,
       transport_ref: null,
       transport_epoch: null,
+      transport_generation: null,
       sent_at: null,
     }));
   }
@@ -140,7 +147,15 @@ class DurableStoreFake implements DurableOutboxStorePortV1 {
     limit: number;
     lease_seconds: number;
     now: string;
+    current_transport_epoch: string;
+    current_transport_generation: number;
   }): Promise<readonly ClaimedOutboxRecordV1[]> {
+    if (
+      request.current_transport_epoch !== this.activeTransportEpoch ||
+      request.current_transport_generation !== this.activeTransportGeneration
+    ) {
+      return [];
+    }
     const nowMs = Date.parse(request.now);
     return this.records
       .filter(
@@ -173,6 +188,9 @@ class DurableStoreFake implements DurableOutboxStorePortV1 {
     error: Readonly<Record<string, unknown>> | null;
     transport_ref: string | null;
     transport_epoch: string | null;
+    transport_generation: number | null;
+    current_transport_epoch: string;
+    current_transport_generation: number;
     now: string;
   }): Promise<void> {
     if (this.failNextAckBeforeCommit) {
@@ -182,6 +200,12 @@ class DurableStoreFake implements DurableOutboxStorePortV1 {
     const record = this.records.find(
       (candidate) => candidate.outbox_id === request.outbox_id,
     );
+    if (
+      request.current_transport_epoch !== this.activeTransportEpoch ||
+      request.current_transport_generation !== this.activeTransportGeneration
+    ) {
+      throw new Error("stale active transport generation");
+    }
     if (
       record === undefined ||
       record.status !== "dispatching" ||
@@ -194,6 +218,7 @@ class DurableStoreFake implements DurableOutboxStorePortV1 {
     record.locked_until = null;
     record.transport_ref = request.transport_ref;
     record.transport_epoch = request.transport_epoch;
+    record.transport_generation = request.transport_generation;
     record.sent_at = request.outcome === "sent" ? request.now : record.sent_at;
     this.acknowledgements.push(request);
   }
@@ -204,6 +229,8 @@ function dispatcher(
   transport: DurableEventTransportPortV1,
   clock: { now: Date },
   ownerService: ServiceIdV1 = "action_runtime",
+  transportEpoch = "epoch_1",
+  transportGeneration = 1,
 ) {
   return createDurableOutboxDispatcherV1(
     store,
@@ -217,6 +244,8 @@ function dispatcher(
       retry_base_delay_ms: 250,
       retry_max_delay_ms: 15_000,
       retry_jitter: "full",
+      current_transport_epoch: transportEpoch,
+      current_transport_generation: transportGeneration,
     },
     { now: () => new Date(clock.now), random: () => 0.5 },
   );
@@ -229,7 +258,11 @@ describe("durable outbox dispatcher V1", () => {
     const transport: DurableEventTransportPortV1 = {
       async publish({ envelope }) {
         published.push(envelope.event_id);
-        return { transport_ref: "redis_stream:1-0", transport_epoch: "epoch_1" };
+        return {
+          transport_ref: "redis_stream:1-0",
+          transport_epoch: "epoch_1",
+          transport_generation: 1,
+        };
       },
     };
     const clock = { now: new Date("2026-07-21T05:00:01.000Z") };
@@ -244,13 +277,62 @@ describe("durable outbox dispatcher V1", () => {
     expect(store.records[0]?.status).toBe("sent");
   });
 
+  it("does not let a stale transport generation claim after cutover", async () => {
+    const store = new DurableStoreFake([event()]);
+    store.activeTransportEpoch = "epoch_2";
+    store.activeTransportGeneration = 2;
+    const published: string[] = [];
+    const transport: DurableEventTransportPortV1 = {
+      async publish({ envelope }) {
+        published.push(envelope.event_id);
+        return {
+          transport_ref: `redis_stream:${published.length}-0`,
+          transport_epoch: "epoch_2",
+          transport_generation: 2,
+        };
+      },
+    };
+    const clock = { now: new Date("2026-07-21T05:00:01.000Z") };
+
+    await expect(
+      dispatcher(store, transport, clock, "action_runtime", "epoch_1", 1)
+        .dispatchBatch(),
+    ).resolves.toEqual({
+      claimed: 0,
+      sent: 0,
+      retry_wait: 0,
+      failed: 0,
+    });
+    expect(published).toEqual([]);
+    expect(store.records[0]?.status).toBe("pending");
+
+    await expect(
+      dispatcher(store, transport, clock, "action_runtime", "epoch_2", 2)
+        .dispatchBatch(),
+    ).resolves.toEqual({
+      claimed: 1,
+      sent: 1,
+      retry_wait: 0,
+      failed: 0,
+    });
+    expect(store.records[0]).toMatchObject({
+      status: "sent",
+      transport_epoch: "epoch_2",
+      transport_generation: 2,
+    });
+  });
+
   it("keeps an unknown publish-before-ack outcome replayable after lease expiry", async () => {
     const store = new DurableStoreFake([event()]);
     const published: string[] = [];
     const transport: DurableEventTransportPortV1 = {
       async publish({ envelope }) {
         published.push(envelope.event_id);
-        return { transport_ref: `redis_stream:${published.length}-0`, transport_epoch: "epoch_1" };
+        return {
+          transport_ref: `redis_stream:${published.length}-0`,
+          transport_epoch: "epoch_1",
+          transport_generation: 1,
+        };
       },
     };
     const clock = { now: new Date("2026-07-21T05:00:01.000Z") };
@@ -329,7 +411,11 @@ describe("durable outbox dispatcher V1", () => {
     const transport: DurableEventTransportPortV1 = {
       async publish() {
         publishes += 1;
-        return { transport_ref: "unreachable", transport_epoch: "epoch_1" };
+        return {
+          transport_ref: "unreachable",
+          transport_epoch: "epoch_1",
+          transport_generation: 1,
+        };
       },
     };
     const clock = { now: new Date("2026-07-21T05:00:01.000Z") };
@@ -355,7 +441,11 @@ describe("durable outbox dispatcher V1", () => {
     const transport: DurableEventTransportPortV1 = {
       async publish() {
         publishes += 1;
-        return { transport_ref: "unreachable", transport_epoch: "epoch_1" };
+        return {
+          transport_ref: "unreachable",
+          transport_epoch: "epoch_1",
+          transport_generation: 1,
+        };
       },
     };
     const clock = { now: new Date("2026-07-21T05:00:01.000Z") };
@@ -374,7 +464,11 @@ describe("durable outbox dispatcher V1", () => {
     const transport: DurableEventTransportPortV1 = {
       async publish() {
         publishes += 1;
-        return { transport_ref: "unreachable", transport_epoch: "epoch_1" };
+        return {
+          transport_ref: "unreachable",
+          transport_epoch: "epoch_1",
+          transport_generation: 1,
+        };
       },
     };
     const clock = { now: new Date("2026-07-21T05:00:01.000Z") };
@@ -395,7 +489,11 @@ describe("durable outbox dispatcher V1", () => {
     const transport: DurableEventTransportPortV1 = {
       async publish() {
         publishes += 1;
-        return { transport_ref: "unreachable", transport_epoch: "epoch_1" };
+        return {
+          transport_ref: "unreachable",
+          transport_epoch: "epoch_1",
+          transport_generation: 1,
+        };
       },
     };
     const clock = { now: new Date("2026-07-21T05:00:01.000Z") };
@@ -417,7 +515,11 @@ describe("durable outbox dispatcher V1", () => {
     const transport: DurableEventTransportPortV1 = {
       async publish() {
         publishes += 1;
-        return { transport_ref: "unreachable", transport_epoch: "epoch_1" };
+        return {
+          transport_ref: "unreachable",
+          transport_epoch: "epoch_1",
+          transport_generation: 1,
+        };
       },
     };
     const clock = { now: new Date("2026-07-21T05:00:01.000Z") };
@@ -494,6 +596,7 @@ describe("durable sent outbox redrive V1", () => {
           return {
             transport_ref: "redis_stream:new-1-0",
             transport_epoch: "epoch_new",
+            transport_generation: 2,
           };
         },
       },
@@ -504,7 +607,6 @@ describe("durable sent outbox redrive V1", () => {
         lease_seconds: 30,
         current_transport_epoch: "epoch_new",
         current_transport_generation: 2,
-        sent_after: "2026-07-01T00:00:00.000Z",
       },
       { now: () => new Date("2026-07-22T04:00:00.000Z") },
     );
@@ -561,6 +663,7 @@ describe("durable sent outbox redrive V1", () => {
           return {
             transport_ref: "redis_stream:same-epoch-new-1-0",
             transport_epoch: "epoch_current",
+            transport_generation: 2,
           };
         },
       },
@@ -571,7 +674,6 @@ describe("durable sent outbox redrive V1", () => {
         lease_seconds: 30,
         current_transport_epoch: "epoch_current",
         current_transport_generation: 2,
-        sent_after: "2026-07-01T00:00:00.000Z",
       },
       { now: () => new Date("2026-07-22T04:00:00.000Z") },
     );

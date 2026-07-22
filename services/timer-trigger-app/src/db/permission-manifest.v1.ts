@@ -1,6 +1,8 @@
 import { OWNER_DURABLE_EVENT_TYPES_V1 } from "@pai/contracts";
 import {
   defineOwnerRepositoryContractV1,
+  ownerEventingTransportEpochActivationSignatureV1,
+  ownerEventingTransportEpochTablePermissionV1,
   ownerFunctionSignatureV1,
   type OwnerRepositoryPortV1,
   type OwnerUnitOfWorkPortV1,
@@ -28,6 +30,7 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
     "timer_event_inbox",
     "timer_event_dlq",
     "timer_catch_up_batches",
+    "eventing_transport_epochs",
   ],
     table_permissions: [
     {
@@ -118,6 +121,7 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
       delete_allowed: false,
       writer_kind: "state_transition",
     },
+    ownerEventingTransportEpochTablePermissionV1(),
     ],
   mutable_writers: [
     "cas_timer_schedule_v1",
@@ -126,6 +130,7 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
     "transition_timer_catch_up_batch_v1",
     "claim_timer_event_outbox_v1",
     "ack_timer_event_outbox_v1",
+    "activate_eventing_transport_epoch_v1",
   ],
     function_signatures: [
     ownerFunctionSignatureV1({
@@ -231,8 +236,10 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
       arguments: [
         ["p_worker_id", "text"], ["p_limit", "integer"],
         ["p_lease_seconds", "integer"], ["p_now", "timestamptz"],
+        ["p_current_transport_epoch", "text"],
+        ["p_current_transport_generation", "bigint"],
       ],
-      reads_tables: ["timer_event_outbox"],
+      reads_tables: ["timer_event_outbox", "eventing_transport_epochs"],
       writes_tables: ["timer_event_outbox"],
       effects: [
         { table_name: "timer_event_outbox", operation: "claim", concurrency_control: "lease_fence" },
@@ -247,9 +254,13 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
       arguments: [
         ["p_outbox_id", "text"], ["p_claim_token", "text"],
         ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"],
-        ["p_error", "jsonb"], ["p_transport_ref", "text"], ["p_transport_epoch", "text"], ["p_now", "timestamptz"],
+        ["p_error", "jsonb"], ["p_transport_ref", "text"], ["p_transport_epoch", "text"],
+        ["p_transport_generation", "bigint"],
+        ["p_current_transport_epoch", "text"],
+        ["p_current_transport_generation", "bigint"],
+        ["p_now", "timestamptz"],
       ],
-      reads_tables: ["timer_event_outbox"],
+      reads_tables: ["timer_event_outbox", "eventing_transport_epochs"],
       writes_tables: ["timer_event_outbox", "timer_event_dlq"],
       effects: [
         { table_name: "timer_event_outbox", operation: "ack", concurrency_control: "lease_fence" },
@@ -257,8 +268,23 @@ export const TIMER_REPOSITORY_CONTRACT_V1 = defineOwnerRepositoryContractV1({
       ],
       returns: "jsonb",
     }),
+    ownerEventingTransportEpochActivationSignatureV1("timer"),
     ],
   database_checks: [
+    {
+      constraint_name: "eventing_transport_epochs_active_generation_safe_check",
+      table_name: "eventing_transport_epochs",
+      required_definition_fragments: [
+        "active_generation >= 1",
+        "active_generation <= 9007199254740991",
+      ],
+      semantic_constraint: {
+        kind: "integer_range",
+        column_name: "active_generation",
+        min: 1,
+        max: Number.MAX_SAFE_INTEGER,
+      },
+    },
     {
       constraint_name: "timer_event_outbox_event_type_check",
       table_name: "timer_event_outbox",

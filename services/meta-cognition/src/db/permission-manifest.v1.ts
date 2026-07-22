@@ -1,6 +1,8 @@
 import { OWNER_DURABLE_EVENT_TYPES_V1 } from "@pai/contracts";
 import {
   defineOwnerRepositoryContractV1,
+  ownerEventingTransportEpochActivationSignatureV1,
+  ownerEventingTransportEpochTablePermissionV1,
   ownerForeignKeysV1,
   ownerFunctionSignatureV1,
   type OwnerRepositoryPortV1,
@@ -36,6 +38,7 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       "meta_command_outbox",
       "meta_memory_split_plans",
       "meta_memory_split_chunks",
+      "eventing_transport_epochs",
     ],
     table_permissions: [
     {
@@ -166,6 +169,7 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       delete_allowed: false,
       writer_kind: "immutable_append",
     },
+    ownerEventingTransportEpochTablePermissionV1(),
     ],
     mutable_writers: [
       "transition_meta_job_v1",
@@ -177,6 +181,7 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       "ack_meta_event_outbox_v1",
       "claim_meta_command_outbox_v1",
       "ack_meta_command_outbox_v1",
+      "activate_eventing_transport_epoch_v1",
     ],
     function_signatures: [
     ownerFunctionSignatureV1({
@@ -269,8 +274,8 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       function_name: "claim_meta_event_outbox_v1",
       primary_table: "meta_event_outbox",
       writer_kind: "outbox_claim_ack",
-      arguments: [["p_worker_id", "text"], ["p_limit", "integer"], ["p_lease_seconds", "integer"], ["p_now", "timestamptz"]],
-      reads_tables: ["meta_event_outbox"], writes_tables: ["meta_event_outbox"],
+      arguments: [["p_worker_id", "text"], ["p_limit", "integer"], ["p_lease_seconds", "integer"], ["p_now", "timestamptz"], ["p_current_transport_epoch", "text"], ["p_current_transport_generation", "bigint"]],
+      reads_tables: ["meta_event_outbox", "eventing_transport_epochs"], writes_tables: ["meta_event_outbox"],
       effects: [{ table_name: "meta_event_outbox", operation: "claim", concurrency_control: "lease_fence" }], returns: "setof jsonb",
     }),
     ownerFunctionSignatureV1({
@@ -278,8 +283,8 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       function_name: "ack_meta_event_outbox_v1",
       primary_table: "meta_event_outbox",
       writer_kind: "outbox_claim_ack",
-      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_transport_ref", "text"], ["p_transport_epoch", "text"], ["p_now", "timestamptz"]],
-      reads_tables: ["meta_event_outbox"], writes_tables: ["meta_event_outbox", "meta_event_dlq"],
+      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_transport_ref", "text"], ["p_transport_epoch", "text"], ["p_transport_generation", "bigint"], ["p_current_transport_epoch", "text"], ["p_current_transport_generation", "bigint"], ["p_now", "timestamptz"]],
+      reads_tables: ["meta_event_outbox", "eventing_transport_epochs"], writes_tables: ["meta_event_outbox", "meta_event_dlq"],
       effects: [
         { table_name: "meta_event_outbox", operation: "ack", concurrency_control: "lease_fence" },
         { table_name: "meta_event_dlq", operation: "append", concurrency_control: "idempotency_key" },
@@ -290,8 +295,8 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       function_name: "claim_meta_command_outbox_v1",
       primary_table: "meta_command_outbox",
       writer_kind: "outbox_claim_ack",
-      arguments: [["p_worker_id", "text"], ["p_limit", "integer"], ["p_lease_seconds", "integer"], ["p_now", "timestamptz"]],
-      reads_tables: ["meta_command_outbox"], writes_tables: ["meta_command_outbox"],
+      arguments: [["p_worker_id", "text"], ["p_limit", "integer"], ["p_lease_seconds", "integer"], ["p_now", "timestamptz"], ["p_current_transport_epoch", "text"], ["p_current_transport_generation", "bigint"]],
+      reads_tables: ["meta_command_outbox", "eventing_transport_epochs"], writes_tables: ["meta_command_outbox"],
       effects: [{ table_name: "meta_command_outbox", operation: "claim", concurrency_control: "lease_fence" }], returns: "setof jsonb",
     }),
     ownerFunctionSignatureV1({
@@ -299,15 +304,30 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       function_name: "ack_meta_command_outbox_v1",
       primary_table: "meta_command_outbox",
       writer_kind: "outbox_claim_ack",
-      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_transport_ref", "text"], ["p_transport_epoch", "text"], ["p_now", "timestamptz"]],
-      reads_tables: ["meta_command_outbox"], writes_tables: ["meta_command_outbox", "meta_event_dlq"],
+      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_transport_ref", "text"], ["p_transport_epoch", "text"], ["p_transport_generation", "bigint"], ["p_current_transport_epoch", "text"], ["p_current_transport_generation", "bigint"], ["p_now", "timestamptz"]],
+      reads_tables: ["meta_command_outbox", "eventing_transport_epochs"], writes_tables: ["meta_command_outbox", "meta_event_dlq"],
       effects: [
         { table_name: "meta_command_outbox", operation: "ack", concurrency_control: "lease_fence" },
         { table_name: "meta_event_dlq", operation: "append", concurrency_control: "idempotency_key" },
       ], returns: "jsonb",
     }),
+    ownerEventingTransportEpochActivationSignatureV1("meta_cognition"),
     ],
     database_checks: [
+      {
+        constraint_name: "eventing_transport_epochs_active_generation_safe_check",
+        table_name: "eventing_transport_epochs",
+        required_definition_fragments: [
+          "active_generation >= 1",
+          "active_generation <= 9007199254740991",
+        ],
+        semantic_constraint: {
+          kind: "integer_range",
+          column_name: "active_generation",
+          min: 1,
+          max: Number.MAX_SAFE_INTEGER,
+        },
+      },
       {
         constraint_name: "meta_event_outbox_event_type_check",
         table_name: "meta_event_outbox",

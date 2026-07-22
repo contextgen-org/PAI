@@ -374,6 +374,17 @@ const sourcePattern = /^(?:services|packages)\/[a-z0-9-]+\/src\/.+\.ts$/;
 const migrationPattern = /^\d{4}(?:\/\d{4})?_[a-z0-9_]+$/;
 const generatedPermissionPattern =
   /^pai-infra\/supabase\/generated\/permissions\/\d{4}_[a-z0-9_]+\.sql$/;
+export const OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1 =
+  "eventing_transport_epochs" as const;
+export const OWNER_EVENTING_TRANSPORT_EPOCH_WRITER_V1 =
+  "activate_eventing_transport_epoch_v1" as const;
+export const OWNER_SAFE_BIGINT_MAX_V1 = Number.MAX_SAFE_INTEGER;
+const ownerEventingTransportEpochColumnsV1 = Object.freeze([
+  "transport_name",
+  "active_epoch",
+  "active_generation",
+  "activated_at",
+] as const);
 
 function assertUniqueIdentifiers(label: string, values: readonly string[]): void {
   if (
@@ -533,6 +544,52 @@ export function ownerFunctionSignatureV1<
   Object.freeze(signature.effects);
   Object.freeze(signature.search_path);
   return Object.freeze(signature);
+}
+
+export function ownerEventingTransportEpochTablePermissionV1():
+  OwnerTablePermissionV1<typeof OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1> {
+  return Object.freeze({
+    table_name: OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1,
+    select_columns: ownerEventingTransportEpochColumnsV1,
+    insert_columns: [] as const,
+    update_columns: [] as const,
+    delete_allowed: false,
+    writer_kind: "pointer_cas",
+  });
+}
+
+export function ownerEventingTransportEpochActivationSignatureV1<
+  const TSchema extends OwnerSchemaV1,
+>(
+  schema: TSchema,
+): OwnerFunctionSignatureV1<
+  TSchema,
+  typeof OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1,
+  typeof OWNER_EVENTING_TRANSPORT_EPOCH_WRITER_V1
+> {
+  return ownerFunctionSignatureV1({
+    schema,
+    function_name: OWNER_EVENTING_TRANSPORT_EPOCH_WRITER_V1,
+    primary_table: OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1,
+    writer_kind: "pointer_cas",
+    arguments: [
+      ["p_transport_name", "text"],
+      ["p_expected_generation", "bigint"],
+      ["p_next_epoch", "text"],
+      ["p_next_generation", "bigint"],
+      ["p_now", "timestamptz"],
+    ],
+    reads_tables: [OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1],
+    writes_tables: [OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1],
+    effects: [
+      {
+        table_name: OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1,
+        operation: "cas",
+        concurrency_control: "generation_fence",
+      },
+    ],
+    returns: "jsonb",
+  });
 }
 
 /**
@@ -1135,6 +1192,8 @@ export function defineOwnerRepositoryContractV1<
       ["p_limit", "integer"],
       ["p_lease_seconds", "integer"],
       ["p_now", "timestamptz"],
+      ["p_current_transport_epoch", "text"],
+      ["p_current_transport_generation", "bigint"],
     ],
     ack: [
       ["p_outbox_id", "text"],
@@ -1144,9 +1203,77 @@ export function defineOwnerRepositoryContractV1<
       ["p_error", "jsonb"],
       ["p_transport_ref", "text"],
       ["p_transport_epoch", "text"],
+      ["p_transport_generation", "bigint"],
+      ["p_current_transport_epoch", "text"],
+      ["p_current_transport_generation", "bigint"],
       ["p_now", "timestamptz"],
     ],
   } as const;
+  const standardTransportEpochArguments = [
+    ["p_transport_name", "text"],
+    ["p_expected_generation", "bigint"],
+    ["p_next_epoch", "text"],
+    ["p_next_generation", "bigint"],
+    ["p_now", "timestamptz"],
+  ] as const;
+  if (contract.outbox_tables.length > 0) {
+    const authorityPermission = contract.table_permissions.find(
+      ({ table_name }) =>
+        table_name === OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1,
+    );
+    if (
+      !tableSet.has(OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1) ||
+      authorityPermission?.writer_kind !== "pointer_cas" ||
+      !ownerEventingTransportEpochColumnsV1.every((column) =>
+        authorityPermission.select_columns.includes(column),
+      )
+    ) {
+      throw new Error(
+        `${contract.owner_service} outbox writers must declare an active eventing transport epoch authority table`,
+      );
+    }
+    const activeGenerationChecks = checks.filter(
+      ({ table_name, semantic_constraint }) =>
+        table_name === OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1 &&
+        semantic_constraint?.kind === "integer_range" &&
+        semantic_constraint.column_name === "active_generation" &&
+        semantic_constraint.min === 1 &&
+        semantic_constraint.max === OWNER_SAFE_BIGINT_MAX_V1,
+    );
+    if (activeGenerationChecks.length !== 1) {
+      throw new Error(
+        `${contract.owner_service} eventing transport active_generation must be bounded to JavaScript safe integers`,
+      );
+    }
+    const activationWriters = contract.function_signatures.filter(
+      (signature) =>
+        signature.primary_table === OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1 &&
+        signature.effects.some(
+          (effect) =>
+            effect.table_name === OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1 &&
+            effect.operation === "cas" &&
+            effect.concurrency_control === "generation_fence",
+        ),
+    );
+    const activationWriter = activationWriters[0];
+    if (
+      activationWriters.length !== 1 ||
+      activationWriter === undefined ||
+      activationWriter.function_name !== OWNER_EVENTING_TRANSPORT_EPOCH_WRITER_V1 ||
+      activationWriter.writer_kind !== "pointer_cas" ||
+      activationWriter.returns !== "jsonb" ||
+      JSON.stringify(
+        activationWriter.arguments.map(({ argument_name, postgres_type }) => [
+          argument_name,
+          postgres_type,
+        ]),
+      ) !== JSON.stringify(standardTransportEpochArguments)
+    ) {
+      throw new Error(
+        `${contract.owner_service} must declare one generation-fenced eventing transport activation writer`,
+      );
+    }
+  }
   for (const outboxTable of contract.outbox_tables) {
     const signatures = contract.function_signatures.filter(
       ({ primary_table }) => primary_table === outboxTable,
@@ -1171,10 +1298,13 @@ export function defineOwnerRepositoryContractV1<
             argument_name,
             postgres_type,
           ]),
-        ) !== JSON.stringify(expectedArguments)
+        ) !== JSON.stringify(expectedArguments) ||
+        !signature.reads_tables.some(
+          (table) => table === OWNER_EVENTING_TRANSPORT_EPOCH_TABLE_V1,
+        )
       ) {
         throw new Error(
-          `${contract.owner_service}.${outboxTable} must declare exactly one standard ${operation} writer`,
+          `${contract.owner_service}.${outboxTable} must declare exactly one standard ${operation} writer that reads the active eventing transport epoch`,
         );
       }
     }
@@ -2618,6 +2748,91 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     throw new Error(`PostgreSQL schema owner drift for ${contract.schema}`);
   }
 
+  const schemaOwnerRoleResult = await postgres.query<{
+    role_name: string;
+    can_login: boolean;
+    is_superuser: boolean;
+    bypasses_rls: boolean;
+    can_create_role: boolean;
+    can_create_database: boolean;
+    can_replicate: boolean;
+  }>(
+    `SELECT r.rolname AS role_name,
+            r.rolcanlogin AS can_login,
+            r.rolsuper AS is_superuser,
+            r.rolbypassrls AS bypasses_rls,
+            r.rolcreaterole AS can_create_role,
+            r.rolcreatedb AS can_create_database,
+            r.rolreplication AS can_replicate
+       FROM pg_catalog.pg_roles r
+      WHERE r.rolname = $1`,
+    [options.expected_schema_owner],
+  );
+  const schemaOwnerRole = schemaOwnerRoleResult.rows[0];
+  if (
+    schemaOwnerRoleResult.rows.length !== 1 ||
+    schemaOwnerRole === undefined ||
+    schemaOwnerRole.can_login ||
+    schemaOwnerRole.is_superuser ||
+    schemaOwnerRole.bypasses_rls ||
+    schemaOwnerRole.can_create_role ||
+    schemaOwnerRole.can_create_database ||
+    schemaOwnerRole.can_replicate
+  ) {
+    throw new Error(
+      `schema owner PostgreSQL role is not least-privilege for ${contract.owner_service}`,
+    );
+  }
+
+  const schemaOwnerInheritedRoleResult = await postgres.query<{
+    role_name: string;
+  }>(
+    `WITH RECURSIVE inherited_roles(role_oid) AS (
+       SELECT r.oid FROM pg_catalog.pg_roles r WHERE r.rolname = $1
+       UNION
+       SELECT m.roleid
+         FROM pg_catalog.pg_auth_members m
+         JOIN inherited_roles inherited ON inherited.role_oid = m.member
+     )
+     SELECT r.rolname AS role_name
+       FROM inherited_roles inherited
+       JOIN pg_catalog.pg_roles r ON r.oid = inherited.role_oid
+      ORDER BY r.rolname`,
+    [options.expected_schema_owner],
+  );
+  assertSameSet(
+    `${options.expected_schema_owner} inherited roles`,
+    schemaOwnerInheritedRoleResult.rows.map(({ role_name }) => role_name),
+    [options.expected_schema_owner],
+  );
+
+  const schemaOwnerMemberResult = await postgres.query<{
+    role_name: string;
+    can_login: boolean;
+  }>(
+    `WITH RECURSIVE owner_role_members(role_oid, path) AS (
+       SELECT r.oid, ARRAY[r.oid]
+         FROM pg_catalog.pg_roles r
+        WHERE r.rolname = $1
+       UNION ALL
+       SELECT m.member, owner_role_members.path || m.member
+         FROM pg_catalog.pg_auth_members m
+         JOIN owner_role_members ON owner_role_members.role_oid = m.roleid
+        WHERE NOT m.member = ANY(owner_role_members.path)
+     )
+     SELECT r.rolname AS role_name, r.rolcanlogin AS can_login
+       FROM owner_role_members
+       JOIN pg_catalog.pg_roles r ON r.oid = owner_role_members.role_oid
+      WHERE r.rolname <> $1
+      ORDER BY r.rolname`,
+    [options.expected_schema_owner],
+  );
+  if (schemaOwnerMemberResult.rows.length > 0) {
+    throw new Error(
+      `schema owner PostgreSQL role reverse membership drift for ${contract.owner_service}`,
+    );
+  }
+
   const appRoleResult = await postgres.query<{
     role_name: string;
     can_login: boolean;
@@ -2831,9 +3046,17 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
   const tableOwnerResult = await postgres.query<{
     table_name: string;
     table_owner: string;
+    relation_kind: string;
+    row_security_enabled: boolean;
+    force_row_security: boolean;
+    is_partition: boolean;
   }>(
     `SELECT c.relname AS table_name,
-            pg_catalog.pg_get_userbyid(c.relowner) AS table_owner
+            pg_catalog.pg_get_userbyid(c.relowner) AS table_owner,
+            c.relkind::text AS relation_kind,
+            c.relrowsecurity AS row_security_enabled,
+            c.relforcerowsecurity AS force_row_security,
+            c.relispartition AS is_partition
        FROM pg_catalog.pg_class c
        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = $1 AND c.relkind IN ('r','p')
@@ -2853,6 +3076,77 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     )
   ) {
     throw new Error(`PostgreSQL table owner drift for ${contract.schema}`);
+  }
+  if (
+    tableOwnerResult.rows.some(
+      ({
+        relation_kind,
+        row_security_enabled,
+        force_row_security,
+        is_partition,
+      }) =>
+        relation_kind !== "r" ||
+        row_security_enabled ||
+        force_row_security ||
+        is_partition,
+    )
+  ) {
+    throw new Error(
+      `PostgreSQL relation execution semantics drift for ${contract.schema}`,
+    );
+  }
+
+  const rowSecurityPolicyResult = await postgres.query<{
+    table_name: string;
+    policy_name: string;
+  }>(
+    `SELECT c.relname AS table_name, p.polname AS policy_name
+       FROM pg_catalog.pg_policy p
+       JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1
+      ORDER BY c.relname, p.polname`,
+    [contract.schema],
+  );
+  if (rowSecurityPolicyResult.rows.length > 0) {
+    throw new Error(
+      `PostgreSQL RLS policy drift for ${contract.schema}: ${rowSecurityPolicyResult.rows
+        .map(({ table_name, policy_name }) => `${table_name}.${policy_name}`)
+        .join(", ")}`,
+    );
+  }
+
+  const inheritanceResult = await postgres.query<{
+    child_schema: string;
+    child_table: string;
+    parent_schema: string;
+    parent_table: string;
+  }>(
+    `SELECT child_namespace.nspname AS child_schema,
+            child.relname AS child_table,
+            parent_namespace.nspname AS parent_schema,
+            parent.relname AS parent_table
+       FROM pg_catalog.pg_inherits inherits
+       JOIN pg_catalog.pg_class child ON child.oid = inherits.inhrelid
+       JOIN pg_catalog.pg_namespace child_namespace
+         ON child_namespace.oid = child.relnamespace
+       JOIN pg_catalog.pg_class parent ON parent.oid = inherits.inhparent
+       JOIN pg_catalog.pg_namespace parent_namespace
+         ON parent_namespace.oid = parent.relnamespace
+      WHERE child_namespace.nspname = $1 OR parent_namespace.nspname = $1
+      ORDER BY child_namespace.nspname, child.relname,
+               parent_namespace.nspname, parent.relname`,
+    [contract.schema],
+  );
+  if (inheritanceResult.rows.length > 0) {
+    throw new Error(
+      `PostgreSQL inheritance or partition drift for ${contract.schema}: ${inheritanceResult.rows
+        .map(
+          ({ child_schema, child_table, parent_schema, parent_table }) =>
+            `${child_schema}.${child_table}->${parent_schema}.${parent_table}`,
+        )
+        .join(", ")}`,
+    );
   }
 
   const columnResult = await postgres.query<{
@@ -3261,6 +3555,44 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     contract.foreign_keys.map(fkSnapshot),
   );
 
+  const foreignKeyTriggerResult = await postgres.query<{
+    constraint_name: string;
+    table_name: string;
+    enabled_trigger_count: string;
+    disabled_trigger_names: string[];
+  }>(
+    `SELECT con.conname AS constraint_name,
+            src.relname AS table_name,
+            count(t.oid) FILTER (WHERE t.tgenabled <> 'D')::text
+              AS enabled_trigger_count,
+            coalesce(
+              array_remove(
+                array_agg(t.tgname::text) FILTER (WHERE t.tgenabled = 'D'),
+                NULL
+              ),
+              ARRAY[]::text[]
+            ) AS disabled_trigger_names
+       FROM pg_catalog.pg_constraint con
+       JOIN pg_catalog.pg_class src ON src.oid = con.conrelid
+       JOIN pg_catalog.pg_namespace n ON n.oid = src.relnamespace
+       LEFT JOIN pg_catalog.pg_trigger t ON t.tgconstraint = con.oid
+        AND t.tgisinternal
+      WHERE n.nspname = $1 AND con.contype = 'f'
+      GROUP BY con.conname, src.relname
+      ORDER BY src.relname, con.conname`,
+    [contract.schema],
+  );
+  if (
+    foreignKeyTriggerResult.rows.some(
+      ({ enabled_trigger_count, disabled_trigger_names }) =>
+        Number(enabled_trigger_count) < 1 || disabled_trigger_names.length > 0,
+    )
+  ) {
+    throw new Error(
+      `PostgreSQL FK trigger enforcement drift for ${contract.schema}`,
+    );
+  }
+
   const uniqueConstraintResult = await postgres.query<{
     constraint_name: string;
     table_name: string;
@@ -3371,9 +3703,14 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
   const contractFingerprint = fingerprint(contract);
   const databaseFingerprint = fingerprint({
     schema: schemaResult.rows,
+    schema_owner_role: schemaOwnerRoleResult.rows,
+    schema_owner_inherited_roles: schemaOwnerInheritedRoleResult.rows,
+    schema_owner_reverse_membership: schemaOwnerMemberResult.rows,
     app_role: appRoleResult.rows,
     columns: columnResult.rows,
     table_owners: tableOwnerResult.rows,
+    row_security_policies: rowSecurityPolicyResult.rows,
+    inheritance: inheritanceResult.rows,
     runtime_identity: runtimeIdentityResult.rows,
     runtime_membership: runtimeMembershipResult.rows,
     runtime_membership_options: runtimeMembershipOptionsResult.rows,
@@ -3390,6 +3727,7 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     schema_acl: schemaAclResult.rows,
     runtime_schema_privileges: runtimeSchemaPrivilegeResult.rows,
     foreign_keys: foreignKeyResult.rows,
+    foreign_key_triggers: foreignKeyTriggerResult.rows,
     unique_constraints: uniqueConstraintResult.rows,
     indexes: indexResult.rows,
     check_constraints: checkConstraintResult.rows,
@@ -3536,7 +3874,7 @@ export interface ExecuteOwnerWriterRequestV1<
 > {
   readonly writer: TWriter;
   readonly arguments: OwnerWriterArgumentsV1<TContract, TWriter>;
-  readonly expected_rows: 1 | "one_or_more";
+  readonly expected_rows: 1 | "one_or_more" | "zero_or_more";
 }
 
 /**
@@ -3570,6 +3908,8 @@ export interface OwnerOutboxClaimRequestV1 {
   readonly limit: number;
   readonly lease_seconds: number;
   readonly now: string;
+  readonly current_transport_epoch: string;
+  readonly current_transport_generation: number;
 }
 
 export interface OwnerOutboxAcknowledgeRequestV1 {
@@ -3581,6 +3921,9 @@ export interface OwnerOutboxAcknowledgeRequestV1 {
   readonly error: Readonly<Record<string, unknown>> | null;
   readonly transport_ref: string | null;
   readonly transport_epoch: string | null;
+  readonly transport_generation: number | null;
+  readonly current_transport_epoch: string;
+  readonly current_transport_generation: number;
   readonly now: string;
 }
 
@@ -3804,7 +4147,7 @@ export function createVerifiedOwnerPostgresRepositoryV1<
           !Array.isArray(result) ||
           (request.expected_rows === 1
             ? result.length !== 1
-            : result.length === 0)
+            : request.expected_rows === "one_or_more" && result.length === 0)
         ) {
           throw new Error(
             `owner writer row-count drift: ${contract.schema}.${signature.function_name}`,
@@ -3838,6 +4181,9 @@ export function createVerifiedOwnerPostgresRepositoryV1<
         assertOutboxRequest(request);
         if (
           request.worker_id.trim().length === 0 ||
+          request.current_transport_epoch.trim().length === 0 ||
+          !Number.isSafeInteger(request.current_transport_generation) ||
+          request.current_transport_generation < 1 ||
           !Number.isSafeInteger(request.limit) ||
           request.limit < 1 ||
           request.limit > 1_000 ||
@@ -3856,6 +4202,8 @@ export function createVerifiedOwnerPostgresRepositoryV1<
             request.limit,
             request.lease_seconds,
             request.now,
+            request.current_transport_epoch,
+            String(request.current_transport_generation),
           ]);
           if (!Array.isArray(result)) {
             throw new Error(
@@ -3893,11 +4241,26 @@ export function createVerifiedOwnerPostgresRepositoryV1<
               Array.isArray(request.error))) ||
           sent !==
             (request.transport_ref !== null &&
-              request.transport_epoch !== null) ||
+              request.transport_epoch !== null &&
+              request.transport_generation !== null) ||
           (request.transport_ref !== null &&
             request.transport_ref.trim().length === 0) ||
           (request.transport_epoch !== null &&
-            request.transport_epoch.trim().length === 0)
+            request.transport_epoch.trim().length === 0) ||
+          (request.transport_generation !== null &&
+            (!Number.isSafeInteger(request.transport_generation) ||
+              request.transport_generation < 1)) ||
+          request.current_transport_epoch.trim().length === 0 ||
+          !Number.isSafeInteger(request.current_transport_generation) ||
+          request.current_transport_generation < 1 ||
+          (sent &&
+            (request.transport_epoch !== request.current_transport_epoch ||
+              request.transport_generation !==
+                request.current_transport_generation)) ||
+          (!sent &&
+            (request.transport_ref !== null ||
+              request.transport_epoch !== null ||
+              request.transport_generation !== null))
         ) {
           throw new Error("invalid owner outbox acknowledge request");
         }
@@ -3913,6 +4276,11 @@ export function createVerifiedOwnerPostgresRepositoryV1<
             request.error,
             request.transport_ref,
             request.transport_epoch,
+            request.transport_generation === null
+              ? null
+              : String(request.transport_generation),
+            request.current_transport_epoch,
+            String(request.current_transport_generation),
             request.now,
           ]);
           await client.query("COMMIT");

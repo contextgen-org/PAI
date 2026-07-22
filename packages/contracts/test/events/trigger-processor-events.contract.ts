@@ -194,6 +194,15 @@ describe("TriggerProcessorDomainEventV1", () => {
     expect(TRIGGER_PROCESSOR_DOMAIN_EVENT_V1_DATABASE_CHECK).toContain(
       "drop constraint if exists trigger_event_outbox_event_schema_pair_check",
     );
+    expect(TRIGGER_PROCESSOR_DOMAIN_EVENT_V1_DATABASE_CHECK).toContain(
+      "drop constraint if exists trigger_event_outbox_schema_version_check",
+    );
+    expect(TRIGGER_PROCESSOR_DOMAIN_EVENT_V1_DATABASE_CHECK).toContain(
+      "add constraint trigger_event_outbox_schema_version_check",
+    );
+    expect(TRIGGER_PROCESSOR_DOMAIN_EVENT_V1_DATABASE_CHECK).toContain(
+      "add constraint trigger_event_outbox_domain_event_v1_check",
+    );
   });
 
   it("exposes one branch schema per AsyncAPI channel discriminator", () => {

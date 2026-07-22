@@ -34,6 +34,8 @@ export interface DurableOutboxStorePortV1 {
     limit: number;
     lease_seconds: number;
     now: string;
+    current_transport_epoch: string;
+    current_transport_generation: number;
   }>): Promise<readonly ClaimedOutboxRecordV1[]>;
   acknowledge(request: Readonly<{
     outbox_id: string;
@@ -43,6 +45,9 @@ export interface DurableOutboxStorePortV1 {
     error: Readonly<Record<string, unknown>> | null;
     transport_ref: string | null;
     transport_epoch: string | null;
+    transport_generation: number | null;
+    current_transport_epoch: string;
+    current_transport_generation: number;
     now: string;
   }>): Promise<void>;
 }
@@ -50,6 +55,7 @@ export interface DurableOutboxStorePortV1 {
 export interface DurableEventTransportReceiptV1 {
   readonly transport_ref: string;
   readonly transport_epoch: string;
+  readonly transport_generation: number;
 }
 
 export interface DurableEventTransportPortV1 {
@@ -57,12 +63,15 @@ export interface DurableEventTransportPortV1 {
     target: string;
     envelope: DurableEventEnvelopeV1;
     payload_hash: string;
+    current_transport_epoch: string;
+    current_transport_generation: number;
   }>): Promise<DurableEventTransportReceiptV1>;
 }
 
 function assertTransportReceiptV1(
   receipt: DurableEventTransportReceiptV1,
   expectedEpoch?: string,
+  expectedGeneration?: number,
 ): void {
   if (
     typeof receipt !== "object" ||
@@ -71,7 +80,11 @@ function assertTransportReceiptV1(
     receipt.transport_ref.trim().length === 0 ||
     typeof receipt.transport_epoch !== "string" ||
     receipt.transport_epoch.trim().length === 0 ||
-    (expectedEpoch !== undefined && receipt.transport_epoch !== expectedEpoch)
+    !Number.isSafeInteger(receipt.transport_generation) ||
+    receipt.transport_generation < 1 ||
+    (expectedEpoch !== undefined && receipt.transport_epoch !== expectedEpoch) ||
+    (expectedGeneration !== undefined &&
+      receipt.transport_generation !== expectedGeneration)
   ) {
     throw new EventTransportErrorV1(
       "transport_rejected",
@@ -144,15 +157,19 @@ export function createPostgresOwnerOutboxStoreV1(
       limit: number;
       lease_seconds: number;
       now: string;
+      current_transport_epoch: string;
+      current_transport_generation: number;
     }>) {
-      const records = await ownerOutbox.claim({
+      const rows = await ownerOutbox.claim({
         outbox_table: outboxTable,
         worker_id: request.worker_id,
         limit: request.limit,
         lease_seconds: request.lease_seconds,
         now: request.now,
+        current_transport_epoch: request.current_transport_epoch,
+        current_transport_generation: request.current_transport_generation,
       });
-      return records.map(claimedOutboxRecordV1);
+      return rows.map(claimedOutboxRecordV1);
     },
     async acknowledge(request: Readonly<{
       outbox_id: string;
@@ -162,11 +179,24 @@ export function createPostgresOwnerOutboxStoreV1(
       error: Readonly<Record<string, unknown>> | null;
       transport_ref: string | null;
       transport_epoch: string | null;
+      transport_generation: number | null;
+      current_transport_epoch: string;
+      current_transport_generation: number;
       now: string;
     }>) {
       await ownerOutbox.acknowledge({
         outbox_table: outboxTable,
-        ...request,
+        outbox_id: request.outbox_id,
+        claim_token: request.claim_token,
+        outcome: request.outcome,
+        next_retry_at: request.next_retry_at,
+        error: request.error,
+        transport_ref: request.transport_ref,
+        transport_epoch: request.transport_epoch,
+        transport_generation: request.transport_generation,
+        current_transport_epoch: request.current_transport_epoch,
+        current_transport_generation: request.current_transport_generation,
+        now: request.now,
       });
     },
   });
@@ -181,6 +211,8 @@ export interface DurableOutboxDispatcherConfigV1 {
   readonly retry_base_delay_ms: number;
   readonly retry_max_delay_ms: number;
   readonly retry_jitter: "none" | "full";
+  readonly current_transport_epoch: string;
+  readonly current_transport_generation: number;
 }
 
 export interface DurableOutboxDispatchSummaryV1 {
@@ -206,7 +238,10 @@ function assertDispatcherConfig(config: DurableOutboxDispatcherConfigV1): void {
     config.retry_base_delay_ms < 1 ||
     !Number.isSafeInteger(config.retry_max_delay_ms) ||
     config.retry_max_delay_ms < config.retry_base_delay_ms ||
-    config.retry_max_delay_ms > 300_000
+    config.retry_max_delay_ms > 300_000 ||
+    config.current_transport_epoch.trim().length === 0 ||
+    !Number.isSafeInteger(config.current_transport_generation) ||
+    config.current_transport_generation < 1
   ) {
     throw new Error("invalid durable outbox dispatcher configuration");
   }
@@ -267,6 +302,8 @@ export function createDurableOutboxDispatcherV1(
         limit: config.batch_size,
         lease_seconds: config.lease_seconds,
         now: claimedAt,
+        current_transport_epoch: config.current_transport_epoch,
+        current_transport_generation: config.current_transport_generation,
       });
       let sent = 0;
       let retryWait = 0;
@@ -326,8 +363,14 @@ export function createDurableOutboxDispatcherV1(
             target: record.target,
             envelope: record.envelope,
             payload_hash: record.payload_hash,
+            current_transport_epoch: config.current_transport_epoch,
+            current_transport_generation: config.current_transport_generation,
           });
-          assertTransportReceiptV1(receipt);
+          assertTransportReceiptV1(
+            receipt,
+            config.current_transport_epoch,
+            config.current_transport_generation,
+          );
         } catch (error) {
           failure = deliveryFailure(error);
         }
@@ -341,6 +384,9 @@ export function createDurableOutboxDispatcherV1(
             error: null,
             transport_ref: receipt?.transport_ref ?? null,
             transport_epoch: receipt?.transport_epoch ?? null,
+            transport_generation: receipt?.transport_generation ?? null,
+            current_transport_epoch: config.current_transport_epoch,
+            current_transport_generation: config.current_transport_generation,
             now: acknowledgedAt.toISOString(),
           });
           sent += 1;
@@ -366,6 +412,9 @@ export function createDurableOutboxDispatcherV1(
           },
           transport_ref: null,
           transport_epoch: null,
+          transport_generation: null,
+          current_transport_epoch: config.current_transport_epoch,
+          current_transport_generation: config.current_transport_generation,
           now: acknowledgedAt.toISOString(),
         });
         if (retryable) retryWait += 1;
@@ -395,7 +444,6 @@ export interface DurableSentOutboxRedriveStorePortV1 {
     limit: number;
     lease_seconds: number;
     now: string;
-    sent_after: string;
     current_transport_epoch: string;
     current_transport_generation: number;
   }>): Promise<readonly ClaimedSentOutboxRecordV1[]>;
@@ -433,7 +481,6 @@ export function createDurableSentOutboxRedriverV1(
     lease_seconds: number;
     current_transport_epoch: string;
     current_transport_generation: number;
-    sent_after: string;
   }>,
   dependencies: Readonly<{ now?: () => Date }> = {},
 ): Readonly<{ redriveBatch: () => Promise<DurableSentOutboxRedriveSummaryV1> }> {
@@ -447,8 +494,7 @@ export function createDurableSentOutboxRedriverV1(
     config.batch_size > 1_000 ||
     !Number.isSafeInteger(config.lease_seconds) ||
     config.lease_seconds < 1 ||
-    config.lease_seconds > 3_600 ||
-    !Number.isFinite(Date.parse(config.sent_after))
+    config.lease_seconds > 3_600
   ) {
     throw new Error("invalid sent outbox redrive configuration");
   }
@@ -461,7 +507,6 @@ export function createDurableSentOutboxRedriverV1(
         limit: config.batch_size,
         lease_seconds: config.lease_seconds,
         now: claimedAt,
-        sent_after: config.sent_after,
         current_transport_epoch: config.current_transport_epoch,
         current_transport_generation: config.current_transport_generation,
       });
@@ -511,8 +556,14 @@ export function createDurableSentOutboxRedriverV1(
             target: record.target,
             envelope: record.envelope,
             payload_hash: record.payload_hash,
+            current_transport_epoch: config.current_transport_epoch,
+            current_transport_generation: config.current_transport_generation,
           });
-          assertTransportReceiptV1(receipt, config.current_transport_epoch);
+          assertTransportReceiptV1(
+            receipt,
+            config.current_transport_epoch,
+            config.current_transport_generation,
+          );
           await store.acknowledgeSentRedrive({
             outbox_id: record.outbox_id,
             claim_token: record.claim_token,

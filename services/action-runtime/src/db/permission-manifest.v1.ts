@@ -1,6 +1,8 @@
 import { OWNER_DURABLE_EVENT_TYPES_V1 } from "@pai/contracts";
 import {
   defineOwnerRepositoryContractV1,
+  ownerEventingTransportEpochActivationSignatureV1,
+  ownerEventingTransportEpochTablePermissionV1,
   ownerForeignKeysV1,
   ownerFunctionSignatureV1,
   type OwnerRepositoryPortV1,
@@ -28,6 +30,7 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
       "runtime_event_outbox",
       "runtime_event_inbox",
       "runtime_event_dlq",
+      "eventing_transport_epochs",
       "tool_invocations",
       "runtime_control_signals",
       "runtime_control_tombstones",
@@ -110,6 +113,7 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
       delete_allowed: false,
       writer_kind: "immutable_append",
     },
+    ownerEventingTransportEpochTablePermissionV1(),
     {
       table_name: "tool_invocations",
       select_columns: ["id","runtime_run_id","adapter_tool_call_id","tool_name","status","idempotency_key","request_hash","normalized_args_hash","input","output","error","side_effect_status","downstream_idempotency_key","external_response_ref","external_error_ref","reconciled_at","started_at","completed_at"],
@@ -187,6 +191,7 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
       "append_runtime_event_v1",
       "claim_runtime_event_outbox_v1",
       "ack_runtime_event_outbox_v1",
+      "activate_eventing_transport_epoch_v1",
     ],
     function_signatures: [
     ownerFunctionSignatureV1({
@@ -376,8 +381,8 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
       function_name: "claim_runtime_event_outbox_v1",
       primary_table: "runtime_event_outbox",
       writer_kind: "outbox_claim_ack",
-      arguments: [["p_worker_id", "text"], ["p_limit", "integer"], ["p_lease_seconds", "integer"], ["p_now", "timestamptz"]],
-      reads_tables: ["runtime_event_outbox"],
+      arguments: [["p_worker_id", "text"], ["p_limit", "integer"], ["p_lease_seconds", "integer"], ["p_now", "timestamptz"], ["p_current_transport_epoch", "text"], ["p_current_transport_generation", "bigint"]],
+      reads_tables: ["runtime_event_outbox", "eventing_transport_epochs"],
       writes_tables: ["runtime_event_outbox"],
       effects: [
         { table_name: "runtime_event_outbox", operation: "claim", concurrency_control: "lease_fence" },
@@ -389,8 +394,8 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
       function_name: "ack_runtime_event_outbox_v1",
       primary_table: "runtime_event_outbox",
       writer_kind: "outbox_claim_ack",
-      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_transport_ref", "text"], ["p_transport_epoch", "text"], ["p_now", "timestamptz"]],
-      reads_tables: ["runtime_event_outbox"],
+      arguments: [["p_outbox_id", "text"], ["p_claim_token", "text"], ["p_outcome", "text"], ["p_next_retry_at", "timestamptz"], ["p_error", "jsonb"], ["p_transport_ref", "text"], ["p_transport_epoch", "text"], ["p_transport_generation", "bigint"], ["p_current_transport_epoch", "text"], ["p_current_transport_generation", "bigint"], ["p_now", "timestamptz"]],
+      reads_tables: ["runtime_event_outbox", "eventing_transport_epochs"],
       writes_tables: ["runtime_event_outbox", "runtime_event_dlq"],
       effects: [
         { table_name: "runtime_event_outbox", operation: "ack", concurrency_control: "lease_fence" },
@@ -398,8 +403,23 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
       ],
       returns: "jsonb",
     }),
+    ownerEventingTransportEpochActivationSignatureV1("action_runtime"),
     ],
   database_checks: [
+    {
+      constraint_name: "eventing_transport_epochs_active_generation_safe_check",
+      table_name: "eventing_transport_epochs",
+      required_definition_fragments: [
+        "active_generation >= 1",
+        "active_generation <= 9007199254740991",
+      ],
+      semantic_constraint: {
+        kind: "integer_range",
+        column_name: "active_generation",
+        min: 1,
+        max: Number.MAX_SAFE_INTEGER,
+      },
+    },
     {
       constraint_name: "runtime_events_event_type_check",
       table_name: "runtime_events",
