@@ -1923,6 +1923,30 @@ describePostgres("PostgreSQL owner deployment verification", () => {
       "disabled internal FK enforcement trigger",
       "ALTER TABLE timer.contract_children DISABLE TRIGGER ALL",
     ],
+    [
+      "replica-only internal FK enforcement triggers",
+      `DO $body$
+       DECLARE trigger_name text;
+       BEGIN
+         FOR trigger_name IN
+           SELECT tgname
+             FROM pg_catalog.pg_trigger
+            WHERE tgrelid = 'timer.contract_children'::regclass
+              AND tgisinternal
+         LOOP
+           EXECUTE format(
+             'ALTER TABLE timer.contract_children ENABLE REPLICA TRIGGER %I',
+             trigger_name
+           );
+         END LOOP;
+       END
+       $body$`,
+    ],
+    ["UNLOGGED owner table", "ALTER TABLE timer.contract_audits SET UNLOGGED"],
+    [
+      "UNLOGGED owner sequence",
+      "ALTER SEQUENCE timer.contract_owner_sequence SET UNLOGGED",
+    ],
     ["missing composite FK", "ALTER TABLE timer.contract_children DROP CONSTRAINT contract_children_parent_fk"],
     [
       "updatable view with app-role DML",

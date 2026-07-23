@@ -118,6 +118,8 @@ export type ObjectReconciliationOperationV1 =
 export interface ObjectReconciliationClaimV1 {
   readonly reservation_id: string;
   readonly claim_token: string;
+  /** Monotonic reservation-local fence; terminal mutations require an exact CAS. */
+  readonly claim_generation: number;
   readonly operation: ObjectReconciliationOperationV1;
   readonly record: ObjectMetadataRecordV1;
   readonly attempt: number;
@@ -145,6 +147,7 @@ export interface ClaimObjectReconciliationInputV1 {
 export interface CompleteObjectReconciliationInputV1 {
   readonly reservation_id: string;
   readonly claim_token: string;
+  readonly claim_generation: number;
   readonly version?: string;
   readonly backend_put_terminal_receipt?: BackendPutTerminalReceiptV1;
 }
@@ -152,6 +155,7 @@ export interface CompleteObjectReconciliationInputV1 {
 export interface ReleaseObjectReconciliationInputV1 {
   readonly reservation_id: string;
   readonly claim_token: string;
+  readonly claim_generation: number;
   readonly last_error: string;
   readonly next_retry_at: Date;
 }
@@ -159,6 +163,7 @@ export interface ReleaseObjectReconciliationInputV1 {
 export interface RedirectObjectReconciliationInputV1 {
   readonly reservation_id: string;
   readonly claim_token: string;
+  readonly claim_generation: number;
   readonly operation: "put_cleanup";
   readonly last_error: string;
   readonly next_retry_at?: Date;
@@ -232,6 +237,7 @@ interface ReconciliationLease {
   claimToken?: string;
   lockedUntil?: Date;
   attempt: number;
+  claimGeneration: number;
   nextRetryAt?: Date;
   lastError?: string;
 }
@@ -343,6 +349,7 @@ export class InMemoryObjectMetadataRepositoryV1
       foregroundUploadMayStillArrive: false,
       uploadAttemptToken,
       attempt: 0,
+      claimGeneration: 0,
     });
     return {
       kind: "claimed",
@@ -490,6 +497,7 @@ export class InMemoryObjectMetadataRepositoryV1
       idempotencyKey: input.idempotency_key,
       operation: "delete_finalize",
       attempt: 0,
+      claimGeneration: 0,
     };
     this.#pendingDeletes.set(reservationId, pending);
     this.#records.set(record.object_ref, {
@@ -635,7 +643,14 @@ export class InMemoryObjectMetadataRepositoryV1
         pending.operation = "put_finalize";
         delete pending.foregroundLeaseToken;
       }
+      if (
+        pending.attempt >= Number.MAX_SAFE_INTEGER ||
+        pending.claimGeneration >= Number.MAX_SAFE_INTEGER
+      ) {
+        throw new Error("reconciliation claim generation exhausted");
+      }
       pending.attempt += 1;
+      pending.claimGeneration += 1;
       pending.claimToken = `${input.worker_id}:${randomUUID()}`;
       pending.lockedUntil = input.locked_until;
       const record =
@@ -646,6 +661,7 @@ export class InMemoryObjectMetadataRepositoryV1
       claims.push({
         reservation_id: pending.reservationId,
         claim_token: pending.claimToken,
+        claim_generation: pending.claimGeneration,
         operation: pending.operation as ObjectReconciliationOperationV1,
         record,
         attempt: pending.attempt,
@@ -673,7 +689,10 @@ export class InMemoryObjectMetadataRepositoryV1
   ): Promise<ObjectMetadataRecordV1 | undefined> {
     const put = this.#pendingPuts.get(input.reservation_id);
     if (put !== undefined) {
-      if (put.claimToken !== input.claim_token) {
+      if (
+        put.claimToken !== input.claim_token ||
+        put.claimGeneration !== input.claim_generation
+      ) {
         throw new Error("stale reconciliation claim");
       }
       if (put.operation === "put_cleanup") {
@@ -714,6 +733,7 @@ export class InMemoryObjectMetadataRepositoryV1
     if (
       deletion === undefined ||
       deletion.claimToken !== input.claim_token ||
+      deletion.claimGeneration !== input.claim_generation ||
       deletion.operation !== "delete_finalize"
     ) {
       throw new Error("stale reconciliation claim");
@@ -728,7 +748,10 @@ export class InMemoryObjectMetadataRepositoryV1
       this.#pendingPuts.get(input.reservation_id) ??
       this.#pendingDeletes.get(input.reservation_id);
     if (pending === undefined) return;
-    if (pending.claimToken !== input.claim_token) {
+    if (
+      pending.claimToken !== input.claim_token ||
+      pending.claimGeneration !== input.claim_generation
+    ) {
       throw new Error("stale reconciliation claim");
     }
     delete pending.claimToken;
@@ -746,7 +769,11 @@ export class InMemoryObjectMetadataRepositoryV1
     input: RedirectObjectReconciliationInputV1,
   ): Promise<void> {
     const pending = this.#pendingPuts.get(input.reservation_id);
-    if (pending === undefined || pending.claimToken !== input.claim_token) {
+    if (
+      pending === undefined ||
+      pending.claimToken !== input.claim_token ||
+      pending.claimGeneration !== input.claim_generation
+    ) {
       throw new Error("stale reconciliation claim");
     }
     pending.operation = input.operation;

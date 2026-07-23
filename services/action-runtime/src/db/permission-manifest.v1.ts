@@ -370,10 +370,11 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
         ["p_trace_id", "text"],
       ],
       reads_tables: ["runtime_event_inbox"],
-      writes_tables: ["runtime_events", "runtime_event_inbox", "runtime_event_outbox"],
+      writes_tables: ["runtime_events", "runtime_event_inbox", "runtime_event_dlq", "runtime_event_outbox"],
       effects: [
         { table_name: "runtime_events", operation: "append", concurrency_control: "idempotency_key" },
-        { table_name: "runtime_event_inbox", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "runtime_event_inbox", operation: "append", concurrency_control: "durable_event_identity" },
+        { table_name: "runtime_event_dlq", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "runtime_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
       ],
       returns: "jsonb",

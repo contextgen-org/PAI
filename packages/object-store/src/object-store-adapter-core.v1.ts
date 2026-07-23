@@ -819,6 +819,7 @@ function snapshotReconciliationClaimV1(
 ): ObjectReconciliationClaimV1 {
   const requiredKeys = [
     "attempt",
+    "claim_generation",
     "claim_token",
     "foreground_upload_may_still_arrive",
     "operation",
@@ -833,6 +834,7 @@ function snapshotReconciliationClaimV1(
   const data = ownDataRecordV1(value, requiredKeys, [...optionalKeys]);
   const reservationId = data?.reservation_id;
   const claimToken = data?.claim_token;
+  const claimGeneration = data?.claim_generation;
   const operation = data?.operation;
   const attempt = data?.attempt;
   const foregroundUploadMayStillArrive =
@@ -844,6 +846,8 @@ function snapshotReconciliationClaimV1(
     data === undefined ||
     !boundedIdentity(reservationId) ||
     !boundedIdentity(claimToken) ||
+    !Number.isSafeInteger(claimGeneration) ||
+    (claimGeneration as number) < 1 ||
     typeof operation !== "string" ||
     !Number.isSafeInteger(attempt) ||
     typeof foregroundUploadMayStillArrive !== "boolean" ||
@@ -858,6 +862,7 @@ function snapshotReconciliationClaimV1(
   return Object.freeze({
     reservation_id: reservationId,
     claim_token: claimToken,
+    claim_generation: claimGeneration as number,
     operation: operation as ObjectReconciliationClaimV1["operation"],
     record: snapshotMetadataRecordV1(data.record),
     attempt: attempt as number,
@@ -1603,6 +1608,8 @@ export class ObjectStoreAdapterCoreV1
         if (
           !Number.isSafeInteger(claim.attempt) ||
           claim.attempt < 1 ||
+          !Number.isSafeInteger(claim.claim_generation) ||
+          claim.claim_generation < 1 ||
           typeof claim.foreground_upload_may_still_arrive !== "boolean"
         ) {
           throw new Error(
@@ -1675,6 +1682,7 @@ export class ObjectStoreAdapterCoreV1
               await this.#metadata.redirectReconciliation({
                 reservation_id: claim.reservation_id,
                 claim_token: claim.claim_token,
+                claim_generation: claim.claim_generation,
                 operation: "put_cleanup",
                 last_error: "pending put was not visible after foreground handoff",
                 ...(claim.foreground_upload_may_still_arrive
@@ -1695,6 +1703,7 @@ export class ObjectStoreAdapterCoreV1
               await this.#metadata.redirectReconciliation({
                 reservation_id: claim.reservation_id,
                 claim_token: claim.claim_token,
+                claim_generation: claim.claim_generation,
                 operation: "put_cleanup",
                 last_error: error.message,
                 ...(claim.foreground_upload_may_still_arrive
@@ -1719,6 +1728,7 @@ export class ObjectStoreAdapterCoreV1
             await this.#metadata.redirectReconciliation({
               reservation_id: claim.reservation_id,
               claim_token: claim.claim_token,
+              claim_generation: claim.claim_generation,
               operation: "put_cleanup",
               last_error: "pending put physical metadata mismatch",
               ...(claim.foreground_upload_may_still_arrive
@@ -1735,6 +1745,7 @@ export class ObjectStoreAdapterCoreV1
           const completedRecord = await this.#metadata.completeReconciliation({
             reservation_id: claim.reservation_id,
             claim_token: claim.claim_token,
+            claim_generation: claim.claim_generation,
             version: head.version,
           });
           if (completedRecord === undefined) {
@@ -1763,6 +1774,7 @@ export class ObjectStoreAdapterCoreV1
               await this.#metadata.releaseReconciliation({
                 reservation_id: claim.reservation_id,
                 claim_token: claim.claim_token,
+                claim_generation: claim.claim_generation,
                 last_error:
                   "cleanup retained a tombstone until the foreground upload terminal horizon",
                 next_retry_at: new Date(
@@ -1782,6 +1794,7 @@ export class ObjectStoreAdapterCoreV1
               await this.#metadata.releaseReconciliation({
                 reservation_id: claim.reservation_id,
                 claim_token: claim.claim_token,
+                claim_generation: claim.claim_generation,
                 last_error:
                   "cleanup retained tombstone because backend cannot prove the foreground upload attempt is terminal",
                 next_retry_at: new Date(
@@ -1802,6 +1815,7 @@ export class ObjectStoreAdapterCoreV1
               await this.#metadata.releaseReconciliation({
                 reservation_id: claim.reservation_id,
                 claim_token: claim.claim_token,
+                claim_generation: claim.claim_generation,
                 last_error:
                   "cleanup retained tombstone because the foreground upload attempt is still active or unknown",
                 next_retry_at: new Date(
@@ -1824,6 +1838,7 @@ export class ObjectStoreAdapterCoreV1
             const cleanupResult = await this.#metadata.completeReconciliation({
               reservation_id: claim.reservation_id,
               claim_token: claim.claim_token,
+              claim_generation: claim.claim_generation,
               backend_put_terminal_receipt: terminal.receipt,
             });
             if (cleanupResult !== undefined) {
@@ -1846,6 +1861,7 @@ export class ObjectStoreAdapterCoreV1
             const completedRecord = await this.#metadata.completeReconciliation({
               reservation_id: claim.reservation_id,
               claim_token: claim.claim_token,
+              claim_generation: claim.claim_generation,
             });
             if (claim.operation === "put_cleanup") {
               if (completedRecord !== undefined) {
@@ -1880,6 +1896,7 @@ export class ObjectStoreAdapterCoreV1
         await this.#metadata.releaseReconciliation({
           reservation_id: claim.reservation_id,
           claim_token: claim.claim_token,
+          claim_generation: claim.claim_generation,
           last_error:
             error instanceof Error ? error.message.slice(0, 1_024) : "unknown",
           next_retry_at: new Date(

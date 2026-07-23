@@ -363,10 +363,11 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
       writer_kind: "immutable_append",
       arguments: [["p_command_id", "text"], ["p_command", "jsonb"], ["p_source_event", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_payload_hash", "text"], ["p_semantic_hash", "text"], ["p_scope_fingerprint", "text"], ["p_trace_id", "text"]],
       reads_tables: ["skill_management_commands", "skill_event_inbox"],
-      writes_tables: ["skill_management_commands", "skill_event_inbox", "skill_audit_logs", "skill_event_outbox"],
+      writes_tables: ["skill_management_commands", "skill_event_inbox", "skill_event_dlq", "skill_audit_logs", "skill_event_outbox"],
       effects: [
         { table_name: "skill_management_commands", operation: "append", concurrency_control: "idempotency_key" },
-        { table_name: "skill_event_inbox", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "skill_event_inbox", operation: "append", concurrency_control: "durable_event_identity" },
+        { table_name: "skill_event_dlq", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "skill_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "skill_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
       ],

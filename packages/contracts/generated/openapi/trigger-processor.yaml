@@ -14040,6 +14040,7 @@
             "type": "object",
             "required": [
               "kind",
+              "execution_provenance",
               "terminal_outcome",
               "terminal_outcome_finalized_at",
               "canonical_reason_code",
@@ -14050,6 +14051,22 @@
               "kind": {
                 "const": "meta_finalization",
                 "type": "string"
+              },
+              "execution_provenance": {
+                "anyOf": [
+                  {
+                    "const": "direct_execution",
+                    "type": "string"
+                  },
+                  {
+                    "const": "deferred_execution",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_applicable",
+                    "type": "string"
+                  }
+                ]
               },
               "terminal_outcome": {
                 "$id": "urn:pai:trigger-processor:terminal-outcome:v1",

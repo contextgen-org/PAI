@@ -509,6 +509,7 @@ describe("TriggerProcessStateV1", () => {
     expect(
       isTriggerProcessTransitionV1Allowed(metaEnqueued, completed, {
         kind: "meta_finalization",
+        execution_provenance: "not_applicable",
         terminal_outcome: "executed",
         terminal_outcome_finalized_at: "2026-07-20T04:03:00.000Z",
         canonical_reason_code: "meta_completed",
@@ -677,6 +678,7 @@ describe("TriggerProcessStateV1", () => {
       expect(
         isTriggerProcessTransitionV1Allowed(meta, closed, {
           kind: "meta_finalization",
+          execution_provenance: "not_applicable",
           terminal_outcome: terminalOutcome,
           terminal_outcome_finalized_at: "2026-07-20T04:03:00.000Z",
           canonical_reason_code: enqueueReason,
@@ -702,17 +704,22 @@ describe("TriggerProcessStateV1", () => {
   });
 
   it.each([
-    ["cooldown_expired", "completed", "executed", true],
-    ["cooldown_expired", "completed", "failed_with_reason", false],
-    ["cooldown_expired", "failed", "failed_with_reason", true],
-    ["user_retracted", "cancelled", "cancelled_with_reason", true],
-    ["user_retracted", "cancelled", "interrupted_with_reason", false],
-    ["system_interrupted", "cancelled", "interrupted_with_reason", true],
-    ["system_interrupted", "completed", "executed", false],
-    ["failed_with_learnable_snapshot", "failed", "failed_with_reason", true],
+    ["cooldown_expired", "completed", "executed", "direct_execution", true],
+    ["cooldown_expired", "completed", "executed", "deferred_execution", false],
+    ["cooldown_expired", "completed", "merged_and_executed", "direct_execution", false],
+    ["cooldown_expired", "completed", "deferred_then_executed", "direct_execution", false],
+    ["cooldown_expired", "completed", "deferred_then_executed", "deferred_execution", true],
+    ["cooldown_expired", "completed", "expired_with_audit_record", "direct_execution", false],
+    ["cooldown_expired", "completed", "failed_with_reason", "direct_execution", false],
+    ["cooldown_expired", "failed", "failed_with_reason", "direct_execution", true],
+    ["user_retracted", "cancelled", "cancelled_with_reason", "not_applicable", true],
+    ["user_retracted", "cancelled", "interrupted_with_reason", "not_applicable", false],
+    ["system_interrupted", "cancelled", "interrupted_with_reason", "not_applicable", true],
+    ["system_interrupted", "completed", "executed", "not_applicable", false],
+    ["failed_with_learnable_snapshot", "failed", "failed_with_reason", "not_applicable", true],
   ] as const)(
-    "enforces meta reason %s finalization status %s with outcome %s",
-    (persistedReason, status, terminalOutcome, expected) => {
+    "enforces meta reason %s finalization status %s with outcome %s and provenance %s",
+    (persistedReason, status, terminalOutcome, executionProvenance, expected) => {
       const from = {
         phase: "meta_enqueued",
         status: "waiting",
@@ -729,6 +736,7 @@ describe("TriggerProcessStateV1", () => {
       expect(
         isTriggerProcessTransitionV1Allowed(from, to, {
           kind: "meta_finalization",
+          execution_provenance: executionProvenance,
           terminal_outcome: terminalOutcome,
           terminal_outcome_finalized_at: "2026-07-20T04:03:00.000Z",
           canonical_reason_code: `meta_${status}`,

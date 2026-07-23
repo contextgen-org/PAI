@@ -91,6 +91,7 @@ export interface OwnerFunctionEffectV1<TTable extends string = string> {
     | "reconcile_ack_rematerialized";
   readonly concurrency_control:
     | "idempotency_key"
+    | "durable_event_identity"
     | "expected_state_version"
     | "expected_version"
     | "generation_fence"
@@ -548,6 +549,7 @@ const concurrencyControls = new Set<
   OwnerFunctionEffectV1["concurrency_control"]
 >([
   "idempotency_key",
+  "durable_event_identity",
   "expected_state_version",
   "expected_version",
   "generation_fence",
@@ -617,6 +619,17 @@ function hasConcurrencyArgument(
   operation: OwnerFunctionEffectV1["operation"],
 ): boolean {
   const names = signature.arguments.map(({ argument_name }) => argument_name);
+  if (control === "durable_event_identity") {
+    return (
+      (names.includes("p_source_event") || names.includes("p_event")) &&
+      [
+        "p_idempotency_key",
+        "p_payload_hash",
+        "p_semantic_hash",
+        "p_scope_fingerprint",
+      ].every((name) => names.includes(name))
+    );
+  }
   if (control === "reconciliation_fence") {
     const required = reconciliationFenceArgumentNames(operation);
     return required.length > 0 && required.every((name) => names.includes(name));
@@ -1793,6 +1806,128 @@ export function defineOwnerRepositoryContractV1<
       throw new Error(`${label} contains a table outside owner schema contract`);
     }
   }
+  const durableInboxColumns = [
+    "source",
+    "event_id",
+    "idempotency_key",
+    "payload_hash",
+    "semantic_hash",
+    "scope_fingerprint",
+  ] as const;
+  for (const inboxTable of contract.inbox_tables) {
+    const permission = permissionByTable.get(inboxTable);
+    if (
+      permission === undefined ||
+      durableInboxColumns.some(
+        (column) => !permission.select_columns.includes(column),
+      )
+    ) {
+      throw new Error(
+        `${contract.owner_service}.${inboxTable} durable inbox identity columns drift`,
+      );
+    }
+    const physicalInboxColumns = (contract.database_columns ?? []).filter(
+      ({ table_name }) => table_name === inboxTable,
+    );
+    if (
+      contract.database_columns !== undefined &&
+      durableInboxColumns.some((column) => {
+        const observed = physicalInboxColumns.find(
+          ({ column_name }) => column_name === column,
+        );
+        return observed === undefined || !observed.not_null;
+      })
+    ) {
+      throw new Error(
+        `${contract.owner_service}.${inboxTable} durable inbox identity must be NOT NULL`,
+      );
+    }
+    if (contract.database_unique_constraints !== undefined) {
+      const inboxUniqueConstraints = contract.database_unique_constraints.filter(
+        ({ table_name, kind }) =>
+          table_name === inboxTable && kind === "unique",
+      );
+      const deliveryIdentities = inboxUniqueConstraints.filter(
+        ({ table_name, columns, kind, deferrable, initially_deferred, validated }) =>
+          table_name === inboxTable &&
+          kind === "unique" &&
+          fingerprint(columns) === fingerprint(["source", "event_id"]) &&
+          !deferrable &&
+          !initially_deferred &&
+          validated,
+      );
+      if (
+        deliveryIdentities.length !== 1 ||
+        inboxUniqueConstraints.length !== 1
+      ) {
+        throw new Error(
+          `${contract.owner_service}.${inboxTable} must have only one non-deferrable UNIQUE(source,event_id) delivery identity`,
+        );
+      }
+    }
+    const inboxUniqueIndexes = (contract.database_indexes ?? []).filter(
+      ({ table_name, unique, primary, valid }) =>
+        table_name === inboxTable && unique && valid && !primary,
+    );
+    if (
+      inboxUniqueIndexes.some(
+        ({ definition }) =>
+          !databaseIndexDefinitionMatchesColumns(definition, [
+            "source",
+            "event_id",
+          ]),
+      )
+    ) {
+      throw new Error(
+        `${contract.owner_service}.${inboxTable} must have only one non-deferrable UNIQUE(source,event_id) delivery identity`,
+      );
+    }
+    const inboxWriters = contract.function_signatures.filter((signature) =>
+      signature.writes_tables.includes(inboxTable),
+    );
+    if (inboxWriters.length === 0) {
+      throw new Error(
+        `${contract.owner_service}.${inboxTable} has no durable inbox writer`,
+      );
+    }
+    for (const signature of inboxWriters) {
+      const argumentTypes = new Map(
+        signature.arguments.map(({ argument_name, postgres_type, nullable }) => [
+          argument_name,
+          { postgres_type, nullable: nullable === true },
+        ]),
+      );
+      const eventArgument =
+        argumentTypes.get("p_source_event") ?? argumentTypes.get("p_event");
+      const identityEffect = signature.effects.find(
+        ({ table_name }) => table_name === inboxTable,
+      );
+      const hasConflictQuarantine = signature.effects.some(
+        ({ table_name, operation }) =>
+          contract.dlq_tables.includes(table_name) && operation === "append",
+      );
+      if (
+        eventArgument?.postgres_type !== "jsonb" ||
+        eventArgument.nullable ||
+        [
+          "p_idempotency_key",
+          "p_payload_hash",
+          "p_semantic_hash",
+          "p_scope_fingerprint",
+        ].some((name) => {
+          const argument = argumentTypes.get(name);
+          return argument?.postgres_type !== "text" || argument.nullable;
+        }) ||
+        identityEffect?.operation !== "append" ||
+        identityEffect.concurrency_control !== "durable_event_identity" ||
+        !hasConflictQuarantine
+      ) {
+        throw new Error(
+          `${contract.owner_service}.${signature.function_name} durable inbox identity ABI drift`,
+        );
+      }
+    }
+  }
   const checks = contract.database_checks ?? [];
   for (const outboxTable of contract.outbox_tables) {
     const columns = physicalColumnsByTable.get(outboxTable) ?? new Set<string>();
@@ -2463,6 +2598,21 @@ function escapeRegularExpression(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function databaseIndexDefinitionMatchesColumns(
+  definition: string,
+  expectedColumns: readonly string[],
+): boolean {
+  const normalized = definition
+    .replace(/\s+/gu, " ")
+    .trim()
+    .toLowerCase();
+  const match = /\busing\s+btree\s*\(([^()]*)\)\s*$/iu.exec(normalized);
+  const columns = match?.[1]
+    ?.split(",")
+    .map((column) => column.trim().replace(/^"|"$/gu, ""));
+  return columns !== undefined && fingerprint(columns) === fingerprint(expectedColumns);
+}
+
 function staticFunctionBody(definition: string): string {
   const bodyMatch = definition.match(/\bas\s+(\$[a-z0-9_]*\$)([\s\S]*?)\1/i);
   if (bodyMatch?.[2] === undefined) {
@@ -2499,8 +2649,23 @@ function executableFunctionDefinition(definition: string): string {
 }
 
 function beforeFirstUnconditionalReturn(value: string): string {
-  const match = /\breturn\s+(?!next\b|query\b)/i.exec(value);
-  return match === null ? value : value.slice(0, match.index);
+  let conditionalDepth = 0;
+  for (const { statement, start } of sqlStatementsWithOffsets(value)) {
+    const statementHead = statement.replace(/^\s*begin\b/iu, "").trimStart();
+    if (/^if\b/iu.test(statementHead)) {
+      conditionalDepth += 1;
+    }
+    if (
+      conditionalDepth === 0 &&
+      /^return\s+(?!next\b|query\b)/iu.test(statementHead)
+    ) {
+      return value.slice(0, start);
+    }
+    if (/^end\s+if\b/iu.test(statementHead) && conditionalDepth > 0) {
+      conditionalDepth -= 1;
+    }
+  }
+  return value;
 }
 
 function unquoteSqlLiteral(value: string): string {
@@ -2737,6 +2902,15 @@ function concurrencyArgumentNames(
   operation: OwnerFunctionEffectV1["operation"],
 ): readonly string[] {
   const names = signature.arguments.map(({ argument_name }) => argument_name);
+  if (control === "durable_event_identity") {
+    return [
+      names.includes("p_source_event") ? "p_source_event" : "p_event",
+      "p_idempotency_key",
+      "p_payload_hash",
+      "p_semantic_hash",
+      "p_scope_fingerprint",
+    ];
+  }
   if (control === "reconciliation_fence") {
     return reconciliationFenceArgumentNames(operation);
   }
@@ -2956,6 +3130,143 @@ function assertConcurrencyFenceIsConsumed(
     if (!operationFenceValid) {
       throw new Error(
         `PostgreSQL function reconciliation fence drift: ${signature.schema}.${signature.function_name}`,
+      );
+    }
+  }
+  if (effect.concurrency_control === "durable_event_identity") {
+    const eventArgument = signature.arguments.some(
+      ({ argument_name }) => argument_name === "p_source_event",
+    )
+      ? "p_source_event"
+      : "p_event";
+    const statementRows = sqlStatementsWithOffsets(executable);
+    const semanticStatementRows = sqlStatementsWithOffsets(semantic);
+    const semanticStatement = (index: number): string =>
+      semanticStatementRows[index]?.statement ?? "";
+    const mismatchCompares = (
+      statement: string,
+      column: string,
+      argument: string,
+    ): boolean => {
+      const qualifiedColumn = `(?:\\b[a-z][a-z0-9_]*\\.)?\\b${escapeRegularExpression(column)}\\b`;
+      const qualifiedArgument = `\\b${escapeRegularExpression(argument)}\\b`;
+      const operator = "(?:<>|!=|is\\s+distinct\\s+from)";
+      return (
+        new RegExp(`${qualifiedColumn}\\s*${operator}\\s*${qualifiedArgument}`, "iu").test(statement) ||
+        new RegExp(`${qualifiedArgument}\\s*${operator}\\s*${qualifiedColumn}`, "iu").test(statement)
+      );
+    };
+    const qualifiedTable = (tableName: string): string =>
+      `(?:"?${escapeRegularExpression(signature.schema)}"?\\s*\\.\\s*)?"?${escapeRegularExpression(tableName)}"?`;
+    const mutatesEffectTable = (
+      statement: string,
+      tableName: string,
+      operation: OwnerFunctionEffectV1["operation"],
+    ): boolean =>
+      mutationPattern(
+        signature.schema,
+        tableName,
+        [...allowedMutationVerbs(operation)],
+      ).test(statement);
+    const inboxInsertIndex = statementRows.findIndex(({ statement }) =>
+      new RegExp(
+        `\\binsert\\s+into\\s+${qualifiedTable(effect.table_name)}[\\s\\S]{1,2400}?\\bon\\s+conflict\\s*\\(\\s*"?source"?\\s*,\\s*"?event_id"?\\s*\\)\\s+do\\s+nothing\\b`,
+        "iu",
+      ).test(statement),
+    );
+    const eventFieldComparison = (
+      statement: string,
+      column: "source" | "event_id",
+      field: "producer" | "event_id",
+    ): boolean => {
+      const columnPattern = `(?:\\b[a-z][a-z0-9_]*\\.)?\\b${column}\\b`;
+      const fieldPattern = `\\b${escapeRegularExpression(eventArgument)}\\s*->>\\s*'${field}'(?:\\s*::\\s*(?:pg_catalog\\s*\\.\\s*)?text)?`;
+      return (
+        new RegExp(`${columnPattern}\\s*=\\s*${fieldPattern}`, "iu").test(
+          statement,
+        ) ||
+        new RegExp(`${fieldPattern}\\s*=\\s*${columnPattern}`, "iu").test(
+          statement,
+        )
+      );
+    };
+    const deliveryIdentityLockIndex = semanticStatementRows.findIndex(
+      ({ statement }) =>
+        new RegExp(
+          `\\bfrom\\s+${qualifiedTable(effect.table_name)}[\\s\\S]{1,1600}?\\bfor\\s+(?:no\\s+key\\s+)?update\\b`,
+          "iu",
+        ).test(statement) &&
+        eventFieldComparison(statement, "source", "producer") &&
+        eventFieldComparison(statement, "event_id", "event_id"),
+    );
+    const quarantineTable = signature.effects.find(
+      ({ table_name, operation }) =>
+        table_name !== effect.table_name && operation === "append" &&
+        table_name.endsWith("_dlq"),
+    )?.table_name;
+    const conflictIfIndex = semanticStatementRows.findIndex(
+      ({ statement }, index) => {
+        const statementHead = statement.replace(/^\s*begin\b/iu, "").trimStart();
+        if (index <= deliveryIdentityLockIndex || !/^if\b/iu.test(statementHead)) {
+          return false;
+        }
+        const predicate = statementHead.split(/\bthen\b/iu)[0] ?? statementHead;
+        return [
+          ["idempotency_key", "p_idempotency_key"],
+          ["payload_hash", "p_payload_hash"],
+          ["semantic_hash", "p_semantic_hash"],
+          ["scope_fingerprint", "p_scope_fingerprint"],
+        ].every(([column, argument]) =>
+          mismatchCompares(predicate, column!, argument!),
+        );
+      },
+    );
+    const conflictEndIfIndex = semanticStatementRows.findIndex(
+      ({ statement }, index) =>
+        index > conflictIfIndex && /^\s*end\s+if\b/iu.test(statement),
+    );
+    const quarantineIndex =
+      quarantineTable === undefined || conflictIfIndex < 0 || conflictEndIfIndex < 0
+        ? -1
+        : statementRows.findIndex(
+            ({ statement }, index) =>
+              index >= conflictIfIndex &&
+              index < conflictEndIfIndex &&
+              mutatesEffectTable(statement, quarantineTable, "append"),
+          );
+    const conflictReturnIndex = semanticStatementRows.findIndex(
+      ({ statement }, index) =>
+        index > quarantineIndex &&
+        index < conflictEndIfIndex &&
+        /\breturn\s+jsonb_build_object\s*\(\s*'status'(?:\s*::\s*(?:pg_catalog\s*\.\s*)?text)?\s*,\s*'conflict'(?:\s*::\s*(?:pg_catalog\s*\.\s*)?text)?\s*\)/iu.test(
+          statement,
+        ),
+    );
+    const mutatesBusinessBeforeConflictClosure =
+      conflictEndIfIndex < 0 ||
+      statementRows.some(({ statement }, index) =>
+        index < conflictEndIfIndex &&
+        signature.effects.some(
+          (candidate) =>
+            candidate.table_name !== effect.table_name &&
+            candidate.table_name !== quarantineTable &&
+            mutatesEffectTable(statement, candidate.table_name, candidate.operation),
+        ),
+      );
+    const atomicallyQuarantinesConflict =
+      conflictIfIndex > deliveryIdentityLockIndex &&
+      quarantineIndex >= conflictIfIndex &&
+      conflictReturnIndex > quarantineIndex &&
+      conflictEndIfIndex > conflictReturnIndex &&
+      !mutatesBusinessBeforeConflictClosure;
+    if (
+      consumed.length !== candidates.length ||
+      inboxInsertIndex < 0 ||
+      deliveryIdentityLockIndex <= inboxInsertIndex ||
+      !atomicallyQuarantinesConflict
+    ) {
+      throw new Error(
+        `PostgreSQL function durable event identity drift: ${signature.schema}.${signature.function_name}`,
       );
     }
   }
@@ -5011,13 +5322,15 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     row_security_enabled: boolean;
     force_row_security: boolean;
     is_partition: boolean;
+    relation_persistence: string;
   }>(
     `SELECT c.relname AS table_name,
             pg_catalog.pg_get_userbyid(c.relowner) AS table_owner,
             c.relkind::text AS relation_kind,
             c.relrowsecurity AS row_security_enabled,
             c.relforcerowsecurity AS force_row_security,
-            c.relispartition AS is_partition
+            c.relispartition AS is_partition,
+            c.relpersistence::text AS relation_persistence
        FROM pg_catalog.pg_class c
        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = $1 AND c.relkind IN ('r','p')
@@ -5045,8 +5358,10 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
         row_security_enabled,
         force_row_security,
         is_partition,
+        relation_persistence,
       }) =>
         relation_kind !== "r" ||
+        relation_persistence !== "p" ||
         row_security_enabled ||
         force_row_security ||
         is_partition,
@@ -5517,9 +5832,11 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
   const sequenceOwnerResult = await postgres.query<{
     sequence_name: string;
     sequence_owner: string;
+    relation_persistence: string;
   }>(
     `SELECT c.relname AS sequence_name,
-            pg_catalog.pg_get_userbyid(c.relowner) AS sequence_owner
+            pg_catalog.pg_get_userbyid(c.relowner) AS sequence_owner,
+            c.relpersistence::text AS relation_persistence
        FROM pg_catalog.pg_class c
        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = $1 AND c.relkind = 'S'
@@ -5528,8 +5845,9 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
   );
   if (
     sequenceOwnerResult.rows.some(
-      ({ sequence_owner }) =>
-        sequence_owner !== options.expected_schema_owner,
+      ({ sequence_owner, relation_persistence }) =>
+        sequence_owner !== options.expected_schema_owner ||
+        relation_persistence !== "p",
     )
   ) {
     throw new Error(`sequence owner drift for ${contract.schema}`);
@@ -5673,39 +5991,77 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
   const foreignKeyTriggerResult = await postgres.query<{
     constraint_name: string;
     table_name: string;
-    enabled_trigger_count: string;
-    disabled_trigger_names: string[];
+    referenced_table: string;
+    trigger_name: string;
+    trigger_relation: string;
+    function_schema: string;
+    function_name: string;
+    enabled_mode: string;
   }>(
     `SELECT con.conname AS constraint_name,
             src.relname AS table_name,
-            count(t.oid) FILTER (WHERE t.tgenabled <> 'D')::text
-              AS enabled_trigger_count,
-            coalesce(
-              array_remove(
-                array_agg(t.tgname::text) FILTER (WHERE t.tgenabled = 'D'),
-                NULL
-              ),
-              ARRAY[]::text[]
-            ) AS disabled_trigger_names
+            dst.relname AS referenced_table,
+            t.tgname::text AS trigger_name,
+            trigger_relation.relname AS trigger_relation,
+            function_namespace.nspname AS function_schema,
+            function.proname AS function_name,
+            t.tgenabled::text AS enabled_mode
        FROM pg_catalog.pg_constraint con
        JOIN pg_catalog.pg_class src ON src.oid = con.conrelid
+       JOIN pg_catalog.pg_class dst ON dst.oid = con.confrelid
        JOIN pg_catalog.pg_namespace n ON n.oid = src.relnamespace
-       LEFT JOIN pg_catalog.pg_trigger t ON t.tgconstraint = con.oid
+       JOIN pg_catalog.pg_trigger t ON t.tgconstraint = con.oid
         AND t.tgisinternal
+       JOIN pg_catalog.pg_class trigger_relation ON trigger_relation.oid = t.tgrelid
+       JOIN pg_catalog.pg_proc function ON function.oid = t.tgfoid
+       JOIN pg_catalog.pg_namespace function_namespace
+         ON function_namespace.oid = function.pronamespace
       WHERE n.nspname = $1 AND con.contype = 'f'
-      GROUP BY con.conname, src.relname
-      ORDER BY src.relname, con.conname`,
+      ORDER BY src.relname, con.conname, trigger_relation.relname, function.proname`,
     [contract.schema],
   );
-  if (
-    foreignKeyTriggerResult.rows.some(
-      ({ enabled_trigger_count, disabled_trigger_names }) =>
-        Number(enabled_trigger_count) < 1 || disabled_trigger_names.length > 0,
-    )
-  ) {
-    throw new Error(
-      `PostgreSQL FK trigger enforcement drift for ${contract.schema}`,
+  const foreignKeyActionFunction = (
+    action: OwnerForeignKeyV1["on_update"] | OwnerForeignKeyV1["on_delete"],
+    suffix: "upd" | "del",
+  ): string =>
+    `RI_FKey_${
+      {
+        no_action: "noaction",
+        restrict: "restrict",
+        cascade: "cascade",
+        set_null: "setnull",
+        set_default: "setdefault",
+      }[action]
+    }_${suffix}`;
+  for (const foreignKey of foreignKeyResult.rows) {
+    const triggers = foreignKeyTriggerResult.rows.filter(
+      ({ constraint_name, table_name }) =>
+        constraint_name === foreignKey.constraint_name &&
+        table_name === foreignKey.table_name,
     );
+    const expectedIdentities = [
+      `${foreignKey.table_name}:RI_FKey_check_ins`,
+      `${foreignKey.table_name}:RI_FKey_check_upd`,
+      `${foreignKey.referenced_table}:${foreignKeyActionFunction(foreignKey.on_delete, "del")}`,
+      `${foreignKey.referenced_table}:${foreignKeyActionFunction(foreignKey.on_update, "upd")}`,
+    ];
+    const observedIdentities = triggers.map(
+      ({ trigger_relation, function_name }) =>
+        `${trigger_relation}:${function_name}`,
+    );
+    if (
+      triggers.length !== 4 ||
+      triggers.some(
+        ({ enabled_mode, function_schema }) =>
+          enabled_mode !== "O" || function_schema !== "pg_catalog",
+      ) ||
+      fingerprint([...observedIdentities].sort()) !==
+        fingerprint([...expectedIdentities].sort())
+    ) {
+      throw new Error(
+        `PostgreSQL FK trigger enforcement drift for ${contract.schema}.${foreignKey.constraint_name}`,
+      );
+    }
   }
 
   const uniqueConstraintResult = await postgres.query<{
@@ -5752,13 +6108,15 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     unique: boolean;
     primary: boolean;
     valid: boolean;
+    relation_persistence: string;
   }>(
     `SELECT idx.relname AS index_name,
             tab.relname AS table_name,
             pg_catalog.pg_get_indexdef(idx.oid) AS definition,
             i.indisunique AS unique,
             i.indisprimary AS primary,
-            i.indisvalid AS valid
+            i.indisvalid AS valid,
+            idx.relpersistence::text AS relation_persistence
        FROM pg_catalog.pg_index i
        JOIN pg_catalog.pg_class idx ON idx.oid = i.indexrelid
        JOIN pg_catalog.pg_class tab ON tab.oid = i.indrelid
@@ -5776,6 +6134,13 @@ export async function verifyOwnerRepositoryDeploymentFromPostgresV1<
     indexResult.rows.map(indexSnapshot),
     contract.database_indexes.map(indexSnapshot),
   );
+  if (
+    indexResult.rows.some(
+      ({ relation_persistence }) => relation_persistence !== "p",
+    )
+  ) {
+    throw new Error(`PostgreSQL index persistence drift for ${contract.schema}`);
+  }
 
   const checkConstraintResult = await postgres.query<{
     constraint_name: string;

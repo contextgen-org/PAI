@@ -78,7 +78,16 @@ function timerContractWithReconciliation() {
         table_name: permission.table_name,
         column_name: columnName,
         postgres_type: postgresType,
-        not_null: false,
+        not_null:
+          permission.table_name === "timer_event_inbox" &&
+          [
+            "source",
+            "event_id",
+            "idempotency_key",
+            "payload_hash",
+            "semantic_hash",
+            "scope_fingerprint",
+          ].includes(columnName),
         default_expression: null,
         identity: "",
         generated: "",
@@ -228,6 +237,242 @@ describe("owner repository contracts", () => {
       expect(Object.isFrozen(contract)).toBe(true);
       expect(Object.isFrozen(contract.tables)).toBe(true);
     }
+  });
+
+  it("fails closed on every owner's durable inbox identity drift", () => {
+    for (const contract of contracts) {
+      const inboxTable = contract.inbox_tables[0];
+      expect(inboxTable).toBeDefined();
+      if (inboxTable === undefined) continue;
+
+      expect(() =>
+        defineOwnerRepositoryContractV1({
+          ...contract,
+          table_permissions: contract.table_permissions.map((permission) =>
+            permission.table_name === inboxTable
+              ? {
+                  ...permission,
+                  select_columns: permission.select_columns.filter(
+                    (column) => column !== "event_id",
+                  ),
+                }
+              : permission,
+          ),
+        }),
+      ).toThrow(/durable inbox identity columns drift/u);
+
+      expect(() =>
+        defineOwnerRepositoryContractV1({
+          ...contract,
+          function_signatures: contract.function_signatures.map((signature) =>
+            signature.writes_tables.includes(inboxTable)
+              ? {
+                  ...signature,
+                  effects: signature.effects.map((effect) =>
+                    effect.table_name === inboxTable
+                      ? {
+                          ...effect,
+                          concurrency_control: "idempotency_key" as const,
+                        }
+                      : effect,
+                  ),
+                }
+              : signature,
+          ),
+        }),
+      ).toThrow(/durable inbox identity ABI drift/u);
+
+      expect(() =>
+        defineOwnerRepositoryContractV1({
+          ...contract,
+          function_signatures: contract.function_signatures.map((signature) =>
+            signature.writes_tables.includes(inboxTable)
+              ? {
+                  ...signature,
+                  arguments: signature.arguments.filter(
+                    ({ argument_name }) =>
+                      argument_name !== "p_semantic_hash",
+                  ),
+                }
+              : signature,
+          ),
+        }),
+      ).toThrow(/semantic effect|durable inbox identity ABI drift/u);
+    }
+  });
+
+  it("forbids a second business-key uniqueness constraint from shadowing inbox delivery identity", () => {
+    const base = timerContractWithReconciliation();
+    const deliveryIdentity = {
+      constraint_name: "timer_event_inbox_source_event_id_key",
+      table_name: "timer_event_inbox",
+      columns: ["source", "event_id"],
+      kind: "unique",
+      deferrable: false,
+      initially_deferred: false,
+      validated: true,
+    } as const;
+    const deliveryIdentityIndex = {
+      index_name: "timer_event_inbox_source_event_id_key",
+      table_name: "timer_event_inbox",
+      unique: true,
+      primary: false,
+      valid: true,
+      definition:
+        "CREATE UNIQUE INDEX timer_event_inbox_source_event_id_key ON timer.timer_event_inbox USING btree (source, event_id)",
+    } as const;
+    const businessKeyIndex = {
+      ...deliveryIdentityIndex,
+      index_name: "timer_event_inbox_source_idempotency_key",
+      definition:
+        "CREATE UNIQUE INDEX timer_event_inbox_source_idempotency_key ON timer.timer_event_inbox USING btree (source, idempotency_key)",
+    } as const;
+    expect(() =>
+      defineOwnerRepositoryContractV1({
+        ...base,
+        database_unique_constraints: [deliveryIdentity],
+        database_indexes: [
+          ...(base.database_indexes ?? []),
+          deliveryIdentityIndex,
+        ],
+      } as never),
+    ).not.toThrow();
+    expect(() =>
+      defineOwnerRepositoryContractV1({
+        ...base,
+        database_unique_constraints: [
+          deliveryIdentity,
+          {
+            ...deliveryIdentity,
+            constraint_name:
+              "timer_event_inbox_source_scope_idempotency_key",
+            columns: ["source", "scope_fingerprint", "idempotency_key"],
+          },
+        ],
+      } as never),
+    ).toThrow(/only one non-deferrable UNIQUE\(source,event_id\)/u);
+    expect(() =>
+      defineOwnerRepositoryContractV1({
+        ...base,
+        database_unique_constraints: [deliveryIdentity],
+        database_indexes: [
+          ...(base.database_indexes ?? []),
+          deliveryIdentityIndex,
+          businessKeyIndex,
+        ],
+      } as never),
+    ).toThrow(/only one non-deferrable UNIQUE\(source,event_id\)/u);
+  });
+
+  it("requires durable inbox conflicts to close before business mutations", () => {
+    const signature = ownerFunctionSignatureV1({
+      schema: "timer",
+      function_name: "consume_timer_event_v1",
+      primary_table: "timer_event_inbox",
+      writer_kind: "state_transition",
+      arguments: [
+        ["p_event", "jsonb"],
+        ["p_idempotency_key", "text"],
+        ["p_payload_hash", "text"],
+        ["p_semantic_hash", "text"],
+        ["p_scope_fingerprint", "text"],
+      ],
+      reads_tables: ["timer_event_inbox"],
+      writes_tables: [
+        "timer_event_inbox",
+        "timer_event_dlq",
+        "timer_audit_logs",
+      ],
+      effects: [
+        {
+          table_name: "timer_event_inbox",
+          operation: "append",
+          concurrency_control: "durable_event_identity",
+        },
+        {
+          table_name: "timer_event_dlq",
+          operation: "append",
+          concurrency_control: "idempotency_key",
+        },
+        {
+          table_name: "timer_audit_logs",
+          operation: "append",
+          concurrency_control: "idempotency_key",
+        },
+      ],
+      returns: "jsonb",
+    });
+    const auditInsert = `
+        INSERT INTO timer.timer_audit_logs(id, event_type, payload)
+          VALUES (p_idempotency_key, 'timer.event.applied', p_event);`;
+    const definition = (businessBeforeConflict = "") => `
+      CREATE FUNCTION timer.consume_timer_event_v1(
+        p_event jsonb,
+        p_idempotency_key text,
+        p_payload_hash text,
+        p_semantic_hash text,
+        p_scope_fingerprint text
+      ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+      SET search_path = timer, pg_temp AS $body$
+      DECLARE
+        existing timer.timer_event_inbox%ROWTYPE;
+        inserted_id text;
+      BEGIN
+        IF p_idempotency_key IS NULL THEN
+          RAISE EXCEPTION 'missing idempotency key';
+        END IF;
+        ${businessBeforeConflict}
+        INSERT INTO timer.timer_event_inbox(
+          source,
+          event_id,
+          idempotency_key,
+          payload_hash,
+          semantic_hash,
+          scope_fingerprint
+        ) VALUES (
+          p_event->>'producer',
+          p_event->>'event_id',
+          p_idempotency_key,
+          p_payload_hash,
+          p_semantic_hash,
+          p_scope_fingerprint
+        )
+        ON CONFLICT (source, event_id) DO NOTHING
+        RETURNING event_id INTO inserted_id;
+
+        SELECT * INTO existing
+          FROM timer.timer_event_inbox
+         WHERE source = p_event->>'producer'
+           AND event_id = p_event->>'event_id'
+         FOR UPDATE;
+
+        IF existing.idempotency_key IS DISTINCT FROM p_idempotency_key
+           OR existing.payload_hash IS DISTINCT FROM p_payload_hash
+           OR existing.semantic_hash IS DISTINCT FROM p_semantic_hash
+           OR existing.scope_fingerprint IS DISTINCT FROM p_scope_fingerprint THEN
+          INSERT INTO timer.timer_event_dlq(id, payload)
+            VALUES (p_idempotency_key, p_event);
+          RETURN jsonb_build_object('status', 'conflict');
+        END IF;
+        ${auditInsert}
+        RETURN jsonb_build_object('status', 'processed');
+      END
+      $body$`;
+
+    expect(() =>
+      lintOwnerWriterDefinitionV1(
+        TIMER_REPOSITORY_CONTRACT_V1,
+        signature,
+        definition(),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      lintOwnerWriterDefinitionV1(
+        TIMER_REPOSITORY_CONTRACT_V1,
+        signature,
+        definition(auditInsert),
+      ),
+    ).toThrow(/durable event identity drift/u);
   });
 
   it("declares exact writer-only permissions for every fresh table", () => {
@@ -1281,7 +1526,9 @@ $writer$`;
           runtime_postgres: postgres,
         },
       ),
-    ).rejects.toThrow(/canonical PostgreSQL column snapshot is required/u);
+    ).rejects.toThrow(
+      /canonical PostgreSQL column snapshot is required|durable inbox identity ABI drift/u,
+    );
     expect(queries).toEqual([]);
   });
 

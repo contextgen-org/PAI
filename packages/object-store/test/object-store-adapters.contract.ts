@@ -755,6 +755,7 @@ describe("ObjectStore adapter policy validation", () => {
     await metadata.releaseReconciliation({
       reservation_id: reserved.reservation_id,
       claim_token: first[0]!.claim_token,
+      claim_generation: first[0]!.claim_generation,
       last_error: "transient read-back failure",
       next_retry_at: new Date("2026-07-20T00:07:00.000Z"),
     });
@@ -772,6 +773,84 @@ describe("ObjectStore adapter policy validation", () => {
       upload_attempt_token: reserved.upload_attempt_token,
       cleanup_not_before: "2026-07-20T00:05:00.000Z",
     });
+  });
+
+  it("fences every reconciliation terminal mutation by claim generation", async () => {
+    const metadata = new InMemoryObjectMetadataRepositoryV1();
+    const reserved = await metadata.reservePut({
+      owner_service: "trigger_processor",
+      object_class: "trigger_process_snapshot",
+      scope,
+      scope_fingerprint: objectScopeFingerprintV1(scope),
+      idempotency_key: "generation-fenced-upload",
+      request_fingerprint: "request-generation-fenced-upload",
+      sha256: digest(new Uint8Array()),
+      size_bytes: 0,
+      media_type: "application/octet-stream",
+      retention_until: "2026-07-21T00:00:00.000Z",
+      now: new Date("2026-07-20T00:00:00.000Z"),
+      foreground_lease_until: new Date("2026-07-20T00:05:00.000Z"),
+    });
+    expect(reserved.kind).toBe("claimed");
+    if (reserved.kind !== "claimed") throw new Error("reservation was not claimed");
+    await metadata.handoffPutReconciliation(
+      reserved.reservation_id,
+      "put_finalize",
+      reserved.foreground_lease_token,
+    );
+    const first = await metadata.claimReconciliation({
+      worker_id: "generation-worker-1",
+      now: new Date("2026-07-20T00:06:00.000Z"),
+      locked_until: new Date("2026-07-20T00:06:30.000Z"),
+      limit: 1,
+      expired_upload_cleanup_not_before: new Date("2026-07-20T00:11:00.000Z"),
+    });
+    const second = await metadata.claimReconciliation({
+      worker_id: "generation-worker-2",
+      now: new Date("2026-07-20T00:07:00.000Z"),
+      locked_until: new Date("2026-07-20T00:07:30.000Z"),
+      limit: 1,
+      expired_upload_cleanup_not_before: new Date("2026-07-20T00:12:00.000Z"),
+    });
+    const staleGeneration = first[0]!.claim_generation;
+    const current = second[0]!;
+    expect(current.claim_generation).toBeGreaterThan(staleGeneration);
+
+    await expect(
+      metadata.completeReconciliation({
+        reservation_id: current.reservation_id,
+        claim_token: current.claim_token,
+        claim_generation: staleGeneration,
+        version: "stale-version",
+      }),
+    ).rejects.toThrow(/stale reconciliation claim/);
+    await expect(
+      metadata.releaseReconciliation({
+        reservation_id: current.reservation_id,
+        claim_token: current.claim_token,
+        claim_generation: staleGeneration,
+        last_error: "stale release",
+        next_retry_at: new Date("2026-07-20T00:08:00.000Z"),
+      }),
+    ).rejects.toThrow(/stale reconciliation claim/);
+    await expect(
+      metadata.redirectReconciliation({
+        reservation_id: current.reservation_id,
+        claim_token: current.claim_token,
+        claim_generation: staleGeneration,
+        operation: "put_cleanup",
+        last_error: "stale redirect",
+      }),
+    ).rejects.toThrow(/stale reconciliation claim/);
+
+    await expect(
+      metadata.completeReconciliation({
+        reservation_id: current.reservation_id,
+        claim_token: current.claim_token,
+        claim_generation: current.claim_generation,
+        version: "generation-fenced-version",
+      }),
+    ).resolves.toMatchObject({ version: "generation-fenced-version" });
   });
 
   it("requires a matching post-horizon backend receipt before completing a late-upload cleanup tombstone", async () => {
@@ -817,12 +896,14 @@ describe("ObjectStore adapter policy validation", () => {
       metadata.completeReconciliation({
         reservation_id: reserved.reservation_id,
         claim_token: claimed[0]!.claim_token,
+        claim_generation: claimed[0]!.claim_generation,
       }),
     ).rejects.toThrow(/terminal receipt/);
     await expect(
       metadata.completeReconciliation({
         reservation_id: reserved.reservation_id,
         claim_token: claimed[0]!.claim_token,
+        claim_generation: claimed[0]!.claim_generation,
         backend_put_terminal_receipt: {
           upload_attempt_token: "wrong-attempt",
           terminal_at: "2026-07-20T00:06:00.000Z",
@@ -833,6 +914,7 @@ describe("ObjectStore adapter policy validation", () => {
       metadata.completeReconciliation({
         reservation_id: reserved.reservation_id,
         claim_token: claimed[0]!.claim_token,
+        claim_generation: claimed[0]!.claim_generation,
         backend_put_terminal_receipt: {
           upload_attempt_token: reserved.upload_attempt_token,
           terminal_at: "2026-07-20T00:06:00.000Z",
@@ -843,6 +925,7 @@ describe("ObjectStore adapter policy validation", () => {
       metadata.completeReconciliation({
         reservation_id: reserved.reservation_id,
         claim_token: claimed[0]!.claim_token,
+        claim_generation: claimed[0]!.claim_generation,
         backend_put_terminal_receipt: {
           upload_attempt_token: reserved.upload_attempt_token,
           terminal_at: "2026-07-20T00:15:00.000Z",
@@ -919,6 +1002,7 @@ describe("ObjectStore adapter policy validation", () => {
       metadata.completeReconciliation({
         reservation_id: deletion.reservation_id,
         claim_token: claim!.claim_token,
+        claim_generation: claim!.claim_generation,
       }),
     ).resolves.toMatchObject({ state: "deleted" });
   });
@@ -1325,6 +1409,7 @@ describe("ObjectStore adapter policy validation", () => {
       {
         reservation_id: "malformed-operation-reservation",
         claim_token: "malformed-operation-claim",
+        claim_generation: 1,
         operation: "malformed_operation" as never,
         record: malformedRecord,
         attempt: 1,
@@ -1333,6 +1418,7 @@ describe("ObjectStore adapter policy validation", () => {
       {
         reservation_id: "wrong-state-operation-reservation",
         claim_token: "wrong-state-operation-claim",
+        claim_generation: 1,
         operation: "put_cleanup" as const,
         record: { ...malformedRecord, state: "available" as const },
         attempt: 1,
@@ -1341,6 +1427,7 @@ describe("ObjectStore adapter policy validation", () => {
       {
         reservation_id: "wrong-provenance-operation-reservation",
         claim_token: "wrong-provenance-operation-claim",
+        claim_generation: 1,
         operation: "delete_finalize" as const,
         record: { ...malformedRecord, state: "delete_pending" as const },
         attempt: 1,
@@ -1426,6 +1513,7 @@ describe("ObjectStore adapter policy validation", () => {
     const claim = {
       reservation_id: "claim-iterator-reservation",
       claim_token: "claim-iterator-token",
+      claim_generation: 1,
       operation: "delete_finalize" as const,
       record,
       attempt: 1,
@@ -1496,6 +1584,7 @@ describe("ObjectStore adapter policy validation", () => {
             {
               reservation_id: "oversized-claim-reservation-1",
               claim_token: "oversized-claim-token-1",
+              claim_generation: 1,
               operation: "put_cleanup" as const,
               record,
               attempt: 1,
@@ -1504,6 +1593,7 @@ describe("ObjectStore adapter policy validation", () => {
             {
               reservation_id: "oversized-claim-reservation-2",
               claim_token: "oversized-claim-token-2",
+              claim_generation: 1,
               operation: "put_cleanup" as const,
               record,
               attempt: 1,
@@ -1881,6 +1971,7 @@ describe("ObjectStore async-boundary snapshots", () => {
     const claim = {
       reservation_id: "claim-snapshot-reservation",
       claim_token: "claim-snapshot-token",
+      claim_generation: 1,
       operation: "delete_finalize" as const,
       record,
       attempt: 1,
@@ -1950,6 +2041,7 @@ describe("ObjectStore async-boundary snapshots", () => {
     expect(completeReconciliation).toHaveBeenCalledWith({
       reservation_id: "claim-snapshot-reservation",
       claim_token: "claim-snapshot-token",
+      claim_generation: 1,
     });
   });
 
@@ -2096,6 +2188,7 @@ describe("ObjectStore async-boundary snapshots", () => {
     const claim = {
       reservation_id: "accessor-claim-reservation",
       claim_token: "accessor-claim-token",
+      claim_generation: 1,
       operation: "delete_finalize" as const,
       record: { ...storedRecord!, state: "delete_pending" as const },
       attempt: 1,

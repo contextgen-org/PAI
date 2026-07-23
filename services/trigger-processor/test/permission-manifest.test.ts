@@ -216,6 +216,7 @@ describe("owner permission manifest lifecycle boundaries", () => {
       expect.arrayContaining([
         "trigger_process_meta_projections",
         "trigger_processes",
+        "trigger_process_transitions",
         "trigger_event_inbox",
       ]),
     );
@@ -237,6 +238,11 @@ describe("owner permission manifest lifecycle boundaries", () => {
       },
       {
         table_name: "trigger_event_inbox",
+        operation: "append",
+        concurrency_control: "durable_event_identity",
+      },
+      {
+        table_name: "trigger_event_dlq",
         operation: "append",
         concurrency_control: "idempotency_key",
       },

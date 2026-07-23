@@ -231,10 +231,11 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
       writer_kind: "immutable_append",
       arguments: [["p_review_id", "text"], ["p_fact_id", "text"], ["p_source_meta_job_id", "text"], ["p_suggestion_id", "text"], ["p_expected_candidate_version", "integer"], ["p_suggested_action", "text"], ["p_review", "jsonb"], ["p_source_event", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_payload_hash", "text"], ["p_semantic_hash", "text"], ["p_scope_fingerprint", "text"], ["p_trace_id", "text"]],
       reads_tables: ["knowthat_facts", "knowthat_candidate_reviews", "knowthat_event_inbox"],
-      writes_tables: ["knowthat_candidate_reviews", "knowthat_event_inbox", "knowthat_event_outbox"],
+      writes_tables: ["knowthat_candidate_reviews", "knowthat_event_inbox", "knowthat_event_dlq", "knowthat_event_outbox"],
       effects: [
         { table_name: "knowthat_candidate_reviews", operation: "append", concurrency_control: "idempotency_key" },
-        { table_name: "knowthat_event_inbox", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "knowthat_event_inbox", operation: "append", concurrency_control: "durable_event_identity" },
+        { table_name: "knowthat_event_dlq", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "knowthat_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
       ],
       returns: "jsonb",

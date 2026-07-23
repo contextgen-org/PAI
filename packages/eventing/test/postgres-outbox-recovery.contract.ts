@@ -328,10 +328,15 @@ const EVENTING_CONTRACT_INPUT = {
         ["p_scope_fingerprint", "text"],
       ],
       reads_tables: ["eventing_inbox", "eventing_projection"],
-      writes_tables: ["eventing_inbox", "eventing_projection", "eventing_audit"],
+      writes_tables: ["eventing_inbox", "eventing_projection", "eventing_audit", "eventing_dlq"],
       effects: [
         {
           table_name: "eventing_inbox",
+          operation: "append",
+          concurrency_control: "durable_event_identity",
+        },
+        {
+          table_name: "eventing_dlq",
           operation: "append",
           concurrency_control: "idempotency_key",
         },
@@ -596,9 +601,9 @@ const EVENTING_CONTRACT_INPUT = {
       validated: true,
     },
     {
-      constraint_name: "eventing_inbox_source_scope_fingerprint_idempotency_key_key",
+      constraint_name: "eventing_inbox_source_event_id_key",
       table_name: "eventing_inbox",
-      columns: ["source", "scope_fingerprint", "idempotency_key"],
+      columns: ["source", "event_id"],
       kind: "unique",
       deferrable: false,
       initially_deferred: false,
@@ -671,10 +676,10 @@ const EVENTING_CONTRACT_INPUT = {
       valid: true,
     },
     {
-      index_name: "eventing_inbox_source_scope_fingerprint_idempotency_key_key",
+      index_name: "eventing_inbox_source_event_id_key",
       table_name: "eventing_inbox",
       definition:
-        "CREATE UNIQUE INDEX eventing_inbox_source_scope_fingerprint_idempotency_key_key ON trigger_processor.eventing_inbox USING btree (source, scope_fingerprint, idempotency_key)",
+        "CREATE UNIQUE INDEX eventing_inbox_source_event_id_key ON trigger_processor.eventing_inbox USING btree (source, event_id)",
       unique: true,
       primary: false,
       valid: true,
@@ -905,7 +910,7 @@ CREATE TABLE trigger_processor.eventing_inbox (
   semantic_hash text NOT NULL,
   processed_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL,
-  UNIQUE (source, scope_fingerprint, idempotency_key)
+  UNIQUE (source, event_id)
 );
 CREATE TABLE trigger_processor.eventing_dlq (
   id text PRIMARY KEY,
@@ -1128,7 +1133,7 @@ LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = trigger_processor, pg_temp
 AS $$
 DECLARE
-  existing_hash text;
+  existing trigger_processor.eventing_inbox%ROWTYPE;
   applied_inbox_id text;
   projection_id text;
 BEGIN
@@ -1137,11 +1142,11 @@ BEGIN
     id, source, event_id, scope_fingerprint, idempotency_key, payload_hash,
     semantic_hash, processed_at, created_at
   ) VALUES (
-    'inbox:' || projection_id,
+    'inbox:' || (p_event->>'producer') || ':' || (p_event->>'event_id'),
     p_event->>'producer', p_event->>'event_id', p_scope_fingerprint,
     p_idempotency_key, p_payload_hash, p_semantic_hash,
     clock_timestamp(), clock_timestamp()
-  ) ON CONFLICT (source, scope_fingerprint, idempotency_key) DO NOTHING
+  ) ON CONFLICT (source, event_id) DO NOTHING
   RETURNING id INTO applied_inbox_id;
   IF FOUND THEN
     INSERT INTO trigger_processor.eventing_projection(
@@ -1158,22 +1163,45 @@ BEGIN
     INSERT INTO trigger_processor.eventing_audit(
       id, inbox_id, event_id, semantic_hash, created_at
     ) VALUES (
-      'audit:' || projection_id, applied_inbox_id, p_event->>'event_id',
+      'audit:' || (p_event->>'producer') || ':' || (p_event->>'event_id'),
+      applied_inbox_id, p_event->>'event_id',
       p_semantic_hash, clock_timestamp()
     );
     RETURN jsonb_build_object('status', 'processed');
   END IF;
-  SELECT semantic_hash INTO existing_hash
+  SELECT * INTO existing
     FROM trigger_processor.eventing_inbox
    WHERE source = p_event->>'producer'
-     AND scope_fingerprint = p_scope_fingerprint
-     AND idempotency_key = p_idempotency_key
+     AND event_id = p_event->>'event_id'
    FOR UPDATE;
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'inbox idempotency scope fingerprint missing';
+    RAISE EXCEPTION 'inbox delivery identity missing';
   END IF;
-  IF existing_hash <> p_semantic_hash THEN
-    RAISE EXCEPTION 'inbox idempotency semantic hash conflict';
+  IF existing.idempotency_key IS DISTINCT FROM p_idempotency_key
+     OR existing.payload_hash IS DISTINCT FROM p_payload_hash
+     OR existing.semantic_hash IS DISTINCT FROM p_semantic_hash
+     OR existing.scope_fingerprint IS DISTINCT FROM p_scope_fingerprint THEN
+    INSERT INTO trigger_processor.eventing_dlq(
+      id, source_event_id, event_type, payload, last_error, failed_at
+    ) VALUES (
+      'inbox-conflict:' || (p_event->>'producer') || ':' ||
+        (p_event->>'event_id') || ':' || md5(jsonb_build_array(
+          p_idempotency_key, p_payload_hash, p_semantic_hash,
+          p_scope_fingerprint
+        )::text),
+      p_event->>'event_id',
+      'consumer.delivery.identity_conflict',
+      p_event,
+      jsonb_build_object(
+        'code', 'durable_inbox_identity_conflict',
+        'idempotency_key', p_idempotency_key,
+        'payload_hash', p_payload_hash,
+        'semantic_hash', p_semantic_hash,
+        'scope_fingerprint', p_scope_fingerprint
+      ),
+      clock_timestamp()
+    ) ON CONFLICT (id) DO NOTHING;
+    RETURN jsonb_build_object('status', 'conflict');
   END IF;
   RETURN jsonb_build_object('status', 'replayed');
 END;
@@ -1771,42 +1799,79 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     });
     expect(published).toEqual([envelope.event_id]);
 
-    const consume = async (eventPayload: Readonly<Record<string, unknown>>) =>
-      secondProcess.unit_of_work.withTransaction(
+    const consume = async (
+      eventPayload: Readonly<Record<string, unknown>>,
+      overrides: Readonly<{
+        event_id?: string;
+        idempotency_key?: string;
+        payload_hash?: string;
+        semantic_hash?: string;
+        scope_fingerprint?: string;
+      }> = {},
+    ) => {
+      const consumedEnvelope = {
+        ...envelope,
+        ...(overrides.event_id === undefined
+          ? {}
+          : { event_id: overrides.event_id }),
+        payload: eventPayload,
+      };
+      const result = await secondProcess.unit_of_work.withTransaction(
         {
           operation: "consume_skill_event",
-          idempotency_key: envelope.idempotency_key,
+          idempotency_key:
+            overrides.idempotency_key ?? envelope.idempotency_key,
           trace_id: envelope.trace_id,
           isolation: "read_committed",
           retry: "none",
         },
         async (transaction, repositories) =>
           repositories.owner.executeWriter<
-            Readonly<{ status: "processed" | "replayed" }>,
+            Readonly<{ status: "processed" | "replayed" | "conflict" }>,
             "consume_eventing_inbox_v1"
           >(transaction, {
             writer: "consume_eventing_inbox_v1",
             arguments: {
-              p_event: { ...envelope, payload: eventPayload },
-              p_idempotency_key: envelope.idempotency_key,
-              p_payload_hash: canonicalPayloadHashV1(eventPayload),
-              p_semantic_hash: canonicalDurableEventEnvelopeSemanticHashV1({
-                ...envelope,
-                payload: eventPayload,
-              }),
-              p_scope_fingerprint: durableEventScopeFingerprintV1({
-                ...envelope,
-                payload: eventPayload,
-              }),
+              p_event: consumedEnvelope,
+              p_idempotency_key:
+                overrides.idempotency_key ?? envelope.idempotency_key,
+              p_payload_hash:
+                overrides.payload_hash ?? canonicalPayloadHashV1(eventPayload),
+              p_semantic_hash:
+                overrides.semantic_hash ??
+                canonicalDurableEventEnvelopeSemanticHashV1(consumedEnvelope),
+              p_scope_fingerprint:
+                overrides.scope_fingerprint ??
+                durableEventScopeFingerprintV1(consumedEnvelope),
             },
             expected_rows: 1,
           }),
       );
+      if (result.status === "conflict") {
+        throw new Error("inbox delivery identity conflict");
+      }
+      return result;
+    };
     await expect(consume(envelope.payload)).resolves.toEqual({ status: "processed" });
     await expect(consume(envelope.payload)).resolves.toEqual({ status: "replayed" });
     await expect(
-      consume({ ...envelope.payload, rejection_code: "semantic_drift" }),
-    ).rejects.toThrow(/semantic hash conflict/);
+      consume(envelope.payload, { idempotency_key: "changed-business-key" }),
+    ).rejects.toThrow(/delivery identity conflict/);
+    await expect(
+      consume(envelope.payload, { payload_hash: "changed-payload-hash" }),
+    ).rejects.toThrow(/delivery identity conflict/);
+    await expect(
+      consume(envelope.payload, { semantic_hash: "changed-semantic-hash" }),
+    ).rejects.toThrow(/delivery identity conflict/);
+    await expect(
+      consume(envelope.payload, { scope_fingerprint: "changed-scope" }),
+    ).rejects.toThrow(/delivery identity conflict/);
+    await expect(
+      consume(envelope.payload, {
+        event_id: `${envelope.event_id}_next`,
+        idempotency_key: envelope.idempotency_key,
+      }),
+    ).resolves.toEqual({ status: "processed" });
 
     if (admin === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
     const projection = await admin.query<{
@@ -1820,14 +1885,20 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     );
     expect(projection.rows).toEqual([
       {
-        applied_count: 1,
+        applied_count: 2,
         semantic_hash: canonicalDurableEventEnvelopeSemanticHashV1(envelope),
       },
     ]);
     const audit = await admin.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM trigger_processor.eventing_audit",
     );
-    expect(audit.rows).toEqual([{ count: "1" }]);
+    expect(audit.rows).toEqual([{ count: "2" }]);
+    const conflicts = await admin.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+         FROM trigger_processor.eventing_dlq
+        WHERE event_type = 'consumer.delivery.identity_conflict'`,
+    );
+    expect(conflicts.rows).toEqual([{ count: "4" }]);
     const persisted = await admin.query<{
       status: string;
       attempt_count: number;

@@ -432,6 +432,11 @@ export const TriggerProcessTransitionEvidenceV1Schema = Type.Union(
     }),
     strictEvidenceObject({
       kind: Type.Literal("meta_finalization"),
+      execution_provenance: Type.Union([
+        Type.Literal("direct_execution"),
+        Type.Literal("deferred_execution"),
+        Type.Literal("not_applicable"),
+      ]),
       ...terminalTransactionProperties,
     }),
   ],
@@ -822,21 +827,29 @@ export function isTriggerProcessTransitionV1Allowed(
         (from.phase === "meta_enqueued" &&
           from.meta_enqueue_reason === "user_retracted" &&
           to.status === "cancelled" &&
-          evidence.terminal_outcome === "cancelled_with_reason") ||
+          evidence.terminal_outcome === "cancelled_with_reason" &&
+          evidence.execution_provenance === "not_applicable") ||
         (from.phase === "meta_enqueued" &&
           from.meta_enqueue_reason === "system_interrupted" &&
           to.status === "cancelled" &&
-          evidence.terminal_outcome === "interrupted_with_reason") ||
+          evidence.terminal_outcome === "interrupted_with_reason" &&
+          evidence.execution_provenance === "not_applicable") ||
         (from.phase === "meta_enqueued" &&
           from.meta_enqueue_reason ===
             "failed_with_learnable_snapshot" &&
           to.status === "failed" &&
-          evidence.terminal_outcome === "failed_with_reason") ||
+          evidence.terminal_outcome === "failed_with_reason" &&
+          evidence.execution_provenance === "not_applicable") ||
         (from.phase === "meta_enqueued" &&
           from.meta_enqueue_reason === "cooldown_expired" &&
-          (to.status === "completed" || to.status === "failed") &&
-          (to.status !== "failed" ||
-            evidence.terminal_outcome === "failed_with_reason"));
+          ((to.status === "completed" &&
+            ((evidence.terminal_outcome === "executed" &&
+              evidence.execution_provenance === "direct_execution") ||
+              (evidence.terminal_outcome === "deferred_then_executed" &&
+                evidence.execution_provenance === "deferred_execution"))) ||
+            (to.status === "failed" &&
+              evidence.terminal_outcome === "failed_with_reason" &&
+              evidence.execution_provenance !== "not_applicable")));
       return (
         from.phase === "meta_enqueued" &&
         reasonOutcomeMatches &&
