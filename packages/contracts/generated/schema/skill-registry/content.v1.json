@@ -1,0 +1,188 @@
+{
+  "$id": "urn:pai:skill-registry:content:v1",
+  "anyOf": [
+    {
+      "$id": "urn:pai:skill-registry:content-request:v1",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "resolution_id",
+        "runtime_run_id",
+        "workspace_id",
+        "bot_id",
+        "deployment_environment",
+        "release_channel",
+        "expected_package_digest",
+        "expected_manifest_digest",
+        "security_revocation_epoch",
+        "trace_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "skill_content_request.v1",
+          "type": "string"
+        },
+        "resolution_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "runtime_run_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "workspace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "deployment_environment": {
+          "$id": "urn:pai:shared:deployment-environment:v1",
+          "anyOf": [
+            {
+              "const": "local",
+              "type": "string"
+            },
+            {
+              "const": "dev",
+              "type": "string"
+            },
+            {
+              "const": "staging",
+              "type": "string"
+            },
+            {
+              "const": "prod",
+              "type": "string"
+            }
+          ]
+        },
+        "release_channel": {
+          "$id": "urn:pai:shared:release-channel:v1",
+          "anyOf": [
+            {
+              "const": "stable",
+              "type": "string"
+            },
+            {
+              "const": "canary",
+              "type": "string"
+            }
+          ]
+        },
+        "owner_agent_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "expected_package_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "expected_manifest_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "security_revocation_epoch": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "trace_id"
+      ],
+      "properties": {
+        "code": {
+          "const": "skill_content_authorized",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "retryable": {
+          "const": false,
+          "type": "boolean"
+        },
+        "details": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "content_ref",
+            "content_type",
+            "size_bytes",
+            "package_digest",
+            "manifest_digest",
+            "entrypoint",
+            "expires_at",
+            "runtime_target"
+          ],
+          "properties": {
+            "content_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "content_type": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "size_bytes": {
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "package_digest": {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "manifest_digest": {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "entrypoint": {
+              "const": "SKILL.md",
+              "type": "string"
+            },
+            "expires_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "runtime_target": {
+              "const": "filesystem_bundle.v1",
+              "type": "string"
+            }
+          }
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

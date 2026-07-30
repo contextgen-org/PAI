@@ -1,3 +1,5 @@
+import { assertCanonicalJsonBoundaryV1 } from "@pai/contracts";
+
 export const ASYMMETRIC_JWT_ALGORITHMS = [
   "EdDSA",
   "ES256",
@@ -32,6 +34,12 @@ export function assertBoundedCompactJwt(token: unknown): asserts token is string
 export function snapshotVerifiedJwtJsonV1<
   T extends Readonly<Record<string, unknown>>,
 >(value: T): T {
+  assertCanonicalJsonBoundaryV1(value, {
+    max_bytes: MAX_COMPACT_JWT_LENGTH,
+    max_depth: MAX_JWT_JSON_DEPTH,
+    max_nodes: MAX_JWT_JSON_NODES,
+    max_container_entries: MAX_JWT_JSON_NODES,
+  });
   const state = { nodes: 0 };
   const snapshot = (entry: unknown, depth: number): unknown => {
     state.nodes += 1;

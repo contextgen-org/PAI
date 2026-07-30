@@ -411,7 +411,8 @@
                   "type": "string"
                 },
                 "local_date": {
-                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                  "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])$",
+                  "description": "Real Gregorian calendar date; enforced by the Timer semantic guard.",
                   "type": "string"
                 },
                 "local_time": {
@@ -421,10 +422,12 @@
                 "timezone": {
                   "minLength": 1,
                   "maxLength": 255,
+                  "description": "IANA time-zone identifier; enforced by the Timer semantic guard.",
                   "type": "string"
                 },
                 "scheduled_for": {
-                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                  "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                  "description": "RFC3339 instant that must resolve to the declared local date/time and timezone.",
                   "type": "string"
                 },
                 "occurrence_key": {
@@ -435,6 +438,26 @@
                   "minLength": 1,
                   "maxLength": 8192,
                   "type": "string"
+                },
+                "trigger_payload": {
+                  "additionalProperties": false,
+                  "description": "The complete object is limited to 8192 canonical JSON UTF-8 bytes by assertTimerTriggerBusinessPayloadV1.",
+                  "type": "object",
+                  "required": [
+                    "schema_version",
+                    "value"
+                  ],
+                  "properties": {
+                    "schema_version": {
+                      "const": "timer.trigger_payload.v1",
+                      "type": "string"
+                    },
+                    "value": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
                 },
                 "is_catch_up": {
                   "const": false,
@@ -534,7 +557,8 @@
                   "type": "string"
                 },
                 "local_date": {
-                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                  "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])$",
+                  "description": "Real Gregorian calendar date; enforced by the Timer semantic guard.",
                   "type": "string"
                 },
                 "local_time": {
@@ -544,10 +568,12 @@
                 "timezone": {
                   "minLength": 1,
                   "maxLength": 255,
+                  "description": "IANA time-zone identifier; enforced by the Timer semantic guard.",
                   "type": "string"
                 },
                 "scheduled_for": {
-                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                  "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                  "description": "RFC3339 instant that must resolve to the declared local date/time and timezone.",
                   "type": "string"
                 },
                 "occurrence_key": {
@@ -558,6 +584,26 @@
                   "minLength": 1,
                   "maxLength": 8192,
                   "type": "string"
+                },
+                "trigger_payload": {
+                  "additionalProperties": false,
+                  "description": "The complete object is limited to 8192 canonical JSON UTF-8 bytes by assertTimerTriggerBusinessPayloadV1.",
+                  "type": "object",
+                  "required": [
+                    "schema_version",
+                    "value"
+                  ],
+                  "properties": {
+                    "schema_version": {
+                      "const": "timer.trigger_payload.v1",
+                      "type": "string"
+                    },
+                    "value": {
+                      "additionalProperties": true,
+                      "type": "object",
+                      "properties": {}
+                    }
+                  }
                 },
                 "is_catch_up": {
                   "const": true,

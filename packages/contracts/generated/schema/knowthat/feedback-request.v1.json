@@ -1,0 +1,93 @@
+{
+  "$id": "urn:pai:knowthat:feedback-request:v1",
+  "additionalProperties": false,
+  "maxCanonicalJsonBytes": 65536,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "feedback_type",
+    "payload",
+    "evidence_ref",
+    "idempotency_key",
+    "trace_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "knowthat_feedback.v1",
+      "type": "string"
+    },
+    "feedback_type": {
+      "anyOf": [
+        {
+          "const": "confirm",
+          "type": "string"
+        },
+        {
+          "const": "deny",
+          "type": "string"
+        },
+        {
+          "const": "clarify",
+          "type": "string"
+        },
+        {
+          "const": "correct",
+          "type": "string"
+        }
+      ]
+    },
+    "payload": {
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {
+          "$id": "T1",
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "T1"
+              }
+            },
+            {
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {
+                  "$ref": "T1"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "evidence_ref": {
+      "$id": "urn:pai:shared:typed-evidence-ref:v1",
+      "minLength": 3,
+      "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+      "type": "string"
+    },
+    "idempotency_key": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "trace_id": {
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+      "type": "string"
+    }
+  }
+}

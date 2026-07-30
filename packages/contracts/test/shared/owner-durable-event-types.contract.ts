@@ -6,7 +6,6 @@ import {
   OWNER_DURABLE_EVENT_TYPES_V1,
   PENDING_OWNER_DURABLE_EVENT_TYPES_V1,
   SERVICE_IDS,
-  TERMINAL_OUTCOMES_V1,
   assertOwnerDurableEventEnvelopeV1,
   durableEventTargetConsumerV1,
   isDurableEventConsumerAllowedV1,
@@ -64,24 +63,25 @@ describe("owner durable event type unions V1", () => {
     ).toBe(true);
   });
 
-  it("partitions declared owner unions into one active owner and explicit pending owners", () => {
-    expect(Object.keys(ACTIVE_OWNER_DURABLE_EVENT_TYPES_V1)).toEqual([
-      "trigger_processor",
-    ]);
-    expect(Object.keys(PENDING_OWNER_DURABLE_EVENT_TYPES_V1).sort()).toEqual([
-      "action_runtime",
-      "knowthat",
-      "memory",
-      "meta_cognition",
-      "skill_registry",
-      "timer_trigger_app",
-    ]);
-    expect(Object.keys(OWNER_DURABLE_EVENT_CONTRACTS_V1)).toEqual([
-      "trigger_processor",
-    ]);
-    expect(
-      Object.keys(OWNER_DURABLE_EVENT_CONTRACTS_V1.trigger_processor).sort(),
-    ).toEqual([...ACTIVE_OWNER_DURABLE_EVENT_TYPES_V1.trigger_processor].sort());
+  it("activates every complete owner union and leaves no schema-only pending owner", () => {
+    expect(Object.keys(ACTIVE_OWNER_DURABLE_EVENT_TYPES_V1).sort()).toEqual(
+      Object.keys(OWNER_DURABLE_EVENT_TYPES_V1).sort(),
+    );
+    expect(Object.keys(PENDING_OWNER_DURABLE_EVENT_TYPES_V1)).toEqual([]);
+    expect(Object.keys(OWNER_DURABLE_EVENT_CONTRACTS_V1).sort()).toEqual(
+      Object.keys(OWNER_DURABLE_EVENT_TYPES_V1).sort(),
+    );
+    for (const [owner, eventTypes] of Object.entries(
+      OWNER_DURABLE_EVENT_TYPES_V1,
+    )) {
+      expect(
+        Object.keys(
+          OWNER_DURABLE_EVENT_CONTRACTS_V1[
+            owner as keyof typeof OWNER_DURABLE_EVENT_CONTRACTS_V1
+          ],
+        ).sort(),
+      ).toEqual([...eventTypes].sort());
+    }
 
     expect(Object.isFrozen(OWNER_DURABLE_EVENT_TYPES_V1)).toBe(true);
     expect(Object.isFrozen(ACTIVE_OWNER_DURABLE_EVENT_TYPES_V1)).toBe(true);
@@ -91,14 +91,9 @@ describe("owner durable event type unions V1", () => {
     ).toBe(true);
   });
 
-  it("keeps pending event names available to DB generation but denies active contracts", () => {
+  it("exposes complete Timer contracts but keeps its undocumented cross-service routes closed", () => {
     expect(
       OWNER_DURABLE_EVENT_TYPES_V1.timer_trigger_app.includes(
-        "timer.occurrence.due",
-      ),
-    ).toBe(true);
-    expect(
-      PENDING_OWNER_DURABLE_EVENT_TYPES_V1.timer_trigger_app.includes(
         "timer.occurrence.due",
       ),
     ).toBe(true);
@@ -107,13 +102,13 @@ describe("owner durable event type unions V1", () => {
         "timer_trigger_app",
         "timer.occurrence.due",
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       ownerDurableEventContractV1(
         "timer_trigger_app",
         "timer.occurrence.due",
-      ),
-    ).toBeUndefined();
+      )?.consumer_services,
+    ).toEqual([]);
     expect(
       isOwnerDurableEventTypeV1("trigger_processor", "trigger.accepted"),
     ).toBe(true);
@@ -131,9 +126,8 @@ describe("owner durable event type unions V1", () => {
     ).toBe(false);
   });
 
-  it("rejects every pending owner even when a former skeletal schema version is supplied", () => {
-    const pendingBranches = [
-      ["action_runtime", "runtime.run.completed", "runtime_domain_event.v1"],
+  it("rejects former skeletal payloads after every owner union becomes executable", () => {
+    const incompleteBranches = [
       ["timer_trigger_app", "timer.occurrence.due", "timer_event.v1"],
       ["timer_trigger_app", "timer.occurrence.due", "timer.event.v1"],
       ["meta_cognition", "meta.result.finalized", "meta_cognition_event.v1"],
@@ -143,16 +137,16 @@ describe("owner durable event type unions V1", () => {
       ["memory", "memory.integration.finished", "memory.event.v1"],
     ] as const;
 
-    for (const [owner, eventType, schemaVersion] of pendingBranches) {
+    for (const [owner, eventType, schemaVersion] of incompleteBranches) {
       expect(() =>
         assertOwnerDurableEventEnvelopeV1(
           pendingEnvelope(owner, eventType, schemaVersion),
         ),
-      ).toThrow(/event_type.*producer owner union/u);
+      ).toThrow(/schema_version|payload/u);
     }
   });
 
-  it("keeps Meta command-like declarations pending and unroutable", () => {
+  it("binds Meta command audit events to their exact documented targets", () => {
     const commandLikeTypes = [
       "meta.memory.write_requested",
       "meta.knowthat.write_requested",
@@ -162,24 +156,52 @@ describe("owner durable event type unions V1", () => {
 
     for (const eventType of commandLikeTypes) {
       expect(OWNER_DURABLE_EVENT_TYPES_V1.meta_cognition).toContain(eventType);
-      expect(PENDING_OWNER_DURABLE_EVENT_TYPES_V1.meta_cognition).toContain(
-        eventType,
-      );
       expect(
         ownerDurableEventContractV1("meta_cognition", eventType),
-      ).toBeUndefined();
-      const envelope = pendingEnvelope(
-        "meta_cognition",
-        eventType,
-        "meta_cognition_event.v1",
-      );
-      expect(isDurableEventTargetAllowedV1(envelope, "memory.command")).toBe(
-        false,
-      );
-      expect(() => assertOwnerDurableEventEnvelopeV1(envelope)).toThrow(
-        /event_type/u,
-      );
+      ).toBeDefined();
     }
+    const hash = `sha256:${"a".repeat(64)}`;
+    const envelope = {
+      event_id: "evt_meta_memory_001",
+      event_type: "meta.memory.write_requested",
+      schema_version: "meta_cognition_event.v1",
+      producer: "meta_cognition",
+      occurred_at: "2026-07-22T04:00:00.000Z",
+      idempotency_key: "memory_write:mj_1:plan_1:chunk_1",
+      trace_id: "trace_meta_001",
+      payload: {
+        workspace_id: "workspace_001",
+        bot_id: "bot_001",
+        owner_agent_id: "owner_agent_001",
+        deployment_environment: "dev",
+        release_channel: "stable",
+        meta_job_id: "mj_1",
+        trigger_process_id: "process_001",
+        memory_write_request_id: "memory_request_001",
+        split_plan_id: "plan_001",
+        plan_version: 1,
+        chunk_no: 1,
+        chunk_hash: hash,
+        request_payload_ref: "artifact:memory_request_001",
+        request_payload_hash: hash,
+        idempotency_key: "memory_write:mj_1:plan_1:chunk_1",
+        source_meta_job_id: "mj_1",
+        source_trigger_process_id: "process_001",
+      },
+    } as const;
+    expect(() => assertOwnerDurableEventEnvelopeV1(envelope)).not.toThrow();
+    expect(
+      isDurableEventTargetAllowedV1(
+        envelope,
+        "memory_service.write_batch",
+      ),
+    ).toBe(true);
+    expect(isDurableEventTargetAllowedV1(envelope, "memory.command")).toBe(
+      false,
+    );
+    expect(durableEventTargetConsumerV1("memory_service.write_batch")).toBe(
+      "memory",
+    );
   });
 
   it("validates the complete Trigger Processor terminal branch", () => {
@@ -200,14 +222,18 @@ describe("owner durable event type unions V1", () => {
       },
     } as const;
 
-    for (const outcome of TERMINAL_OUTCOMES_V1) {
-      expect(() =>
-        assertOwnerDurableEventEnvelopeV1({
-          ...triggerEnvelope,
-          payload: { ...triggerEnvelope.payload, terminal_outcome: outcome },
-        }),
-      ).not.toThrow();
-    }
+    expect(() =>
+      assertOwnerDurableEventEnvelopeV1(triggerEnvelope),
+    ).not.toThrow();
+    expect(() =>
+      assertOwnerDurableEventEnvelopeV1({
+        ...triggerEnvelope,
+        payload: {
+          ...triggerEnvelope.payload,
+          terminal_outcome: "cancelled_with_reason",
+        },
+      }),
+    ).toThrow(/semantic binding/u);
     expect(() =>
       assertOwnerDurableEventEnvelopeV1({
         ...triggerEnvelope,

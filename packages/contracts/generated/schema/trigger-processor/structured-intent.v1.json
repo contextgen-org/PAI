@@ -1,0 +1,175 @@
+{
+  "$id": "urn:pai:trigger-processor:structured-intent:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "goal",
+    "user_need",
+    "response_style",
+    "action_plan",
+    "required_skills",
+    "memory_followups",
+    "safety_notes",
+    "requires_confirmation"
+  ],
+  "properties": {
+    "goal": {
+      "minLength": 1,
+      "maxLength": 16384,
+      "type": "string"
+    },
+    "user_need": {
+      "minLength": 1,
+      "maxLength": 16384,
+      "type": "string"
+    },
+    "response_style": {
+      "minLength": 1,
+      "maxLength": 4096,
+      "type": "string"
+    },
+    "action_plan": {
+      "maxItems": 1000,
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "step",
+          "action_type",
+          "action"
+        ],
+        "properties": {
+          "step": {
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "action_type": {
+            "anyOf": [
+              {
+                "const": "respond",
+                "type": "string"
+              },
+              {
+                "const": "tool_use",
+                "type": "string"
+              },
+              {
+                "const": "ask_confirmation",
+                "type": "string"
+              },
+              {
+                "const": "wait",
+                "type": "string"
+              },
+              {
+                "const": "no_op",
+                "type": "string"
+              }
+            ]
+          },
+          "action": {
+            "minLength": 1,
+            "maxLength": 16384,
+            "type": "string"
+          },
+          "candidate_tool": {
+            "minLength": 1,
+            "maxLength": 512,
+            "type": "string"
+          },
+          "candidate_skill": {
+            "minLength": 1,
+            "maxLength": 512,
+            "type": "string"
+          },
+          "capability_scope_required": {
+            "maxItems": 10000,
+            "uniqueItems": true,
+            "type": "array",
+            "items": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            }
+          },
+          "risk_level": {
+            "anyOf": [
+              {
+                "const": "low",
+                "type": "string"
+              },
+              {
+                "const": "medium",
+                "type": "string"
+              },
+              {
+                "const": "high",
+                "type": "string"
+              }
+            ]
+          },
+          "requires_confirmation": {
+            "type": "boolean"
+          },
+          "depends_on": {
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "condition": {
+            "minLength": 1,
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "fallback": {
+            "minLength": 1,
+            "maxLength": 4096,
+            "type": "string"
+          }
+        }
+      }
+    },
+    "required_skills": {
+      "maxItems": 10000,
+      "uniqueItems": true,
+      "type": "array",
+      "items": {
+        "minLength": 1,
+        "maxLength": 512,
+        "type": "string"
+      }
+    },
+    "memory_followups": {
+      "maxItems": 1000,
+      "type": "array",
+      "items": {
+        "minLength": 1,
+        "maxLength": 4096,
+        "type": "string"
+      }
+    },
+    "safety_notes": {
+      "maxItems": 1000,
+      "type": "array",
+      "items": {
+        "minLength": 1,
+        "maxLength": 4096,
+        "type": "string"
+      }
+    },
+    "degradation_notes": {
+      "maxItems": 1000,
+      "type": "array",
+      "items": {
+        "minLength": 1,
+        "maxLength": 4096,
+        "type": "string"
+      }
+    },
+    "requires_confirmation": {
+      "type": "boolean"
+    }
+  }
+}

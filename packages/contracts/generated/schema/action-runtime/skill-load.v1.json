@@ -1,0 +1,138 @@
+{
+  "$id": "urn:pai:action-runtime:skill-load:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "skill_name",
+        "runtime_run_id",
+        "idempotency_key"
+      ],
+      "properties": {
+        "skill_name": {
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$",
+          "maxLength": 64,
+          "type": "string"
+        },
+        "runtime_run_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "trace_id",
+        "details"
+      ],
+      "properties": {
+        "code": {
+          "const": "skill_loaded",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "retryable": {
+          "const": false,
+          "type": "boolean"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "details": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "skill_name",
+            "resolution_id",
+            "version_id",
+            "package_digest",
+            "manifest_digest",
+            "digest_verified",
+            "runtime_target",
+            "entrypoint",
+            "source",
+            "materialization_status",
+            "audit_event_id"
+          ],
+          "properties": {
+            "skill_name": {
+              "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$",
+              "maxLength": 64,
+              "type": "string"
+            },
+            "resolution_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "version_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "package_digest": {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "manifest_digest": {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "digest_verified": {
+              "const": true,
+              "type": "boolean"
+            },
+            "runtime_target": {
+              "const": "filesystem_bundle.v1",
+              "type": "string"
+            },
+            "entrypoint": {
+              "pattern": "^\\.claude/skills/[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?/SKILL\\.md$",
+              "maxLength": 96,
+              "type": "string"
+            },
+            "source": {
+              "anyOf": [
+                {
+                  "const": "skill_registry",
+                  "type": "string"
+                },
+                {
+                  "const": "registry_cache",
+                  "type": "string"
+                }
+              ]
+            },
+            "materialization_status": {
+              "const": "loaded",
+              "type": "string"
+            },
+            "audit_event_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

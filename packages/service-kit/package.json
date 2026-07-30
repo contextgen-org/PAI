@@ -20,6 +20,8 @@
     "@pai/auth": "workspace:*",
     "@pai/contracts": "workspace:*",
     "@sinclair/typebox": "catalog:",
+    "ajv": "catalog:",
+    "ajv-formats": "3.0.1",
     "fastify": "catalog:"
   },
   "devDependencies": {

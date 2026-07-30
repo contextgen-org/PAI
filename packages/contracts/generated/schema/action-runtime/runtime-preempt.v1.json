@@ -1,0 +1,70 @@
+{
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "runtime_signal_id",
+    "runtime_run_id",
+    "trigger_process_id",
+    "start_attempt_no",
+    "preempt_token",
+    "reason_code",
+    "requested_at",
+    "idempotency_key",
+    "trace_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "runtime_preempt.v1",
+      "type": "string"
+    },
+    "runtime_signal_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "runtime_run_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "trigger_process_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "start_attempt_no": {
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "preempt_token": {
+      "minLength": 1,
+      "maxLength": 8192,
+      "type": "string"
+    },
+    "reason_code": {
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+      "type": "string"
+    },
+    "requested_at": {
+      "minLength": 20,
+      "maxLength": 35,
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+      "type": "string"
+    },
+    "idempotency_key": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "trace_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    }
+  },
+  "$id": "urn:pai:action-runtime:runtime-preempt:v1"
+}

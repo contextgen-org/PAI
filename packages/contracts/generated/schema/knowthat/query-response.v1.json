@@ -1,0 +1,140 @@
+{
+  "$id": "urn:pai:knowthat:query-response:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "snapshot_token",
+    "query_revision",
+    "as_of",
+    "facts"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "knowthat_query.v1",
+      "type": "string"
+    },
+    "snapshot_token": {
+      "minLength": 16,
+      "maxLength": 8192,
+      "type": "string"
+    },
+    "query_revision": {
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "as_of": {
+      "minLength": 20,
+      "maxLength": 35,
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+      "type": "string"
+    },
+    "facts": {
+      "maxItems": 200,
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "semantic_key",
+          "category",
+          "subject",
+          "predicate",
+          "object",
+          "confidence",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+            "type": "string"
+          },
+          "semantic_key": {
+            "minLength": 1,
+            "maxLength": 256,
+            "type": "string"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "const": "user_profile",
+                "type": "string"
+              },
+              {
+                "const": "relationship_state",
+                "type": "string"
+              },
+              {
+                "const": "world_state",
+                "type": "string"
+              },
+              {
+                "const": "self_state",
+                "type": "string"
+              },
+              {
+                "const": "project_fact",
+                "type": "string"
+              },
+              {
+                "const": "preference",
+                "type": "string"
+              },
+              {
+                "const": "rule",
+                "type": "string"
+              }
+            ]
+          },
+          "subject": {
+            "minLength": 1,
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "predicate": {
+            "minLength": 1,
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "object": {
+            "minLength": 1,
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "confidence": {
+            "minimum": 0,
+            "maximum": 1,
+            "type": "number"
+          },
+          "valid_from": {
+            "minLength": 20,
+            "maxLength": 35,
+            "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+            "type": "string"
+          },
+          "valid_until": {
+            "minLength": 20,
+            "maxLength": 35,
+            "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+            "type": "string"
+          },
+          "updated_at": {
+            "minLength": 20,
+            "maxLength": 35,
+            "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+            "type": "string"
+          }
+        }
+      }
+    },
+    "next_cursor": {
+      "minLength": 16,
+      "maxLength": 8192,
+      "type": "string"
+    }
+  }
+}

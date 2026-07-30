@@ -1,0 +1,1970 @@
+{
+  "$id": "urn:pai:trigger-processor:process-snapshot:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "snapshot_id",
+    "snapshot_version",
+    "snapshot_hash",
+    "trigger_process_id",
+    "workspace_id",
+    "bot_id",
+    "owner_agent_id",
+    "deployment_environment",
+    "release_channel",
+    "phase",
+    "trigger",
+    "context_snapshot",
+    "intent",
+    "runtime_run_id",
+    "policy_snapshot_id",
+    "runtime_state",
+    "action_trace",
+    "tool_results",
+    "event_trace",
+    "input_event_range",
+    "overflow_refs",
+    "last_append_sequence_no",
+    "last_sequence_by_source",
+    "terminal_outcome",
+    "terminal_outcome_finalized_at",
+    "canonical_process_id",
+    "successor_process_id",
+    "superseded_by_process_id",
+    "snapshot_transfer_ref",
+    "boundary_system_event_ref",
+    "canonical_reason_code",
+    "open_loops",
+    "created_at",
+    "updated_at",
+    "cooldown_until",
+    "snapshot_retention_until"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "trigger_process_snapshot.v1",
+      "type": "string"
+    },
+    "snapshot_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "snapshot_version": {
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "snapshot_hash": {
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "trigger_process_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "workspace_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "bot_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "owner_agent_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "deployment_environment": {
+      "$id": "urn:pai:shared:deployment-environment:v1",
+      "anyOf": [
+        {
+          "const": "local",
+          "type": "string"
+        },
+        {
+          "const": "dev",
+          "type": "string"
+        },
+        {
+          "const": "staging",
+          "type": "string"
+        },
+        {
+          "const": "prod",
+          "type": "string"
+        }
+      ]
+    },
+    "release_channel": {
+      "$id": "urn:pai:shared:release-channel:v1",
+      "anyOf": [
+        {
+          "const": "stable",
+          "type": "string"
+        },
+        {
+          "const": "canary",
+          "type": "string"
+        }
+      ]
+    },
+    "phase": {
+      "anyOf": [
+        {
+          "const": "admission",
+          "type": "string"
+        },
+        {
+          "const": "context",
+          "type": "string"
+        },
+        {
+          "const": "intent",
+          "type": "string"
+        },
+        {
+          "const": "execution",
+          "type": "string"
+        },
+        {
+          "const": "cooldown",
+          "type": "string"
+        },
+        {
+          "const": "meta_enqueued",
+          "type": "string"
+        },
+        {
+          "const": "closed",
+          "type": "string"
+        }
+      ]
+    },
+    "trigger": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "trigger_id",
+        "source",
+        "actor_type",
+        "actor_id",
+        "payload_ref",
+        "payload_hash",
+        "accepted_at"
+      ],
+      "properties": {
+        "trigger_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "payload_ref": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "payload_hash": {
+          "minLength": 71,
+          "maxLength": 71,
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "accepted_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        }
+      }
+    },
+    "context_snapshot": {
+      "anyOf": [
+        {
+          "$id": "urn:pai:trigger-processor:context-snapshot:v1",
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "schema_version",
+            "trigger_process_id",
+            "context_version",
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "pinned_facts",
+            "memory_context",
+            "skill_catalog",
+            "environment",
+            "history",
+            "source_status",
+            "assembly_notes",
+            "snapshot_hash"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "context_snapshot.v1",
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "context_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "pinned_facts": {
+              "maxItems": 10000,
+              "type": "array",
+              "items": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "ref",
+                  "version",
+                  "summary"
+                ],
+                "properties": {
+                  "ref": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "version": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "hash": {
+                    "minLength": 71,
+                    "maxLength": 71,
+                    "pattern": "^sha256:[a-f0-9]{64}$",
+                    "type": "string"
+                  },
+                  "summary": {
+                    "minLength": 1,
+                    "maxLength": 16384,
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "memory_context": {
+              "maxItems": 10000,
+              "type": "array",
+              "items": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "ref",
+                  "version",
+                  "summary"
+                ],
+                "properties": {
+                  "ref": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "version": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "hash": {
+                    "minLength": 71,
+                    "maxLength": 71,
+                    "pattern": "^sha256:[a-f0-9]{64}$",
+                    "type": "string"
+                  },
+                  "summary": {
+                    "minLength": 1,
+                    "maxLength": 16384,
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "skill_catalog": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "catalog_version",
+                    "catalog_as_of",
+                    "items"
+                  ],
+                  "properties": {
+                    "catalog_version": {
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "catalog_as_of": {
+                      "minLength": 20,
+                      "maxLength": 35,
+                      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                      "type": "string"
+                    },
+                    "items": {
+                      "maxItems": 10000,
+                      "type": "array",
+                      "items": {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "skill_key",
+                          "name",
+                          "description",
+                          "active_version",
+                          "package_digest",
+                          "manifest_digest",
+                          "runtime_target"
+                        ],
+                        "properties": {
+                          "skill_key": {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          "name": {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          "description": {
+                            "maxLength": 16384,
+                            "type": "string"
+                          },
+                          "active_version": {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          "package_digest": {
+                            "minLength": 71,
+                            "maxLength": 71,
+                            "pattern": "^sha256:[a-f0-9]{64}$",
+                            "type": "string"
+                          },
+                          "manifest_digest": {
+                            "minLength": 71,
+                            "maxLength": 71,
+                            "pattern": "^sha256:[a-f0-9]{64}$",
+                            "type": "string"
+                          },
+                          "runtime_target": {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "environment": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "captured_at",
+                    "channel",
+                    "timezone",
+                    "capability_summary_ref"
+                  ],
+                  "properties": {
+                    "captured_at": {
+                      "minLength": 20,
+                      "maxLength": 35,
+                      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                      "type": "string"
+                    },
+                    "channel": {
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "timezone": {
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "capability_summary_ref": {
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "type": "string"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "history": {
+              "maxItems": 10000,
+              "type": "array",
+              "items": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "ref",
+                  "version",
+                  "summary"
+                ],
+                "properties": {
+                  "ref": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "version": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "hash": {
+                    "minLength": 71,
+                    "maxLength": 71,
+                    "pattern": "^sha256:[a-f0-9]{64}$",
+                    "type": "string"
+                  },
+                  "summary": {
+                    "minLength": 1,
+                    "maxLength": 16384,
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "source_status": {
+              "minItems": 5,
+              "maxItems": 5,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "source",
+                      "retrieved_at",
+                      "source_as_of",
+                      "source_version",
+                      "latency_ms",
+                      "result_count",
+                      "failure_reason",
+                      "status"
+                    ],
+                    "properties": {
+                      "source": {
+                        "anyOf": [
+                          {
+                            "const": "knowthat",
+                            "type": "string"
+                          },
+                          {
+                            "const": "memory",
+                            "type": "string"
+                          },
+                          {
+                            "const": "skill",
+                            "type": "string"
+                          },
+                          {
+                            "const": "environment",
+                            "type": "string"
+                          },
+                          {
+                            "const": "history",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "retrieved_at": {
+                        "minLength": 20,
+                        "maxLength": 35,
+                        "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                        "type": "string"
+                      },
+                      "source_as_of": {
+                        "anyOf": [
+                          {
+                            "minLength": 20,
+                            "maxLength": 35,
+                            "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "source_version": {
+                        "anyOf": [
+                          {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "latency_ms": {
+                        "minimum": 0,
+                        "maximum": 300000,
+                        "type": "integer"
+                      },
+                      "result_count": {
+                        "minimum": 0,
+                        "maximum": 1000000,
+                        "type": "integer"
+                      },
+                      "failure_reason": {
+                        "anyOf": [
+                          {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "status": {
+                        "anyOf": [
+                          {
+                            "const": "ok",
+                            "type": "string"
+                          },
+                          {
+                            "const": "empty",
+                            "type": "string"
+                          },
+                          {
+                            "const": "timeout",
+                            "type": "string"
+                          },
+                          {
+                            "const": "failed",
+                            "type": "string"
+                          },
+                          {
+                            "const": "degraded",
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "source",
+                      "retrieved_at",
+                      "source_as_of",
+                      "source_version",
+                      "latency_ms",
+                      "result_count",
+                      "failure_reason",
+                      "status",
+                      "policy_id",
+                      "reason_code",
+                      "source_owner"
+                    ],
+                    "properties": {
+                      "source": {
+                        "anyOf": [
+                          {
+                            "const": "knowthat",
+                            "type": "string"
+                          },
+                          {
+                            "const": "memory",
+                            "type": "string"
+                          },
+                          {
+                            "const": "skill",
+                            "type": "string"
+                          },
+                          {
+                            "const": "environment",
+                            "type": "string"
+                          },
+                          {
+                            "const": "history",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "retrieved_at": {
+                        "minLength": 20,
+                        "maxLength": 35,
+                        "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                        "type": "string"
+                      },
+                      "source_as_of": {
+                        "anyOf": [
+                          {
+                            "minLength": 20,
+                            "maxLength": 35,
+                            "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "source_version": {
+                        "anyOf": [
+                          {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "latency_ms": {
+                        "minimum": 0,
+                        "maximum": 300000,
+                        "type": "integer"
+                      },
+                      "result_count": {
+                        "minimum": 0,
+                        "maximum": 1000000,
+                        "type": "integer"
+                      },
+                      "failure_reason": {
+                        "anyOf": [
+                          {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "status": {
+                        "const": "skipped_by_policy",
+                        "type": "string"
+                      },
+                      "policy_id": {
+                        "minLength": 1,
+                        "maxLength": 512,
+                        "type": "string"
+                      },
+                      "reason_code": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                        "type": "string"
+                      },
+                      "source_owner": {
+                        "minLength": 1,
+                        "maxLength": 512,
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "assembly_notes": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                "type": "string"
+              }
+            },
+            "snapshot_hash": {
+              "minLength": 71,
+              "maxLength": 71,
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "intent": {
+      "anyOf": [
+        {
+          "$id": "urn:pai:trigger-processor:structured-intent:v1",
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "goal",
+            "user_need",
+            "response_style",
+            "action_plan",
+            "required_skills",
+            "memory_followups",
+            "safety_notes",
+            "requires_confirmation"
+          ],
+          "properties": {
+            "goal": {
+              "minLength": 1,
+              "maxLength": 16384,
+              "type": "string"
+            },
+            "user_need": {
+              "minLength": 1,
+              "maxLength": 16384,
+              "type": "string"
+            },
+            "response_style": {
+              "minLength": 1,
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "action_plan": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "step",
+                  "action_type",
+                  "action"
+                ],
+                "properties": {
+                  "step": {
+                    "minimum": 1,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "action_type": {
+                    "anyOf": [
+                      {
+                        "const": "respond",
+                        "type": "string"
+                      },
+                      {
+                        "const": "tool_use",
+                        "type": "string"
+                      },
+                      {
+                        "const": "ask_confirmation",
+                        "type": "string"
+                      },
+                      {
+                        "const": "wait",
+                        "type": "string"
+                      },
+                      {
+                        "const": "no_op",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "action": {
+                    "minLength": 1,
+                    "maxLength": 16384,
+                    "type": "string"
+                  },
+                  "candidate_tool": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "candidate_skill": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "capability_scope_required": {
+                    "maxItems": 10000,
+                    "uniqueItems": true,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "type": "string"
+                    }
+                  },
+                  "risk_level": {
+                    "anyOf": [
+                      {
+                        "const": "low",
+                        "type": "string"
+                      },
+                      {
+                        "const": "medium",
+                        "type": "string"
+                      },
+                      {
+                        "const": "high",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "requires_confirmation": {
+                    "type": "boolean"
+                  },
+                  "depends_on": {
+                    "minimum": 1,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "condition": {
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "type": "string"
+                  },
+                  "fallback": {
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "required_skills": {
+              "maxItems": 10000,
+              "uniqueItems": true,
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              }
+            },
+            "memory_followups": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "maxLength": 4096,
+                "type": "string"
+              }
+            },
+            "safety_notes": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "maxLength": 4096,
+                "type": "string"
+              }
+            },
+            "degradation_notes": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "maxLength": 4096,
+                "type": "string"
+              }
+            },
+            "requires_confirmation": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "runtime_run_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "policy_snapshot_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "runtime_state": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "runtime_run_id",
+            "status",
+            "start_attempt_no",
+            "start_fence_generation",
+            "current_lease_generation",
+            "updated_at"
+          ],
+          "properties": {
+            "runtime_run_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "const": "queued",
+                  "type": "string"
+                },
+                {
+                  "const": "running",
+                  "type": "string"
+                },
+                {
+                  "const": "cancelling",
+                  "type": "string"
+                },
+                {
+                  "const": "completed",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                },
+                {
+                  "const": "cancelled",
+                  "type": "string"
+                }
+              ]
+            },
+            "start_attempt_no": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "start_fence_generation": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "current_lease_generation": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "updated_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "action_trace": {
+      "maxItems": 50,
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_service",
+          "source_event_id",
+          "append_sequence_no",
+          "payload_ref",
+          "payload_hash",
+          "created_at",
+          "step",
+          "action_type",
+          "status",
+          "tool_name",
+          "skill_key",
+          "started_at",
+          "completed_at",
+          "reason_code"
+        ],
+        "properties": {
+          "source_service": {
+            "$id": "urn:pai:shared:service-id:v1",
+            "anyOf": [
+              {
+                "const": "trigger_processor",
+                "type": "string"
+              },
+              {
+                "const": "action_runtime",
+                "type": "string"
+              },
+              {
+                "const": "meta_cognition",
+                "type": "string"
+              },
+              {
+                "const": "memory",
+                "type": "string"
+              },
+              {
+                "const": "knowthat",
+                "type": "string"
+              },
+              {
+                "const": "skill_registry",
+                "type": "string"
+              },
+              {
+                "const": "timer_trigger_app",
+                "type": "string"
+              },
+              {
+                "const": "observation_gateway",
+                "type": "string"
+              }
+            ]
+          },
+          "source_event_id": {
+            "minLength": 1,
+            "maxLength": 512,
+            "type": "string"
+          },
+          "source_sequence_no": {
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "append_sequence_no": {
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "payload_ref": {
+            "minLength": 1,
+            "maxLength": 512,
+            "type": "string"
+          },
+          "payload_hash": {
+            "minLength": 71,
+            "maxLength": 71,
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "created_at": {
+            "minLength": 20,
+            "maxLength": 35,
+            "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+            "type": "string"
+          },
+          "step": {
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "action_type": {
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+            "type": "string"
+          },
+          "status": {
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+            "type": "string"
+          },
+          "tool_name": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "skill_key": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "minLength": 20,
+                "maxLength": 35,
+                "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "minLength": 20,
+                "maxLength": 35,
+                "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "tool_results": {
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_service",
+          "source_event_id",
+          "append_sequence_no",
+          "payload_ref",
+          "payload_hash",
+          "created_at",
+          "tool_invocation_id",
+          "tool_name",
+          "status",
+          "artifact_ref",
+          "reason_code",
+          "completed_at"
+        ],
+        "properties": {
+          "source_service": {
+            "$id": "urn:pai:shared:service-id:v1",
+            "anyOf": [
+              {
+                "const": "trigger_processor",
+                "type": "string"
+              },
+              {
+                "const": "action_runtime",
+                "type": "string"
+              },
+              {
+                "const": "meta_cognition",
+                "type": "string"
+              },
+              {
+                "const": "memory",
+                "type": "string"
+              },
+              {
+                "const": "knowthat",
+                "type": "string"
+              },
+              {
+                "const": "skill_registry",
+                "type": "string"
+              },
+              {
+                "const": "timer_trigger_app",
+                "type": "string"
+              },
+              {
+                "const": "observation_gateway",
+                "type": "string"
+              }
+            ]
+          },
+          "source_event_id": {
+            "minLength": 1,
+            "maxLength": 512,
+            "type": "string"
+          },
+          "source_sequence_no": {
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "append_sequence_no": {
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "payload_ref": {
+            "minLength": 1,
+            "maxLength": 512,
+            "type": "string"
+          },
+          "payload_hash": {
+            "minLength": 71,
+            "maxLength": 71,
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "created_at": {
+            "minLength": 20,
+            "maxLength": 35,
+            "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+            "type": "string"
+          },
+          "tool_invocation_id": {
+            "minLength": 1,
+            "maxLength": 512,
+            "type": "string"
+          },
+          "tool_name": {
+            "minLength": 1,
+            "maxLength": 512,
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "completed",
+                "type": "string"
+              },
+              {
+                "const": "failed",
+                "type": "string"
+              },
+              {
+                "const": "cancelled",
+                "type": "string"
+              }
+            ]
+          },
+          "artifact_ref": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completed_at": {
+            "minLength": 20,
+            "maxLength": 35,
+            "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+            "type": "string"
+          }
+        }
+      }
+    },
+    "event_trace": {
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_service",
+          "source_event_id",
+          "append_sequence_no",
+          "payload_ref",
+          "payload_hash",
+          "created_at",
+          "event_type",
+          "schema_version",
+          "occurred_at",
+          "runtime_run_id",
+          "artifact_refs"
+        ],
+        "properties": {
+          "source_service": {
+            "$id": "urn:pai:shared:service-id:v1",
+            "anyOf": [
+              {
+                "const": "trigger_processor",
+                "type": "string"
+              },
+              {
+                "const": "action_runtime",
+                "type": "string"
+              },
+              {
+                "const": "meta_cognition",
+                "type": "string"
+              },
+              {
+                "const": "memory",
+                "type": "string"
+              },
+              {
+                "const": "knowthat",
+                "type": "string"
+              },
+              {
+                "const": "skill_registry",
+                "type": "string"
+              },
+              {
+                "const": "timer_trigger_app",
+                "type": "string"
+              },
+              {
+                "const": "observation_gateway",
+                "type": "string"
+              }
+            ]
+          },
+          "source_event_id": {
+            "minLength": 1,
+            "maxLength": 512,
+            "type": "string"
+          },
+          "source_sequence_no": {
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "append_sequence_no": {
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "payload_ref": {
+            "minLength": 1,
+            "maxLength": 512,
+            "type": "string"
+          },
+          "payload_hash": {
+            "minLength": 71,
+            "maxLength": 71,
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "created_at": {
+            "minLength": 20,
+            "maxLength": 35,
+            "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+            "type": "string"
+          },
+          "event_type": {
+            "minLength": 1,
+            "maxLength": 512,
+            "type": "string"
+          },
+          "schema_version": {
+            "minLength": 1,
+            "maxLength": 512,
+            "type": "string"
+          },
+          "occurred_at": {
+            "minLength": 20,
+            "maxLength": 35,
+            "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+            "type": "string"
+          },
+          "runtime_run_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "artifact_refs": {
+            "maxItems": 10000,
+            "uniqueItems": true,
+            "type": "array",
+            "items": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "input_event_range": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "first_append_sequence_no",
+        "last_append_sequence_no"
+      ],
+      "properties": {
+        "first_append_sequence_no": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "last_append_sequence_no": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        }
+      }
+    },
+    "overflow_refs": {
+      "maxItems": 10000,
+      "type": "array",
+      "items": {
+        "$id": "urn:pai:trigger-processor:snapshot-overflow-ref:v1",
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "schema_version",
+          "source_service",
+          "store_type",
+          "object_ref",
+          "first_append_sequence_no",
+          "last_append_sequence_no",
+          "checksum_algorithm",
+          "checksum",
+          "retention_until",
+          "redaction_state"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": "snapshot_overflow_ref.v1",
+            "type": "string"
+          },
+          "source_service": {
+            "$id": "urn:pai:shared:service-id:v1",
+            "anyOf": [
+              {
+                "const": "trigger_processor",
+                "type": "string"
+              },
+              {
+                "const": "action_runtime",
+                "type": "string"
+              },
+              {
+                "const": "meta_cognition",
+                "type": "string"
+              },
+              {
+                "const": "memory",
+                "type": "string"
+              },
+              {
+                "const": "knowthat",
+                "type": "string"
+              },
+              {
+                "const": "skill_registry",
+                "type": "string"
+              },
+              {
+                "const": "timer_trigger_app",
+                "type": "string"
+              },
+              {
+                "const": "observation_gateway",
+                "type": "string"
+              }
+            ]
+          },
+          "store_type": {
+            "anyOf": [
+              {
+                "const": "runtime_events",
+                "type": "string"
+              },
+              {
+                "const": "artifact_store",
+                "type": "string"
+              },
+              {
+                "const": "tp_transition_audit",
+                "type": "string"
+              },
+              {
+                "const": "tp_event_projection",
+                "type": "string"
+              },
+              {
+                "const": "tp_meta_projection",
+                "type": "string"
+              },
+              {
+                "const": "meta_durable_event",
+                "type": "string"
+              }
+            ]
+          },
+          "object_ref": {
+            "minLength": 1,
+            "maxLength": 512,
+            "type": "string"
+          },
+          "first_append_sequence_no": {
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "last_append_sequence_no": {
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "source_sequence_range": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "first_source_sequence_no",
+              "last_source_sequence_no"
+            ],
+            "properties": {
+              "first_source_sequence_no": {
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "last_source_sequence_no": {
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              }
+            }
+          },
+          "checksum_algorithm": {
+            "const": "sha256",
+            "type": "string"
+          },
+          "checksum": {
+            "minLength": 71,
+            "maxLength": 71,
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "retention_until": {
+            "minLength": 20,
+            "maxLength": 35,
+            "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+            "type": "string"
+          },
+          "redaction_state": {
+            "anyOf": [
+              {
+                "const": "not_required",
+                "type": "string"
+              },
+              {
+                "const": "complete",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "last_append_sequence_no": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "last_sequence_by_source": {
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "trigger_processor": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "action_runtime": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "meta_cognition": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "memory": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "knowthat": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "skill_registry": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "timer_trigger_app": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "observation_gateway": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        }
+      }
+    },
+    "terminal_outcome": {
+      "anyOf": [
+        {
+          "$id": "urn:pai:trigger-processor:terminal-outcome:v1",
+          "anyOf": [
+            {
+              "const": "executed",
+              "type": "string"
+            },
+            {
+              "const": "merged_and_executed",
+              "type": "string"
+            },
+            {
+              "const": "superseded_by_later_trigger",
+              "type": "string"
+            },
+            {
+              "const": "deferred_then_executed",
+              "type": "string"
+            },
+            {
+              "const": "expired_with_audit_record",
+              "type": "string"
+            },
+            {
+              "const": "cancelled_with_reason",
+              "type": "string"
+            },
+            {
+              "const": "failed_with_reason",
+              "type": "string"
+            },
+            {
+              "const": "preempted_and_handed_off",
+              "type": "string"
+            },
+            {
+              "const": "interrupted_with_reason",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "terminal_outcome_finalized_at": {
+      "anyOf": [
+        {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "canonical_process_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "successor_process_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "superseded_by_process_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "snapshot_transfer_ref": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "boundary_system_event_ref": {
+      "anyOf": [
+        {
+          "$id": "urn:pai:shared:typed-evidence-ref:v1",
+          "minLength": 3,
+          "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "canonical_reason_code": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "user_visible_response": {
+      "minLength": 1,
+      "maxLength": 65536,
+      "type": "string"
+    },
+    "open_loops": {
+      "maxItems": 10000,
+      "type": "array",
+      "items": {
+        "minLength": 1,
+        "maxLength": 4096,
+        "type": "string"
+      }
+    },
+    "created_at": {
+      "minLength": 20,
+      "maxLength": 35,
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+      "type": "string"
+    },
+    "updated_at": {
+      "minLength": 20,
+      "maxLength": 35,
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+      "type": "string"
+    },
+    "cooldown_until": {
+      "anyOf": [
+        {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "snapshot_retention_until": {
+      "minLength": 20,
+      "maxLength": 35,
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+      "type": "string"
+    }
+  }
+}

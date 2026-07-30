@@ -3,14 +3,26 @@ import { fileURLToPath } from "node:url";
 
 export default defineConfig({
   resolve: {
-    alias: {
-      "@pai/contracts": fileURLToPath(
-        new URL("../contracts/src/index.ts", import.meta.url),
-      ),
-      "@pai/persistence": fileURLToPath(new URL("./src/index.ts", import.meta.url)),
-    },
+    alias: [
+      {
+        find: /^@pai\/contracts$/u,
+        replacement: fileURLToPath(
+          new URL("../contracts/src/index.ts", import.meta.url),
+        ),
+      },
+      {
+        find: /^@pai\/persistence$/u,
+        replacement: fileURLToPath(new URL("./src/index.ts", import.meta.url)),
+      },
+    ],
   },
   test: {
-    include: ["test/**/*.contract.ts"],
+    include: ["test/**/*.contract.ts", "test/**/*.test.ts"],
+    fileParallelism: false,
+    minWorkers: 1,
+    maxWorkers: 1,
+    sequence: {
+      concurrent: false,
+    },
   },
 });

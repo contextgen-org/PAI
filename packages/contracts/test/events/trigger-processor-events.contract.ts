@@ -11,6 +11,7 @@ import {
   TRIGGER_PROCESSOR_DOMAIN_EVENT_BRANCH_SCHEMAS_V1,
   TRIGGER_PROCESSOR_SCHEMA_CATALOG,
   TriggerProcessorDomainEventV1Schema,
+  assertTriggerProcessorDomainEventSemanticBindingsV1,
 } from "../../src/index.js";
 
 const eventPayloadBase = {
@@ -40,6 +41,13 @@ const acceptedEvent = {
     dedupe_key: "chat:message_001",
     request_hash: "hash_001",
   },
+} as const;
+
+const runningAdmission = {
+  phase: "admission",
+  status: "running",
+  wait_reason: null,
+  terminal_reason: null,
 } as const;
 
 const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -221,6 +229,93 @@ describe("TriggerProcessorDomainEventV1", () => {
         acceptedEvent,
       ),
     ).toBe(false);
+  });
+
+  it("rejects schema-valid impossible Trigger lifecycle facts", () => {
+    const impossibleEvents = [
+      {
+        ...acceptedEvent,
+        event_id: "event_phase_noop_001",
+        event_type: "trigger_process.phase_changed",
+        idempotency_key: "process_001:phase_noop",
+        payload: {
+          ...eventPayloadBase,
+          trigger_process_id: "process_001",
+          previous_state: runningAdmission,
+          next_state: runningAdmission,
+          expected_state_version: 1,
+          transition_id: "transition_001",
+        },
+      },
+      {
+        ...acceptedEvent,
+        event_id: "event_cooldown_backwards_001",
+        event_type: "cooldown.expired",
+        idempotency_key: "process_001:cooldown_backwards",
+        payload: {
+          ...eventPayloadBase,
+          trigger_process_id: "process_001",
+          cooldown_until: "2026-07-22T05:00:00.000Z",
+          expired_at: "2026-07-22T04:59:59.999Z",
+        },
+      },
+      {
+        ...acceptedEvent,
+        event_id: "event_weak_merge_duplicate_001",
+        event_type: "weak_trigger.merged",
+        idempotency_key: "weak_group_001:merged",
+        payload: {
+          ...eventPayloadBase,
+          weak_group_id: "weak_group_001",
+          canonical_process_id: "process_canonical_001",
+          merged_process_ids: [
+            "process_canonical_001",
+            "process_canonical_001",
+          ],
+          merge_window_started_at: "2026-07-22T04:00:00.000Z",
+        },
+      },
+      {
+        ...acceptedEvent,
+        event_id: "event_reason_outcome_mismatch_001",
+        event_type: "trigger_process.outcome_finalized",
+        idempotency_key: "process_001:outcome_mismatch",
+        payload: {
+          ...eventPayloadBase,
+          reason_code: "cooldown_expired",
+          trigger_process_id: "process_001",
+          terminal_outcome: "cancelled_with_reason",
+          canonical_reason_code: "cooldown_expired",
+          finalized_at: "2026-07-22T05:00:00.000Z",
+        },
+      },
+    ] as const;
+
+    for (const impossibleEvent of impossibleEvents) {
+      expect(
+        Value.Check(TriggerProcessorDomainEventV1Schema, impossibleEvent),
+      ).toBe(true);
+      expect(() =>
+        assertTriggerProcessorDomainEventSemanticBindingsV1(impossibleEvent),
+      ).toThrow(/semantic binding/u);
+    }
+
+    expect(() =>
+      assertTriggerProcessorDomainEventSemanticBindingsV1({
+        ...acceptedEvent,
+        event_id: "event_reason_outcome_valid_001",
+        event_type: "trigger_process.outcome_finalized",
+        idempotency_key: "process_001:outcome_valid",
+        payload: {
+          ...eventPayloadBase,
+          reason_code: "cooldown_expired",
+          trigger_process_id: "process_001",
+          terminal_outcome: "executed",
+          canonical_reason_code: "cooldown_expired",
+          finalized_at: "2026-07-22T05:00:00.000Z",
+        },
+      }),
+    ).not.toThrow();
   });
 
   it("generates strict JSON schema metadata and branch-specific AsyncAPI messages", async () => {

@@ -1,0 +1,457 @@
+{
+  "$id": "urn:pai:memory:deep-recall:v1",
+  "anyOf": [
+    {
+      "$id": "urn:pai:memory:deep-recall-request:v1",
+      "additionalProperties": false,
+      "maxCanonicalJsonBytes": 65536,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "bot_id",
+        "owner_agent_id",
+        "runtime_run_id",
+        "trigger_process_id",
+        "query",
+        "scope",
+        "idempotency_key",
+        "policy_snapshot_id",
+        "policy_snapshot_hash",
+        "capability_token",
+        "capability_token_id",
+        "graph_profile_version"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "memory.deep_recall.v1",
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "owner_agent_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "runtime_run_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "trigger_process_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "query": {
+          "minLength": 1,
+          "maxUtf8Bytes": 16384,
+          "type": "string"
+        },
+        "scope": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "channels"
+          ],
+          "properties": {
+            "channels": {
+              "minItems": 1,
+              "maxItems": 3,
+              "uniqueItems": true,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "const": "semantic",
+                    "type": "string"
+                  },
+                  {
+                    "const": "timeline",
+                    "type": "string"
+                  },
+                  {
+                    "const": "relationship",
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "limit": {
+          "minimum": 1,
+          "maximum": 100,
+          "default": 20,
+          "type": "integer"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxUtf8Bytes": 128,
+          "type": "string"
+        },
+        "policy_snapshot_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "policy_snapshot_hash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxUtf8Bytes": 71,
+          "type": "string"
+        },
+        "capability_token": {
+          "minLength": 1,
+          "maxUtf8Bytes": 16384,
+          "type": "string"
+        },
+        "capability_token_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "graph_profile_version": {
+          "const": "memory.deep_recall_graph.v1",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "$id": "urn:pai:memory:deep-recall-response:v1",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "trace_id"
+      ],
+      "properties": {
+        "code": {
+          "const": "memory_deep_recall_completed",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "maxUtf8Bytes": 1024,
+          "type": "string"
+        },
+        "retryable": {
+          "const": false,
+          "type": "boolean"
+        },
+        "details": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "request_id",
+            "ranking_profile_version",
+            "graph_profile_version",
+            "items",
+            "actual_graph_budget",
+            "is_partial",
+            "completed_channels",
+            "missing_channels",
+            "second_query_executed",
+            "partial_reason"
+          ],
+          "properties": {
+            "request_id": {
+              "minLength": 1,
+              "maxUtf8Bytes": 256,
+              "type": "string"
+            },
+            "ranking_profile_version": {
+              "const": "memory.deep_recall.rrf.v1",
+              "type": "string"
+            },
+            "graph_profile_version": {
+              "const": "memory.deep_recall_graph.v1",
+              "type": "string"
+            },
+            "items": {
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "memory_point_id",
+                  "series_id",
+                  "topic_family_key",
+                  "content_summary",
+                  "matched_channels",
+                  "channel_ranks",
+                  "raw_rrf_score",
+                  "normalized_rrf_score",
+                  "importance_score",
+                  "recency_score",
+                  "final_score",
+                  "relationship_path",
+                  "redaction_status"
+                ],
+                "properties": {
+                  "memory_point_id": {
+                    "minLength": 1,
+                    "maxUtf8Bytes": 256,
+                    "type": "string"
+                  },
+                  "series_id": {
+                    "minLength": 1,
+                    "maxUtf8Bytes": 256,
+                    "type": "string"
+                  },
+                  "topic_family_key": {
+                    "minLength": 1,
+                    "maxUtf8Bytes": 256,
+                    "type": "string"
+                  },
+                  "content_summary": {
+                    "minLength": 1,
+                    "maxUtf8Bytes": 16384,
+                    "type": "string"
+                  },
+                  "matched_channels": {
+                    "minItems": 1,
+                    "maxItems": 3,
+                    "uniqueItems": true,
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "const": "semantic",
+                          "type": "string"
+                        },
+                        {
+                          "const": "timeline",
+                          "type": "string"
+                        },
+                        {
+                          "const": "relationship",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "channel_ranks": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "properties": {
+                      "semantic": {
+                        "minimum": 1,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "timeline": {
+                        "minimum": 1,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "relationship": {
+                        "minimum": 1,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  "raw_rrf_score": {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "normalized_rrf_score": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  },
+                  "importance_score": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  },
+                  "recency_score": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  },
+                  "final_score": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  },
+                  "relationship_path": {
+                    "maxItems": 64,
+                    "type": "array",
+                    "items": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "edge_id",
+                        "edge_type",
+                        "from_id",
+                        "to_id",
+                        "confidence"
+                      ],
+                      "properties": {
+                        "edge_id": {
+                          "minLength": 1,
+                          "maxUtf8Bytes": 256,
+                          "type": "string"
+                        },
+                        "edge_type": {
+                          "anyOf": [
+                            {
+                              "const": "co_occurs",
+                              "type": "string"
+                            },
+                            {
+                              "const": "relates_to",
+                              "type": "string"
+                            },
+                            {
+                              "const": "supports",
+                              "type": "string"
+                            },
+                            {
+                              "const": "contradicts",
+                              "type": "string"
+                            },
+                            {
+                              "const": "supersedes",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "from_id": {
+                          "minLength": 1,
+                          "maxUtf8Bytes": 256,
+                          "type": "string"
+                        },
+                        "to_id": {
+                          "minLength": 1,
+                          "maxUtf8Bytes": 256,
+                          "type": "string"
+                        },
+                        "confidence": {
+                          "minimum": 0,
+                          "maximum": 1,
+                          "type": "number"
+                        }
+                      }
+                    }
+                  },
+                  "redaction_status": {
+                    "anyOf": [
+                      {
+                        "const": "redacted",
+                        "type": "string"
+                      },
+                      {
+                        "const": "not_required",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "actual_graph_budget": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "max_hops",
+                "nodes_visited",
+                "edges_visited"
+              ],
+              "properties": {
+                "max_hops": {
+                  "minimum": 0,
+                  "maximum": 2,
+                  "type": "integer"
+                },
+                "nodes_visited": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "edges_visited": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                }
+              }
+            },
+            "is_partial": {
+              "type": "boolean"
+            },
+            "completed_channels": {
+              "maxItems": 3,
+              "uniqueItems": true,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "const": "semantic",
+                    "type": "string"
+                  },
+                  {
+                    "const": "timeline",
+                    "type": "string"
+                  },
+                  {
+                    "const": "relationship",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "missing_channels": {
+              "maxItems": 3,
+              "uniqueItems": true,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "const": "semantic",
+                    "type": "string"
+                  },
+                  {
+                    "const": "timeline",
+                    "type": "string"
+                  },
+                  {
+                    "const": "relationship",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "second_query_executed": {
+              "type": "boolean"
+            },
+            "partial_reason": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxUtf8Bytes": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

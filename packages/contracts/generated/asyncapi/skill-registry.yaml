@@ -1,0 +1,2123 @@
+{
+  "asyncapi": "3.0.0",
+  "info": {
+    "title": "PAI Skill Registry Domain Events",
+    "version": "1.1.0"
+  },
+  "channels": {
+    "skill.version.published": {
+      "address": "skill.version.published",
+      "messages": {
+        "skill.version.published": {
+          "$ref": "#/components/messages/skill.version.published"
+        }
+      },
+      "x-pai-consumer-services": [
+        "trigger_processor",
+        "action_runtime"
+      ]
+    },
+    "skill.catalog.changed": {
+      "address": "skill.catalog.changed",
+      "messages": {
+        "skill.catalog.changed": {
+          "$ref": "#/components/messages/skill.catalog.changed"
+        }
+      },
+      "x-pai-consumer-services": [
+        "trigger_processor",
+        "action_runtime",
+        "meta_cognition"
+      ]
+    },
+    "skill.version.activated": {
+      "address": "skill.version.activated",
+      "messages": {
+        "skill.version.activated": {
+          "$ref": "#/components/messages/skill.version.activated"
+        }
+      },
+      "x-pai-consumer-services": [
+        "trigger_processor",
+        "action_runtime",
+        "meta_cognition"
+      ]
+    },
+    "skill.activation.disabled": {
+      "address": "skill.activation.disabled",
+      "messages": {
+        "skill.activation.disabled": {
+          "$ref": "#/components/messages/skill.activation.disabled"
+        }
+      },
+      "x-pai-consumer-services": [
+        "trigger_processor",
+        "action_runtime",
+        "meta_cognition"
+      ]
+    },
+    "skill.activation.rolled_back": {
+      "address": "skill.activation.rolled_back",
+      "messages": {
+        "skill.activation.rolled_back": {
+          "$ref": "#/components/messages/skill.activation.rolled_back"
+        }
+      },
+      "x-pai-consumer-services": [
+        "trigger_processor",
+        "action_runtime",
+        "meta_cognition"
+      ]
+    },
+    "skill.version.deprecated": {
+      "address": "skill.version.deprecated",
+      "messages": {
+        "skill.version.deprecated": {
+          "$ref": "#/components/messages/skill.version.deprecated"
+        }
+      },
+      "x-pai-consumer-services": [
+        "trigger_processor",
+        "action_runtime",
+        "meta_cognition"
+      ]
+    },
+    "skill.version.revoked": {
+      "address": "skill.version.revoked",
+      "messages": {
+        "skill.version.revoked": {
+          "$ref": "#/components/messages/skill.version.revoked"
+        }
+      },
+      "x-pai-consumer-services": [
+        "action_runtime",
+        "trigger_processor",
+        "meta_cognition"
+      ]
+    },
+    "skill.permission.granted": {
+      "address": "skill.permission.granted",
+      "messages": {
+        "skill.permission.granted": {
+          "$ref": "#/components/messages/skill.permission.granted"
+        }
+      },
+      "x-pai-consumer-services": [
+        "action_runtime",
+        "trigger_processor"
+      ]
+    },
+    "skill.permission.revoked": {
+      "address": "skill.permission.revoked",
+      "messages": {
+        "skill.permission.revoked": {
+          "$ref": "#/components/messages/skill.permission.revoked"
+        }
+      },
+      "x-pai-consumer-services": [
+        "action_runtime",
+        "trigger_processor"
+      ]
+    },
+    "skill.security_revocation_epoch.changed": {
+      "address": "skill.security_revocation_epoch.changed",
+      "messages": {
+        "skill.security_revocation_epoch.changed": {
+          "$ref": "#/components/messages/skill.security_revocation_epoch.changed"
+        }
+      },
+      "x-pai-consumer-services": [
+        "action_runtime",
+        "trigger_processor",
+        "meta_cognition"
+      ]
+    },
+    "skill.candidate.application.updated": {
+      "address": "skill.candidate.application.updated",
+      "messages": {
+        "skill.candidate.application.updated": {
+          "$ref": "#/components/messages/skill.candidate.application.updated"
+        }
+      },
+      "x-pai-consumer-services": [
+        "meta_cognition"
+      ]
+    },
+    "skill.package.retention.changed": {
+      "address": "skill.package.retention.changed",
+      "messages": {
+        "skill.package.retention.changed": {
+          "$ref": "#/components/messages/skill.package.retention.changed"
+        }
+      },
+      "x-pai-consumer-services": []
+    },
+    "skill.package.retention_hold.changed": {
+      "address": "skill.package.retention_hold.changed",
+      "messages": {
+        "skill.package.retention_hold.changed": {
+          "$ref": "#/components/messages/skill.package.retention_hold.changed"
+        }
+      },
+      "x-pai-consumer-services": []
+    }
+  },
+  "components": {
+    "messages": {
+      "skill.version.published": {
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "event_id",
+            "event_type",
+            "schema_version",
+            "producer",
+            "occurred_at",
+            "idempotency_key",
+            "trace_id",
+            "payload"
+          ],
+          "properties": {
+            "event_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "event_type": {
+              "const": "skill.version.published",
+              "type": "string"
+            },
+            "schema_version": {
+              "const": "skill_registry_event.v1",
+              "type": "string"
+            },
+            "producer": {
+              "const": "skill_registry",
+              "type": "string"
+            },
+            "occurred_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "scope_kind",
+                "actor_principal_id",
+                "reason_code",
+                "skill_id",
+                "skill_key",
+                "version_id",
+                "version",
+                "lifecycle_version",
+                "package_digest",
+                "manifest_digest",
+                "published_at"
+              ],
+              "properties": {
+                "scope_kind": {
+                  "const": "global",
+                  "type": "string"
+                },
+                "actor_principal_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "reason_code": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "skill_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "skill_key": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "version_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "version": {
+                  "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                "lifecycle_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "package_digest": {
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                "manifest_digest": {
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                "published_at": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "skill.catalog.changed": {
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "event_id",
+            "event_type",
+            "schema_version",
+            "producer",
+            "occurred_at",
+            "idempotency_key",
+            "trace_id",
+            "payload"
+          ],
+          "properties": {
+            "event_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "event_type": {
+              "const": "skill.catalog.changed",
+              "type": "string"
+            },
+            "schema_version": {
+              "const": "skill_registry_event.v1",
+              "type": "string"
+            },
+            "producer": {
+              "const": "skill_registry",
+              "type": "string"
+            },
+            "occurred_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "scope_kind",
+                "workspace_id",
+                "bot_id",
+                "deployment_environment",
+                "release_channel",
+                "actor_principal_id",
+                "reason_code",
+                "catalog_revision_id",
+                "catalog_version",
+                "catalog_as_of",
+                "changed_skill_keys",
+                "security_revocation_epoch"
+              ],
+              "properties": {
+                "scope_kind": {
+                  "const": "scoped",
+                  "type": "string"
+                },
+                "workspace_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "bot_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "deployment_environment": {
+                  "$id": "urn:pai:shared:deployment-environment:v1",
+                  "anyOf": [
+                    {
+                      "const": "local",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dev",
+                      "type": "string"
+                    },
+                    {
+                      "const": "staging",
+                      "type": "string"
+                    },
+                    {
+                      "const": "prod",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "release_channel": {
+                  "$id": "urn:pai:shared:release-channel:v1",
+                  "anyOf": [
+                    {
+                      "const": "stable",
+                      "type": "string"
+                    },
+                    {
+                      "const": "canary",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "actor_principal_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "reason_code": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "catalog_revision_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "previous_catalog_version": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "catalog_version": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "catalog_as_of": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "changed_skill_keys": {
+                  "maxItems": 100000,
+                  "type": "array",
+                  "items": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  }
+                },
+                "security_revocation_epoch": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      },
+      "skill.version.activated": {
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "event_id",
+            "event_type",
+            "schema_version",
+            "producer",
+            "occurred_at",
+            "idempotency_key",
+            "trace_id",
+            "payload"
+          ],
+          "properties": {
+            "event_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "event_type": {
+              "const": "skill.version.activated",
+              "type": "string"
+            },
+            "schema_version": {
+              "const": "skill_registry_event.v1",
+              "type": "string"
+            },
+            "producer": {
+              "const": "skill_registry",
+              "type": "string"
+            },
+            "occurred_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "scope_kind",
+                "workspace_id",
+                "bot_id",
+                "deployment_environment",
+                "release_channel",
+                "actor_principal_id",
+                "reason_code",
+                "skill_id",
+                "skill_key",
+                "version_id",
+                "version",
+                "activation_revision_id",
+                "catalog_version"
+              ],
+              "properties": {
+                "scope_kind": {
+                  "const": "scoped",
+                  "type": "string"
+                },
+                "workspace_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "bot_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "deployment_environment": {
+                  "$id": "urn:pai:shared:deployment-environment:v1",
+                  "anyOf": [
+                    {
+                      "const": "local",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dev",
+                      "type": "string"
+                    },
+                    {
+                      "const": "staging",
+                      "type": "string"
+                    },
+                    {
+                      "const": "prod",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "release_channel": {
+                  "$id": "urn:pai:shared:release-channel:v1",
+                  "anyOf": [
+                    {
+                      "const": "stable",
+                      "type": "string"
+                    },
+                    {
+                      "const": "canary",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "actor_principal_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "reason_code": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "skill_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "skill_key": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "version_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "version": {
+                  "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                "activation_revision_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "previous_activation_revision_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "catalog_version": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "skill.activation.disabled": {
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "event_id",
+            "event_type",
+            "schema_version",
+            "producer",
+            "occurred_at",
+            "idempotency_key",
+            "trace_id",
+            "payload"
+          ],
+          "properties": {
+            "event_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "event_type": {
+              "const": "skill.activation.disabled",
+              "type": "string"
+            },
+            "schema_version": {
+              "const": "skill_registry_event.v1",
+              "type": "string"
+            },
+            "producer": {
+              "const": "skill_registry",
+              "type": "string"
+            },
+            "occurred_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "scope_kind",
+                "workspace_id",
+                "bot_id",
+                "deployment_environment",
+                "release_channel",
+                "actor_principal_id",
+                "reason_code",
+                "skill_id",
+                "skill_key",
+                "version_id",
+                "version",
+                "activation_revision_id",
+                "previous_activation_revision_id",
+                "catalog_version",
+                "disabled_at"
+              ],
+              "properties": {
+                "scope_kind": {
+                  "const": "scoped",
+                  "type": "string"
+                },
+                "workspace_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "bot_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "deployment_environment": {
+                  "$id": "urn:pai:shared:deployment-environment:v1",
+                  "anyOf": [
+                    {
+                      "const": "local",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dev",
+                      "type": "string"
+                    },
+                    {
+                      "const": "staging",
+                      "type": "string"
+                    },
+                    {
+                      "const": "prod",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "release_channel": {
+                  "$id": "urn:pai:shared:release-channel:v1",
+                  "anyOf": [
+                    {
+                      "const": "stable",
+                      "type": "string"
+                    },
+                    {
+                      "const": "canary",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "actor_principal_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "reason_code": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "skill_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "skill_key": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "version_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "version": {
+                  "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                "activation_revision_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "previous_activation_revision_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "catalog_version": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "disabled_at": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "skill.activation.rolled_back": {
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "event_id",
+            "event_type",
+            "schema_version",
+            "producer",
+            "occurred_at",
+            "idempotency_key",
+            "trace_id",
+            "payload"
+          ],
+          "properties": {
+            "event_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "event_type": {
+              "const": "skill.activation.rolled_back",
+              "type": "string"
+            },
+            "schema_version": {
+              "const": "skill_registry_event.v1",
+              "type": "string"
+            },
+            "producer": {
+              "const": "skill_registry",
+              "type": "string"
+            },
+            "occurred_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "scope_kind",
+                "workspace_id",
+                "bot_id",
+                "deployment_environment",
+                "release_channel",
+                "actor_principal_id",
+                "reason_code",
+                "skill_id",
+                "skill_key",
+                "activation_revision_id",
+                "rolled_back_from_version_id",
+                "rolled_back_to_version_id",
+                "catalog_version"
+              ],
+              "properties": {
+                "scope_kind": {
+                  "const": "scoped",
+                  "type": "string"
+                },
+                "workspace_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "bot_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "deployment_environment": {
+                  "$id": "urn:pai:shared:deployment-environment:v1",
+                  "anyOf": [
+                    {
+                      "const": "local",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dev",
+                      "type": "string"
+                    },
+                    {
+                      "const": "staging",
+                      "type": "string"
+                    },
+                    {
+                      "const": "prod",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "release_channel": {
+                  "$id": "urn:pai:shared:release-channel:v1",
+                  "anyOf": [
+                    {
+                      "const": "stable",
+                      "type": "string"
+                    },
+                    {
+                      "const": "canary",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "actor_principal_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "reason_code": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "skill_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "skill_key": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "activation_revision_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "rolled_back_from_version_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "rolled_back_to_version_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "catalog_version": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "skill.version.deprecated": {
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "event_id",
+            "event_type",
+            "schema_version",
+            "producer",
+            "occurred_at",
+            "idempotency_key",
+            "trace_id",
+            "payload"
+          ],
+          "properties": {
+            "event_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "event_type": {
+              "const": "skill.version.deprecated",
+              "type": "string"
+            },
+            "schema_version": {
+              "const": "skill_registry_event.v1",
+              "type": "string"
+            },
+            "producer": {
+              "const": "skill_registry",
+              "type": "string"
+            },
+            "occurred_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "scope_kind",
+                "actor_principal_id",
+                "reason_code",
+                "skill_id",
+                "skill_key",
+                "version_id",
+                "version",
+                "previous_lifecycle_version",
+                "lifecycle_version",
+                "deprecated_at"
+              ],
+              "properties": {
+                "scope_kind": {
+                  "const": "global",
+                  "type": "string"
+                },
+                "actor_principal_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "reason_code": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "skill_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "skill_key": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "version_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "version": {
+                  "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                "previous_lifecycle_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "lifecycle_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "deprecated_at": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "skill.version.revoked": {
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "event_id",
+            "event_type",
+            "schema_version",
+            "producer",
+            "occurred_at",
+            "idempotency_key",
+            "trace_id",
+            "payload"
+          ],
+          "properties": {
+            "event_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "event_type": {
+              "const": "skill.version.revoked",
+              "type": "string"
+            },
+            "schema_version": {
+              "const": "skill_registry_event.v1",
+              "type": "string"
+            },
+            "producer": {
+              "const": "skill_registry",
+              "type": "string"
+            },
+            "occurred_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "scope_kind",
+                "actor_principal_id",
+                "reason_code",
+                "skill_id",
+                "skill_key",
+                "version_id",
+                "version",
+                "previous_lifecycle_version",
+                "lifecycle_version",
+                "revoked_at",
+                "security_revocation_epoch",
+                "emergency"
+              ],
+              "properties": {
+                "scope_kind": {
+                  "const": "global",
+                  "type": "string"
+                },
+                "actor_principal_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "reason_code": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "skill_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "skill_key": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "version_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "version": {
+                  "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                "previous_lifecycle_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "lifecycle_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "revoked_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "security_revocation_epoch": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "emergency": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      },
+      "skill.permission.granted": {
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "event_id",
+            "event_type",
+            "schema_version",
+            "producer",
+            "occurred_at",
+            "idempotency_key",
+            "trace_id",
+            "payload"
+          ],
+          "properties": {
+            "event_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "event_type": {
+              "const": "skill.permission.granted",
+              "type": "string"
+            },
+            "schema_version": {
+              "const": "skill_registry_event.v1",
+              "type": "string"
+            },
+            "producer": {
+              "const": "skill_registry",
+              "type": "string"
+            },
+            "occurred_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "scope_kind",
+                "workspace_id",
+                "bot_id",
+                "deployment_environment",
+                "release_channel",
+                "actor_principal_id",
+                "reason_code",
+                "skill_id",
+                "skill_key",
+                "permission_revision_id",
+                "scope_hash",
+                "capability_refs",
+                "catalog_version"
+              ],
+              "properties": {
+                "scope_kind": {
+                  "const": "scoped",
+                  "type": "string"
+                },
+                "workspace_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "bot_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "deployment_environment": {
+                  "$id": "urn:pai:shared:deployment-environment:v1",
+                  "anyOf": [
+                    {
+                      "const": "local",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dev",
+                      "type": "string"
+                    },
+                    {
+                      "const": "staging",
+                      "type": "string"
+                    },
+                    {
+                      "const": "prod",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "release_channel": {
+                  "$id": "urn:pai:shared:release-channel:v1",
+                  "anyOf": [
+                    {
+                      "const": "stable",
+                      "type": "string"
+                    },
+                    {
+                      "const": "canary",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "actor_principal_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "reason_code": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "skill_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "skill_key": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "permission_revision_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "scope_hash": {
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                "owner_agent_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "capability_refs": {
+                  "minItems": 1,
+                  "maxItems": 1024,
+                  "type": "array",
+                  "items": {
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "type": "string"
+                  }
+                },
+                "catalog_version": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "skill.permission.revoked": {
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "event_id",
+            "event_type",
+            "schema_version",
+            "producer",
+            "occurred_at",
+            "idempotency_key",
+            "trace_id",
+            "payload"
+          ],
+          "properties": {
+            "event_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "event_type": {
+              "const": "skill.permission.revoked",
+              "type": "string"
+            },
+            "schema_version": {
+              "const": "skill_registry_event.v1",
+              "type": "string"
+            },
+            "producer": {
+              "const": "skill_registry",
+              "type": "string"
+            },
+            "occurred_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "scope_kind",
+                "workspace_id",
+                "bot_id",
+                "deployment_environment",
+                "release_channel",
+                "actor_principal_id",
+                "reason_code",
+                "skill_id",
+                "skill_key",
+                "permission_revision_id",
+                "scope_hash",
+                "revoked_capability_refs",
+                "catalog_version",
+                "security_revocation_epoch"
+              ],
+              "properties": {
+                "scope_kind": {
+                  "const": "scoped",
+                  "type": "string"
+                },
+                "workspace_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "bot_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "deployment_environment": {
+                  "$id": "urn:pai:shared:deployment-environment:v1",
+                  "anyOf": [
+                    {
+                      "const": "local",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dev",
+                      "type": "string"
+                    },
+                    {
+                      "const": "staging",
+                      "type": "string"
+                    },
+                    {
+                      "const": "prod",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "release_channel": {
+                  "$id": "urn:pai:shared:release-channel:v1",
+                  "anyOf": [
+                    {
+                      "const": "stable",
+                      "type": "string"
+                    },
+                    {
+                      "const": "canary",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "actor_principal_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "reason_code": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "skill_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "skill_key": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "permission_revision_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "scope_hash": {
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                "owner_agent_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "revoked_capability_refs": {
+                  "minItems": 1,
+                  "maxItems": 1024,
+                  "type": "array",
+                  "items": {
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "type": "string"
+                  }
+                },
+                "catalog_version": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "security_revocation_epoch": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      },
+      "skill.security_revocation_epoch.changed": {
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "event_id",
+            "event_type",
+            "schema_version",
+            "producer",
+            "occurred_at",
+            "idempotency_key",
+            "trace_id",
+            "payload"
+          ],
+          "properties": {
+            "event_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "event_type": {
+              "const": "skill.security_revocation_epoch.changed",
+              "type": "string"
+            },
+            "schema_version": {
+              "const": "skill_registry_event.v1",
+              "type": "string"
+            },
+            "producer": {
+              "const": "skill_registry",
+              "type": "string"
+            },
+            "occurred_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "scope_kind",
+                "actor_principal_id",
+                "reason_code",
+                "previous_security_revocation_epoch",
+                "security_revocation_epoch",
+                "affected_skill_ids",
+                "affected_version_ids",
+                "emergency"
+              ],
+              "properties": {
+                "scope_kind": {
+                  "const": "global",
+                  "type": "string"
+                },
+                "actor_principal_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "reason_code": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "previous_security_revocation_epoch": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "security_revocation_epoch": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "affected_skill_ids": {
+                  "maxItems": 100000,
+                  "type": "array",
+                  "items": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  }
+                },
+                "affected_version_ids": {
+                  "maxItems": 100000,
+                  "type": "array",
+                  "items": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  }
+                },
+                "emergency": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      },
+      "skill.candidate.application.updated": {
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "event_id",
+            "event_type",
+            "schema_version",
+            "producer",
+            "occurred_at",
+            "idempotency_key",
+            "trace_id",
+            "payload"
+          ],
+          "properties": {
+            "event_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "event_type": {
+              "const": "skill.candidate.application.updated",
+              "type": "string"
+            },
+            "schema_version": {
+              "const": "skill_registry_event.v1",
+              "type": "string"
+            },
+            "producer": {
+              "const": "skill_registry",
+              "type": "string"
+            },
+            "occurred_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "scope_kind",
+                "workspace_id",
+                "bot_id",
+                "deployment_environment",
+                "release_channel",
+                "owner_agent_id",
+                "actor_principal_id",
+                "reason_code",
+                "application_id",
+                "candidate_id",
+                "review_version",
+                "candidate_type",
+                "skill_key",
+                "status",
+                "response_ref",
+                "response_hash"
+              ],
+              "properties": {
+                "scope_kind": {
+                  "const": "provenance",
+                  "type": "string"
+                },
+                "workspace_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "bot_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "deployment_environment": {
+                  "$id": "urn:pai:shared:deployment-environment:v1",
+                  "anyOf": [
+                    {
+                      "const": "local",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dev",
+                      "type": "string"
+                    },
+                    {
+                      "const": "staging",
+                      "type": "string"
+                    },
+                    {
+                      "const": "prod",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "release_channel": {
+                  "$id": "urn:pai:shared:release-channel:v1",
+                  "anyOf": [
+                    {
+                      "const": "stable",
+                      "type": "string"
+                    },
+                    {
+                      "const": "canary",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "owner_agent_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "actor_principal_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "reason_code": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "application_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "candidate_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "review_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "candidate_type": {
+                  "anyOf": [
+                    {
+                      "const": "new_skill",
+                      "type": "string"
+                    },
+                    {
+                      "const": "skill_update",
+                      "type": "string"
+                    },
+                    {
+                      "const": "deprecation",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "skill_key": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "received",
+                      "type": "string"
+                    },
+                    {
+                      "const": "validating",
+                      "type": "string"
+                    },
+                    {
+                      "const": "draft_created",
+                      "type": "string"
+                    },
+                    {
+                      "const": "deprecation_review_created",
+                      "type": "string"
+                    },
+                    {
+                      "const": "rejected",
+                      "type": "string"
+                    },
+                    {
+                      "const": "failed",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "staging_version_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "review_ref": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "response_ref": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "response_hash": {
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "skill.package.retention.changed": {
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "event_id",
+            "event_type",
+            "schema_version",
+            "producer",
+            "occurred_at",
+            "idempotency_key",
+            "trace_id",
+            "payload"
+          ],
+          "properties": {
+            "event_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "event_type": {
+              "const": "skill.package.retention.changed",
+              "type": "string"
+            },
+            "schema_version": {
+              "const": "skill_registry_event.v1",
+              "type": "string"
+            },
+            "producer": {
+              "const": "skill_registry",
+              "type": "string"
+            },
+            "occurred_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "scope_kind",
+                "actor_principal_id",
+                "reason_code",
+                "skill_id",
+                "version_id",
+                "package_id",
+                "previous_retention_state",
+                "retention_state",
+                "previous_state_version",
+                "state_version"
+              ],
+              "properties": {
+                "scope_kind": {
+                  "const": "global",
+                  "type": "string"
+                },
+                "actor_principal_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "reason_code": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "skill_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "version_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "package_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "previous_retention_state": {
+                  "anyOf": [
+                    {
+                      "const": "retained",
+                      "type": "string"
+                    },
+                    {
+                      "const": "deletion_pending",
+                      "type": "string"
+                    },
+                    {
+                      "const": "delete_failed",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "retention_state": {
+                  "anyOf": [
+                    {
+                      "const": "deletion_pending",
+                      "type": "string"
+                    },
+                    {
+                      "const": "deleted",
+                      "type": "string"
+                    },
+                    {
+                      "const": "delete_failed",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "previous_state_version": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "object_store_deletion_decision_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      },
+      "skill.package.retention_hold.changed": {
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "event_id",
+            "event_type",
+            "schema_version",
+            "producer",
+            "occurred_at",
+            "idempotency_key",
+            "trace_id",
+            "payload"
+          ],
+          "properties": {
+            "event_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "event_type": {
+              "const": "skill.package.retention_hold.changed",
+              "type": "string"
+            },
+            "schema_version": {
+              "const": "skill_registry_event.v1",
+              "type": "string"
+            },
+            "producer": {
+              "const": "skill_registry",
+              "type": "string"
+            },
+            "occurred_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "scope_kind",
+                "actor_principal_id",
+                "reason_code",
+                "package_id",
+                "hold_id",
+                "hold_type",
+                "active"
+              ],
+              "properties": {
+                "scope_kind": {
+                  "const": "global",
+                  "type": "string"
+                },
+                "actor_principal_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "reason_code": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "package_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "hold_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "hold_type": {
+                  "anyOf": [
+                    {
+                      "const": "audit",
+                      "type": "string"
+                    },
+                    {
+                      "const": "legal",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "active": {
+                  "type": "boolean"
+                },
+                "expires_at": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

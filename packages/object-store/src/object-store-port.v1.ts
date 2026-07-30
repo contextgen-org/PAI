@@ -48,6 +48,13 @@ export class ObjectStoreErrorV1 extends Error {
 
 export interface ObjectAuthorizationV1 {
   readonly owner_service: ServiceIdV1;
+  /**
+   * Durable owner-row identity. The ObjectStore adapter must never infer this
+   * from an opaque ref, object class, scope, or idempotency key.
+   */
+  readonly owner_object_id: string;
+  /** Exact positive safe-integer owner state observed by the caller. */
+  readonly owner_state_version: number;
   readonly scope: ObjectScopeV1;
   readonly capability: string;
 }
@@ -112,7 +119,7 @@ export interface ObjectReadGrantV1 {
 }
 
 export interface DeleteIfEligibleRequestV1 extends ObjectReadRequestV1 {
-  readonly deletion_decision_version: string;
+  readonly deletion_decision_version: number;
   readonly idempotency_key: string;
 }
 

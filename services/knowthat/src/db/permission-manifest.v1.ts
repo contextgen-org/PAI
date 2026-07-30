@@ -1,13 +1,34 @@
+import {
+  KNOWTHAT_DATABASE_COLUMNS_V1,
+  KNOWTHAT_DATABASE_INDEXES_V1,
+  KNOWTHAT_DATABASE_CHECKS_V1,
+  KNOWTHAT_DATABASE_FUNCTIONS_V1,
+  KNOWTHAT_DATABASE_TRIGGERS_V1,
+  KNOWTHAT_DATABASE_UNIQUE_CONSTRAINTS_V1,
+  KNOWTHAT_FOREIGN_KEYS_V1,
+} from "./catalog-snapshot.generated.v1.js";
+import { KNOWTHAT_WRITER_ARTIFACTS_V1 } from "./writer-artifacts.generated.v1.js";
 import { OWNER_DURABLE_EVENT_TYPES_V1 } from "@pai/contracts";
 import {
   defineOwnerRepositoryContractV1,
+  ownerDlqResolutionContractV1,
+  ownerEventingReconciliationContractV1,
   ownerEventingTransportEpochActivationSignatureV1,
   ownerEventingTransportEpochTablePermissionV1,
-  ownerForeignKeysV1,
   ownerFunctionSignatureV1,
   type OwnerRepositoryPortV1,
   type OwnerUnitOfWorkPortV1,
 } from "@pai/persistence";
+
+const KNOWTHAT_DLQ_RESOLUTION_V1 = ownerDlqResolutionContractV1(
+  "knowthat",
+  "knowthat_event_dlq",
+);
+const KNOWTHAT_EVENT_RECONCILIATION_V1 =
+  ownerEventingReconciliationContractV1(
+    "knowthat",
+    "knowthat_event_outbox",
+  );
 
 export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
   defineOwnerRepositoryContractV1({
@@ -25,12 +46,15 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
       "knowthat_write_batches",
       "knowthat_fact_revisions",
       "knowthat_candidate_reviews",
-      "knowthat_conflicts",
-      "knowthat_linkage_checks",
-      "knowthat_feedback_events",
+      "knowthat_audit_logs",
+    "knowthat_conflicts",
+    "knowthat_linkage_checks",
+    "knowthat_linkage_recovery_receipts",
+    "knowthat_feedback_events",
       "knowthat_event_outbox",
       "knowthat_event_inbox",
       "knowthat_event_dlq",
+      KNOWTHAT_DLQ_RESOLUTION_V1.resolution_table,
       "knowthat_query_revisions",
       "knowthat_fact_query_versions",
       "semantic_key_aliases",
@@ -57,7 +81,7 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "knowthat_fact_revisions",
-      select_columns: ["id","fact_id","revision_no","patch","reason","actor","created_at"],
+      select_columns: ["id","fact_id","revision_no","patch","reason","actor","promotion_reservation_id","promotion_fence_generation","promotion_reservation_token_hash","promotion_committed_at","created_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -65,7 +89,15 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "knowthat_candidate_reviews",
-      select_columns: ["id","fact_id","target_candidate_version","decision","reason","evidence_refs","evidence_set_hash","source_meta_job_id","suggestion_id","suggested_action","idempotency_key","request_hash","outcome","reason_code","response_payload","reviewed_by","created_at"],
+      select_columns: ["id","fact_id","target_candidate_version","decision","reason","evidence_refs","evidence_set_hash","source_meta_job_id","suggestion_id","suggested_action","idempotency_key","request_hash","outcome","reason_code","response_payload","reviewed_by","promotion_reservation_id","promotion_fence_generation","promotion_reservation_token_hash","promotion_reservation_expires_at","promotion_committed_at","created_at"],
+      insert_columns: [],
+      update_columns: [],
+      delete_allowed: false,
+      writer_kind: "immutable_append",
+    },
+    {
+      table_name: "knowthat_audit_logs",
+      select_columns: ["id","bot_id","aggregate_type","aggregate_id","action","actor","reason","state_version","payload","trace_id","created_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -81,11 +113,19 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "knowthat_linkage_checks",
-      select_columns: ["id","bot_id","fact_id","check_type","target_service","change_type","affected_query","target_memory_point_ids","action","reason","evidence_refs","idempotency_key","attempt_count","next_retry_at","locked_by","locked_until","last_error","status","result","payload_schema_version","created_at","updated_at"],
+      select_columns: ["id","bot_id","fact_id","check_type","target_service","change_type","affected_query","target_memory_point_ids","action","reason","evidence_refs","idempotency_key","attempt_count","next_retry_at","locked_by","locked_until","last_error","status","result","payload_schema_version","created_at","updated_at","lease_generation","claim_token","job_version"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
       writer_kind: "state_transition",
+    },
+    {
+      table_name: "knowthat_linkage_recovery_receipts",
+      select_columns: ["id","bot_id","linkage_check_id","idempotency_key","request_hash","response_payload","created_at"],
+      insert_columns: [],
+      update_columns: [],
+      delete_allowed: false,
+      writer_kind: "immutable_append",
     },
     {
       table_name: "knowthat_feedback_events",
@@ -113,12 +153,13 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "knowthat_event_dlq",
-      select_columns: ["id","source_event_id","event_type","payload","last_error","failed_at","resolved_at"],
+      select_columns: ["id","source_event_id","event_type","payload","last_error","failed_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
       writer_kind: "immutable_append",
     },
+    KNOWTHAT_DLQ_RESOLUTION_V1.table_permission,
     {
       table_name: "knowthat_query_revisions",
       select_columns: ["bot_id","current_revision","updated_at"],
@@ -153,7 +194,7 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "knowthat_memory_command_outbox",
-      select_columns: ["id","command_type","reservation_id","candidate_fact_id","fencing_generation","reservation_token_hash","promotion_revision_id","committed_at","idempotency_key","request_hash","payload","status","next_retry_at","last_error","created_at","updated_at"],
+      select_columns: ["id","bot_id","command_type","reservation_id","candidate_fact_id","fencing_generation","reservation_token_hash","reservation_expires_at","promotion_revision_id","committed_at","release_reason","released_at","idempotency_key","request_hash","payload","status","attempt_count","next_retry_at","claim_token","locked_by","locked_until","last_error","transport_ref","transport_epoch","transport_generation","sent_at","created_at","updated_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -162,24 +203,30 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
     ownerEventingTransportEpochTablePermissionV1(),
     ],
     mutable_writers: [
+      ...KNOWTHAT_DLQ_RESOLUTION_V1.mutable_writers,
+      ...KNOWTHAT_EVENT_RECONCILIATION_V1.mutable_writers,
       "create_knowthat_fact_v1",
       "transition_knowthat_fact_v1",
       "append_knowthat_conflict_v1",
-      "append_knowthat_candidate_review_v1",
+      "record_knowthat_candidate_review_v1",
       "transition_knowthat_conflict_v1",
       "enqueue_knowthat_linkage_check_v1",
       "transition_knowthat_linkage_check_v1",
+      "claim_knowthat_linkage_check_v1",
+      "recover_knowthat_linkage_check_v1",
       "append_knowthat_feedback_v1",
       "create_knowthat_write_batch_v1",
-      "finalize_knowthat_write_batch_v1",
       "cas_knowthat_query_revision_v1",
       "claim_knowthat_event_outbox_v1",
       "ack_knowthat_event_outbox_v1",
+      "enqueue_knowthat_promotion_release_v1",
       "claim_knowthat_memory_command_outbox_v1",
       "ack_knowthat_memory_command_outbox_v1",
       "activate_eventing_transport_epoch_v1",
     ],
     function_signatures: [
+      ...KNOWTHAT_DLQ_RESOLUTION_V1.function_signatures,
+      ...KNOWTHAT_EVENT_RECONCILIATION_V1.function_signatures,
     ownerFunctionSignatureV1({
       schema: "knowthat",
       function_name: "create_knowthat_fact_v1",
@@ -226,16 +273,23 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
     }),
     ownerFunctionSignatureV1({
       schema: "knowthat",
-      function_name: "append_knowthat_candidate_review_v1",
+      function_name: "record_knowthat_candidate_review_v1",
       primary_table: "knowthat_candidate_reviews",
       writer_kind: "immutable_append",
-      arguments: [["p_review_id", "text"], ["p_fact_id", "text"], ["p_source_meta_job_id", "text"], ["p_suggestion_id", "text"], ["p_expected_candidate_version", "integer"], ["p_suggested_action", "text"], ["p_review", "jsonb"], ["p_source_event", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_payload_hash", "text"], ["p_semantic_hash", "text"], ["p_scope_fingerprint", "text"], ["p_trace_id", "text"]],
-      reads_tables: ["knowthat_facts", "knowthat_candidate_reviews", "knowthat_event_inbox"],
-      writes_tables: ["knowthat_candidate_reviews", "knowthat_event_inbox", "knowthat_event_dlq", "knowthat_event_outbox"],
+      arguments: [["p_review_id", "text"], ["p_fact_id", "text"], ["p_source_meta_job_id", "text"], ["p_suggestion_id", "text"], ["p_expected_candidate_version", "integer"], ["p_suggested_action", "text"], ["p_review", "jsonb"], ["p_promotion_evidence", "jsonb", { nullable: true }], ["p_promotion_reservation", "jsonb", { nullable: true }], ["p_memory_ack_command", "jsonb", { nullable: true }], ["p_memory_release_command", "jsonb", { nullable: true }], ["p_source_event", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_payload_hash", "text"], ["p_semantic_hash", "text"], ["p_scope_fingerprint", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["knowthat_facts", "knowthat_candidate_reviews", "knowthat_conflicts", "knowthat_event_inbox", "knowthat_memory_command_outbox"],
+      writes_tables: ["knowthat_facts", "knowthat_fact_revisions", "knowthat_candidate_reviews", "knowthat_linkage_checks", "knowthat_event_inbox", "knowthat_event_dlq", "knowthat_audit_logs", "knowthat_query_revisions", "knowthat_fact_query_versions", "knowthat_memory_command_outbox", "knowthat_event_outbox"],
       effects: [
+        { table_name: "knowthat_facts", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "knowthat_fact_revisions", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "knowthat_candidate_reviews", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "knowthat_linkage_checks", operation: "enqueue", concurrency_control: "idempotency_key" },
         { table_name: "knowthat_event_inbox", operation: "append", concurrency_control: "durable_event_identity" },
         { table_name: "knowthat_event_dlq", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "knowthat_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "knowthat_query_revisions", operation: "cas", concurrency_control: "expected_version" },
+        { table_name: "knowthat_fact_query_versions", operation: "upsert", concurrency_control: "expected_version" },
+        { table_name: "knowthat_memory_command_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
         { table_name: "knowthat_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
       ],
       returns: "jsonb",
@@ -273,13 +327,40 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
       function_name: "transition_knowthat_linkage_check_v1",
       primary_table: "knowthat_linkage_checks",
       writer_kind: "state_transition",
-      arguments: [["p_linkage_check_id", "text"], ["p_expected_status", "text"], ["p_expected_updated_at", "timestamptz"], ["p_claim_token", "text"], ["p_next_status", "text"], ["p_result", "jsonb"], ["p_memory_command", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
-      reads_tables: ["knowthat_linkage_checks", "knowthat_facts"],
-      writes_tables: ["knowthat_linkage_checks", "knowthat_memory_command_outbox", "knowthat_event_outbox"],
+      arguments: [["p_linkage_check_id", "text"], ["p_expected_lease_generation", "bigint"], ["p_claim_token", "text"], ["p_worker_id", "text"], ["p_next_status", "text"], ["p_result", "jsonb"], ["p_memory_command", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["knowthat_linkage_checks"],
+      writes_tables: ["knowthat_linkage_checks", "knowthat_audit_logs"],
       effects: [
         { table_name: "knowthat_linkage_checks", operation: "transition", concurrency_control: "lease_fence" },
-        { table_name: "knowthat_memory_command_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
-        { table_name: "knowthat_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+        { table_name: "knowthat_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "knowthat",
+      function_name: "claim_knowthat_linkage_check_v1",
+      primary_table: "knowthat_linkage_checks",
+      writer_kind: "state_transition",
+      arguments: [["p_linkage_check_id", "text"], ["p_expected_status", "text"], ["p_expected_job_version", "bigint"], ["p_expected_updated_at", "timestamptz"], ["p_worker_id", "text"], ["p_lease_seconds", "integer"], ["p_now", "timestamptz"], ["p_trace_id", "text"]],
+      reads_tables: ["knowthat_linkage_checks"],
+      writes_tables: ["knowthat_linkage_checks"],
+      effects: [
+        { table_name: "knowthat_linkage_checks", operation: "transition", concurrency_control: "lease_fence" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "knowthat",
+      function_name: "recover_knowthat_linkage_check_v1",
+      primary_table: "knowthat_linkage_checks",
+      writer_kind: "state_transition",
+      arguments: [["p_linkage_check_id", "text"], ["p_expected_job_version", "bigint"], ["p_recovery_action", "text"], ["p_reason", "text"], ["p_receipt", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["knowthat_linkage_checks", "knowthat_linkage_recovery_receipts"],
+      writes_tables: ["knowthat_linkage_checks", "knowthat_linkage_recovery_receipts", "knowthat_audit_logs"],
+      effects: [
+        { table_name: "knowthat_linkage_checks", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "knowthat_linkage_recovery_receipts", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "knowthat_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
       ],
       returns: "jsonb",
     }),
@@ -308,21 +389,6 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
       effects: [
         { table_name: "knowthat_write_batches", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "knowthat_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
-      ],
-      returns: "jsonb",
-    }),
-    ownerFunctionSignatureV1({
-      schema: "knowthat",
-      function_name: "finalize_knowthat_write_batch_v1",
-      primary_table: "knowthat_write_batches",
-      writer_kind: "state_transition",
-      arguments: [["p_batch_id", "text"], ["p_expected_status", "text"], ["p_next_status", "text"], ["p_batch_result", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
-      reads_tables: ["knowthat_write_batches", "knowthat_facts"],
-      writes_tables: ["knowthat_write_batches", "knowthat_event_outbox", "knowthat_memory_command_outbox"],
-      effects: [
-        { table_name: "knowthat_write_batches", operation: "transition", concurrency_control: "expected_state_version" },
-        { table_name: "knowthat_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
-        { table_name: "knowthat_memory_command_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
       ],
       returns: "jsonb",
     }),
@@ -366,6 +432,19 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
     }),
     ownerFunctionSignatureV1({
       schema: "knowthat",
+      function_name: "enqueue_knowthat_promotion_release_v1",
+      primary_table: "knowthat_memory_command_outbox",
+      writer_kind: "outbox_claim_ack",
+      arguments: [["p_command", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["knowthat_memory_command_outbox", "knowthat_facts", "knowthat_candidate_reviews"],
+      writes_tables: ["knowthat_memory_command_outbox"],
+      effects: [
+        { table_name: "knowthat_memory_command_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "knowthat",
       function_name: "claim_knowthat_memory_command_outbox_v1",
       primary_table: "knowthat_memory_command_outbox",
       writer_kind: "outbox_claim_ack",
@@ -384,56 +463,24 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
     }),
     ownerEventingTransportEpochActivationSignatureV1("knowthat"),
     ],
-    database_checks: [
-      {
-        constraint_name: "eventing_transport_epochs_active_generation_safe_check",
-        table_name: "eventing_transport_epochs",
-        required_definition_fragments: [
-          "active_generation >= 1",
-          "9007199254740991",
-        ],
-        semantic_constraint: {
-          kind: "integer_range",
-          column_name: "active_generation",
-          min: 1,
-          max: Number.MAX_SAFE_INTEGER,
-        },
-      },
-      {
-        constraint_name: "knowthat_event_outbox_event_type_check",
-        table_name: "knowthat_event_outbox",
-        required_definition_fragments: ["event_type", "knowthat.linkage_check.requested"],
-        semantic_constraint: {
-          kind: "text_enum",
-          column_name: "event_type",
-          allowed_values: OWNER_DURABLE_EVENT_TYPES_V1.knowthat,
-        },
-      },
-      {
-        constraint_name: "knowthat_event_outbox_producer_check",
-        table_name: "knowthat_event_outbox",
-        required_definition_fragments: ["producer", "knowthat"],
-        semantic_constraint: {
-          kind: "text_equals",
-          column_name: "producer",
-          value: "knowthat",
-        },
-      },
-    ],
+    // The generator imports this module under an explicit cache-busting
+    // `?writer=` URL so it can attest a changed signature before the new
+    // artifact exists. Normal application imports never carry that marker
+    // and therefore remain fail-closed on exact artifact drift.
+    ...(new URL(import.meta.url).searchParams.has("writer")
+      ? {}
+      : { writer_artifacts: KNOWTHAT_WRITER_ARTIFACTS_V1 }),
+    database_columns: KNOWTHAT_DATABASE_COLUMNS_V1,
+    database_checks: KNOWTHAT_DATABASE_CHECKS_V1,
+    database_functions: KNOWTHAT_DATABASE_FUNCTIONS_V1,
+    database_triggers: KNOWTHAT_DATABASE_TRIGGERS_V1,
+    database_unique_constraints: KNOWTHAT_DATABASE_UNIQUE_CONSTRAINTS_V1,
+    database_indexes: KNOWTHAT_DATABASE_INDEXES_V1,
     foreign_key_snapshot: {
       status: "complete",
-      source: "Database Design revision 476 / fresh 0500_knowthat canonical DDL applied to PostgreSQL 17",
+      source: "Database Design revision 508 / fresh 0500_knowthat canonical DDL contract snapshot; version-pinned pai-infra artifacts are required before PostgreSQL deployment verification",
     },
-  foreign_keys: ownerForeignKeysV1("knowthat", [
-      ["knowthat_candidate_reviews_fact_id_fkey","knowthat_candidate_reviews",["fact_id"],"knowthat_facts",["id"]],
-      ["knowthat_conflicts_left_fact_id_fkey","knowthat_conflicts",["left_fact_id"],"knowthat_facts",["id"]],
-      ["knowthat_conflicts_right_fact_id_fkey","knowthat_conflicts",["right_fact_id"],"knowthat_facts",["id"]],
-      ["knowthat_fact_query_versions_fact_id_fkey","knowthat_fact_query_versions",["fact_id"],"knowthat_facts",["id"]],
-      ["knowthat_fact_revisions_fact_id_fkey","knowthat_fact_revisions",["fact_id"],"knowthat_facts",["id"]],
-      ["knowthat_feedback_events_fact_id_fkey","knowthat_feedback_events",["fact_id"],"knowthat_facts",["id"]],
-      ["knowthat_linkage_checks_fact_id_fkey","knowthat_linkage_checks",["fact_id"],"knowthat_facts",["id"]],
-      ["semantic_key_aliases_target_fact_id_fkey","semantic_key_aliases",["target_fact_id"],"knowthat_facts",["id"]],
-    ]),
+  foreign_keys: KNOWTHAT_FOREIGN_KEYS_V1,
     append_only_tables: [
       "knowthat_fact_revisions",
       "knowthat_candidate_reviews",
@@ -441,6 +488,9 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
       "knowthat_event_outbox",
       "knowthat_event_inbox",
       "knowthat_event_dlq",
+      KNOWTHAT_DLQ_RESOLUTION_V1.resolution_table,
+      "knowthat_audit_logs",
+      "knowthat_linkage_recovery_receipts",
       "knowthat_memory_command_outbox",
       "semantic_key_aliases",
     ],
@@ -450,6 +500,7 @@ export const KNOWTHAT_REPOSITORY_CONTRACT_V1 =
     ],
     inbox_tables: ["knowthat_event_inbox"],
     dlq_tables: ["knowthat_event_dlq"],
+    dlq_resolutions: [KNOWTHAT_DLQ_RESOLUTION_V1.binding],
     object_metadata_tables: [],
   } as const);
 

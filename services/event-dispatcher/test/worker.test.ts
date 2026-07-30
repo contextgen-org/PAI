@@ -321,4 +321,48 @@ describe("event dispatcher polling shell", () => {
     expect(aborts).toBe(1);
     await worker.stop();
   });
+
+  it("releases the in-process bulkhead after an abort-aware timed-out batch settles", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const worker = new EventDispatcherWorkerV1({
+      dispatcher: {
+        dispatchBatch(signal) {
+          calls += 1;
+          if (calls > 1) {
+            return Promise.resolve({
+              claimed: 0,
+              sent: 0,
+              retry_wait: 0,
+              failed: 0,
+            });
+          }
+          return new Promise<never>((_resolve, reject) => {
+            signal.addEventListener(
+              "abort",
+              () => reject(signal.reason),
+              { once: true },
+            );
+          });
+        },
+      },
+      batch_timeout_ms: 100,
+    });
+
+    const first = worker.runOnce();
+    const timedOut = expect(first).rejects.toThrow(
+      "event dispatcher batch timed out",
+    );
+    await vi.advanceTimersByTimeAsync(100);
+    await timedOut;
+    await vi.advanceTimersByTimeAsync(0);
+
+    await expect(worker.runOnce()).resolves.toEqual({
+      claimed: 0,
+      sent: 0,
+      retry_wait: 0,
+      failed: 0,
+    });
+    expect(calls).toBe(2);
+  });
 });

@@ -1,3 +1,5 @@
+import { createPrivateKey, generateKeyPairSync } from "node:crypto";
+
 import type { JSONWebKeySet, JWK } from "jose";
 import {
   exportJWK,
@@ -9,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AuthError,
   JwksCache,
+  normalizePrivateKeyPemEnvironmentValueV1,
   type JwksProvider,
   WorkloadJwtSigner,
   WorkloadJwtVerifier,
@@ -40,6 +43,80 @@ async function verifierFor(jwks: JSONWebKeySet) {
 }
 
 describe("workload JWT", () => {
+  it("accepts a dotenv-safe private PEM without changing a multiline PEM", () => {
+    const pem = generateKeyPairSync("ed25519").privateKey.export({
+      type: "pkcs8",
+      format: "pem",
+    });
+    expect(
+      createPrivateKey(normalizePrivateKeyPemEnvironmentValueV1(pem)),
+    ).toBeDefined();
+    expect(
+      createPrivateKey(
+        normalizePrivateKeyPemEnvironmentValueV1(pem.replaceAll("\n", "\\n")),
+      ),
+    ).toBeDefined();
+  });
+
+  it("preflights provider JWKS values before private snapshot or JOSE traversal", async () => {
+    let proxyTrapCalls = 0;
+    const proxyJwks = new Proxy(
+      { keys: [] },
+      {
+        ownKeys(target) {
+          proxyTrapCalls += 1;
+          return Reflect.ownKeys(target);
+        },
+      },
+    );
+    const proxyCache = new JwksCache({
+      provider: { load: async () => proxyJwks },
+    });
+    await expect(
+      proxyCache.getKey(
+        { alg: "EdDSA", kid: "missing" },
+        {} as never,
+      ),
+    ).rejects.toThrow(/proxy/u);
+    expect(proxyTrapCalls).toBe(0);
+
+    let getterCalls = 0;
+    const accessorJwks: Record<string, unknown> = {};
+    Object.defineProperty(accessorJwks, "keys", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return [];
+      },
+    });
+    const accessorCache = new JwksCache({
+      provider: { load: async () => accessorJwks as JSONWebKeySet },
+    });
+    await expect(
+      accessorCache.getKey(
+        { alg: "EdDSA", kid: "missing" },
+        {} as never,
+      ),
+    ).rejects.toThrow(/accessor/u);
+    expect(getterCalls).toBe(0);
+  });
+
+  it("rejects an over-deep remote JWKS before key-set validation", async () => {
+    let deep: Record<string, unknown> = { keys: [] };
+    for (let depth = 0; depth < 33; depth += 1) {
+      deep = { next: deep };
+    }
+    const provider = new RemoteJwksProvider({
+      url: "https://identity.example/.well-known/jwks.json",
+      fetchImpl: (async () =>
+        new Response(JSON.stringify(deep), { status: 200 })) as typeof fetch,
+    });
+
+    await expect(provider.load()).rejects.toThrow(
+      "bounded canonical JSON contract",
+    );
+  });
+
   it("does not follow JWKS redirects or accept an oversized key set", async () => {
     const redirectFetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
       expect(init?.redirect).toBe("error");
@@ -90,6 +167,31 @@ describe("workload JWT", () => {
     ).toThrow("a query");
   });
 
+  it("uses the JWKS boundary instead of the smaller compact-JWT boundary", async () => {
+    const key = await keyFixture("large-jwks");
+    const verifier = await verifierFor({
+      keys: [
+        {
+          ...key.publicJwk,
+          pai_padding: "x".repeat(20_000),
+        },
+      ],
+    });
+    const signer = new WorkloadJwtSigner({
+      subject: "action_runtime",
+      privateKey: key.privateKey,
+      keyId: "large-jwks",
+      algorithm: "EdDSA",
+    });
+
+    await expect(
+      verifier.verify(await signer.sign(globalInput()), {
+        audience: "memory",
+        requiredCapabilities: ["memory.read"],
+      }),
+    ).resolves.toBeDefined();
+  });
+
   it("bounds JWKS cache and network timing configuration", () => {
     const provider: JwksProvider = { load: async () => ({ keys: [] }) };
     for (const maxAgeMs of [0, 3_600_001, Number.MAX_SAFE_INTEGER + 1]) {
@@ -131,6 +233,23 @@ describe("workload JWT", () => {
       "options are invalid",
     );
     expect(providerGetterCalls).toBe(0);
+
+    let loadGetterCalls = 0;
+    const accessorProvider: Record<string, unknown> = {};
+    Object.defineProperty(accessorProvider, "load", {
+      enumerable: true,
+      get() {
+        loadGetterCalls += 1;
+        return async () => ({ keys: [] });
+      },
+    });
+    expect(
+      () =>
+        new JwksCache({
+          provider: accessorProvider as unknown as JwksProvider,
+        }),
+    ).toThrow("options are invalid");
+    expect(loadGetterCalls).toBe(0);
 
     const key = await keyFixture("captured-provider");
     let trustedLoads = 0;
@@ -492,6 +611,35 @@ describe("workload JWT", () => {
     await expect(pending).rejects.toMatchObject({
       code: "authorization_denied",
     });
+  });
+
+  it("rejects Proxy-backed authorization requirements before key lookup", async () => {
+    let proxyTrapCalls = 0;
+    let keyLookups = 0;
+    const verifier = new WorkloadJwtVerifier({
+      getKey: async () => {
+        keyLookups += 1;
+        return new Uint8Array(32);
+      },
+    });
+    const requirements = new Proxy(
+      {
+        audience: "memory" as const,
+        requiredCapabilities: ["memory.read"],
+      },
+      {
+        getPrototypeOf(target) {
+          proxyTrapCalls += 1;
+          return Reflect.getPrototypeOf(target);
+        },
+      },
+    );
+
+    await expect(
+      verifier.verify("not-a-token", requirements),
+    ).rejects.toMatchObject({ code: "unauthenticated" });
+    expect(proxyTrapCalls).toBe(0);
+    expect(keyLookups).toBe(0);
   });
 
   it("rejects accessor-backed authorization scope instead of reading it twice", async () => {

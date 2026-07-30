@@ -13,6 +13,7 @@ import {
   type JWTVerifyGetKey,
 } from "jose";
 import { KeyObject, randomUUID } from "node:crypto";
+import { isProxy } from "node:util/types";
 
 import { AuthError, asUnauthenticated } from "./errors.js";
 import {
@@ -22,6 +23,15 @@ import {
   snapshotVerifiedJwtJsonV1,
   type AsymmetricJwtAlgorithm,
 } from "./jwt-policy.js";
+
+/**
+ * Converts the portable single-line representation used by dotenv files into
+ * a PEM value accepted by Node's crypto APIs. Existing PEM newlines remain
+ * untouched.
+ */
+export function normalizePrivateKeyPemEnvironmentValueV1(value: string): string {
+  return value.replaceAll("\\n", "\n");
+}
 
 export type WorkloadSigningKey = JoseCryptoKey | KeyObject;
 
@@ -87,6 +97,7 @@ function ownDataOptionsV1(
     typeof value !== "object" ||
     value === null ||
     Array.isArray(value) ||
+    isProxy(value) ||
     (Object.getPrototypeOf(value) !== Object.prototype &&
       Object.getPrototypeOf(value) !== null)
   ) {
@@ -125,7 +136,9 @@ function snapshotWorkloadVerifierOptionsV1(
   );
   if (
     typeof snapshot.getKey !== "function" ||
+    isProxy(snapshot.getKey) ||
     (snapshot.algorithms !== undefined && !Array.isArray(snapshot.algorithms)) ||
+    (snapshot.algorithms !== undefined && isProxy(snapshot.algorithms)) ||
     (snapshot.clockToleranceSeconds !== undefined &&
       typeof snapshot.clockToleranceSeconds !== "number")
   ) {
@@ -158,7 +171,8 @@ function snapshotWorkloadSignerOptionsV1(
     typeof snapshot.keyId !== "string" ||
     typeof snapshot.algorithm !== "string" ||
     snapshot.privateKey === undefined ||
-    (snapshot.now !== undefined && typeof snapshot.now !== "function")
+    (snapshot.now !== undefined &&
+      (typeof snapshot.now !== "function" || isProxy(snapshot.now)))
   ) {
     throw new Error("workload signing options are invalid");
   }
@@ -181,7 +195,12 @@ function snapshotStringArrayV1(
     predicate: (entry: string) => boolean;
   }>,
 ): readonly string[] {
-  if (!Array.isArray(value)) {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    isProxy(value) ||
+    !Array.isArray(value)
+  ) {
     throw new Error(`${label} must be an array`);
   }
   const length = Object.getOwnPropertyDescriptor(value, "length")?.value;
@@ -231,6 +250,7 @@ function snapshotWorkloadVerificationRequirementsV1(
     typeof value !== "object" ||
     value === null ||
     Array.isArray(value) ||
+    isProxy(value) ||
     (Object.getPrototypeOf(value) !== Object.prototype &&
       Object.getPrototypeOf(value) !== null)
   ) {
@@ -472,13 +492,14 @@ function unicodeCodePointCompare(left: string, right: string): number {
 
 function exactAuthorizationScopeV1(value: unknown): AuthorizationScopeV1 {
   const prototype =
-    typeof value === "object" && value !== null
+    typeof value === "object" && value !== null && !isProxy(value)
       ? Object.getPrototypeOf(value)
       : undefined;
   if (
     typeof value !== "object" ||
     value === null ||
     Array.isArray(value) ||
+    isProxy(value) ||
     (prototype !== Object.prototype && prototype !== null)
   ) {
     throw new Error("workload authorization scope is invalid");
@@ -552,13 +573,14 @@ function snapshotDelegatedPrincipalV1(
   value: unknown,
 ): DelegatedPrincipalContextV1 {
   const prototype =
-    typeof value === "object" && value !== null
+    typeof value === "object" && value !== null && !isProxy(value)
       ? Object.getPrototypeOf(value)
       : undefined;
   if (
     typeof value !== "object" ||
     value === null ||
     Array.isArray(value) ||
+    isProxy(value) ||
     (prototype !== Object.prototype && prototype !== null)
   ) {
     throw new Error("delegated principal is invalid");

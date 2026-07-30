@@ -1,0 +1,196 @@
+{
+  "$id": "urn:pai:action-runtime:runtime-run-query:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "runtime_run"
+  ],
+  "properties": {
+    "runtime_run": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "runtime_run_id",
+        "trigger_process_id",
+        "workspace_id",
+        "bot_id",
+        "owner_agent_id",
+        "deployment_environment",
+        "release_channel",
+        "status",
+        "start_attempt_no",
+        "policy_snapshot_id",
+        "requested_catalog_version",
+        "effective_catalog_version",
+        "created_at",
+        "started_at",
+        "completed_at",
+        "terminal_reason"
+      ],
+      "properties": {
+        "runtime_run_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trigger_process_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "workspace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "owner_agent_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "deployment_environment": {
+          "$id": "urn:pai:shared:deployment-environment:v1",
+          "anyOf": [
+            {
+              "const": "local",
+              "type": "string"
+            },
+            {
+              "const": "dev",
+              "type": "string"
+            },
+            {
+              "const": "staging",
+              "type": "string"
+            },
+            {
+              "const": "prod",
+              "type": "string"
+            }
+          ]
+        },
+        "release_channel": {
+          "$id": "urn:pai:shared:release-channel:v1",
+          "anyOf": [
+            {
+              "const": "stable",
+              "type": "string"
+            },
+            {
+              "const": "canary",
+              "type": "string"
+            }
+          ]
+        },
+        "status": {
+          "anyOf": [
+            {
+              "const": "queued",
+              "type": "string"
+            },
+            {
+              "const": "running",
+              "type": "string"
+            },
+            {
+              "const": "preempt_requested",
+              "type": "string"
+            },
+            {
+              "const": "cancelling",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "type": "string"
+            },
+            {
+              "const": "completed",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "type": "string"
+            }
+          ]
+        },
+        "start_attempt_no": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "policy_snapshot_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "requested_catalog_version": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "effective_catalog_version": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terminal_reason": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

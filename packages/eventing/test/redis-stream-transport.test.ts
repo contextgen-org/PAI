@@ -174,6 +174,23 @@ describe("Redis Stream transport V1", () => {
     ).not.toThrow();
   });
 
+  it("permits only the explicitly configured local Docker Redis origin", () => {
+    expect(() =>
+      loadRedisRuntimeConfigV1({
+        PAI_DEPLOYMENT_ENVIRONMENT: "local",
+        PAI_LOCAL_DOCKER_TRANSPORT: "true",
+        PAI_REDIS_URL: "redis://redis:6379",
+      }),
+    ).not.toThrow();
+    expect(() =>
+      loadRedisRuntimeConfigV1({
+        PAI_DEPLOYMENT_ENVIRONMENT: "local",
+        PAI_LOCAL_DOCKER_TRANSPORT: "true",
+        PAI_REDIS_URL: "redis://redis.internal:6379",
+      }),
+    ).toThrow(/rediss except for loopback/u);
+  });
+
   it("does not accept WAITAOF proof from a different Redis connection", async () => {
     let generation = 1;
     const reconnectAfterWrite = {
@@ -366,7 +383,7 @@ describe("Redis Stream transport V1", () => {
     });
     const routes = {
       "trigger_processor.admission_audit": "stream:shared_events",
-      "observation_gateway.trigger_events": "stream:shared_events",
+      "observation_gateway.trigger_event_append": "stream:shared_events",
     } as const;
 
     expect(() =>
@@ -662,6 +679,202 @@ describe("Redis Stream transport V1", () => {
     });
   });
 
+  it("rejects semantically impossible Trigger Processor events at Redis parse", async () => {
+    const namespace = createRedisNamespaceV1({
+      deployment_environment: "dev",
+      release_channel: "stable",
+      owner_service: "trigger_processor",
+      stream_epoch: "epoch_20260722",
+      stream_generation: 1,
+    });
+    const stream = namespacedRedisKeyV1(namespace, "stream:trigger_events");
+    const impossibleCooldown = {
+      ...envelope,
+      event_id: "evt_trigger_cooldown_impossible",
+      event_type: "cooldown.expired",
+      idempotency_key: "process_001:cooldown_impossible",
+      payload: {
+        workspace_id: "workspace_001",
+        bot_id: "bot_001",
+        owner_agent_id: "owner_agent_001",
+        deployment_environment: "dev",
+        release_channel: "stable",
+        reason_code: "cooldown_expired",
+        source_ref: "trigger_event:cooldown_001",
+        trigger_process_id: "process_001",
+        cooldown_until: "2026-07-22T05:00:00.000Z",
+        expired_at: "2026-07-22T04:59:59.999Z",
+      },
+    } as const;
+    const consumer = createRedisStreamConsumerGroupPortV1(
+      {
+        async sendCommand(args) {
+          if (args[0] === "XREADGROUP") {
+            return [[
+              stream,
+              [[
+                "11-0",
+                Object.entries(
+                  buildRedisStreamMessageV1(impossibleCooldown),
+                ).flat(),
+              ]],
+            ]];
+          }
+          return "OK";
+        },
+      },
+      {
+        stream,
+        group: "trigger_processor",
+        consumer: "worker_001",
+        namespace,
+      },
+    );
+
+    const [delivery] = await consumer.readNew({ count: 1, block_ms: 0 });
+
+    expect(delivery).toMatchObject({
+      kind: "invalid",
+      delivery_id: "11-0",
+      error_code: "invalid_envelope",
+    });
+  });
+
+  it("requires complete five-part scope for Memory and KnowThat durable events at Redis parse", async () => {
+    const scope = {
+      workspace_id: "workspace_001",
+      bot_id: "bot_001",
+      owner_agent_id: "owner_agent_001",
+      deployment_environment: "dev",
+      release_channel: "stable",
+    } as const;
+    const memoryEnvelope = {
+      event_id: "evt_memory_point_created_001",
+      event_type: "memory.point.created",
+      schema_version: "memory.event.v1",
+      producer: "memory",
+      occurred_at: "2026-07-24T00:00:00.000Z",
+      idempotency_key: "point:memory_point_001:v1",
+      trace_id: "trace_memory_001",
+      payload: {
+        ...scope,
+        aggregate_id: "memory_point_001",
+        aggregate_version: 1,
+        aggregate_type: "memory_point",
+        memory_point_id: "memory_point_001",
+        series_id: "memory_series_001",
+        topic_key: "topic_001",
+        state_version: 1,
+        source_trigger_process_id: "process_001",
+        write_batch_id: "batch_001",
+        redaction_status: "not_required",
+      },
+    } as const;
+    const legacyBotOnlyMemoryEnvelope = {
+      ...memoryEnvelope,
+      event_id: "evt_memory_point_created_legacy",
+      payload: {
+        bot_id: scope.bot_id,
+        aggregate_id: "memory_point_001",
+        aggregate_version: 1,
+        aggregate_type: "memory_point",
+        memory_point_id: "memory_point_001",
+        series_id: "memory_series_001",
+        topic_key: "topic_001",
+        state_version: 1,
+        source_trigger_process_id: "process_001",
+        write_batch_id: "batch_001",
+        redaction_status: "not_required",
+      },
+    } as const;
+    const knowThatEnvelope = {
+      event_id: "evt_knowthat_fact_created_001",
+      event_type: "knowthat.fact.created",
+      schema_version: "knowthat_event.v1",
+      producer: "knowthat",
+      occurred_at: "2026-07-24T00:00:00.000Z",
+      idempotency_key: "knowthat.fact.created:bot_001:fact_001:revision_001",
+      trace_id: "trace_knowthat_001",
+      payload: {
+        ...scope,
+        fact_id: "fact_001",
+        semantic_key: "semantic_key_001",
+        category: "project_fact",
+        current_status: "active",
+        revision_id: "revision_001",
+        source_ref: "artifact:release_001",
+      },
+    } as const;
+
+    async function readSingle(
+      owner_service: "memory" | "knowthat",
+      delivery_id: string,
+      envelopeForDelivery: typeof memoryEnvelope | typeof legacyBotOnlyMemoryEnvelope | typeof knowThatEnvelope,
+    ) {
+      const namespace = createRedisNamespaceV1({
+        deployment_environment: "dev",
+        release_channel: "stable",
+        owner_service,
+        stream_epoch: "epoch_20260722",
+        stream_generation: 1,
+      });
+      const stream = namespacedRedisKeyV1(
+        namespace,
+        owner_service === "memory"
+          ? "stream:memory_events"
+          : "stream:knowthat_events",
+      );
+      const consumer = createRedisStreamConsumerGroupPortV1(
+        {
+          async sendCommand(args) {
+            if (args[0] === "XREADGROUP") {
+              return [[
+                stream,
+                [[
+                  delivery_id,
+                  Object.entries(
+                    buildRedisStreamMessageV1(envelopeForDelivery),
+                  ).flat(),
+                ]],
+              ]];
+            }
+            return "OK";
+          },
+        },
+        {
+          stream,
+          group: owner_service,
+          consumer: "worker_001",
+          namespace,
+        },
+      );
+      const [delivery] = await consumer.readNew({ count: 1, block_ms: 0 });
+      return delivery;
+    }
+
+    await expect(
+      readSingle("memory", "21-0", memoryEnvelope),
+    ).resolves.toMatchObject({
+      kind: "event",
+      delivery_id: "21-0",
+      envelope: memoryEnvelope,
+    });
+    await expect(
+      readSingle("knowthat", "22-0", knowThatEnvelope),
+    ).resolves.toMatchObject({
+      kind: "event",
+      delivery_id: "22-0",
+      envelope: knowThatEnvelope,
+    });
+    await expect(
+      readSingle("memory", "23-0", legacyBotOnlyMemoryEnvelope),
+    ).resolves.toMatchObject({
+      kind: "invalid",
+      delivery_id: "23-0",
+      error_code: "invalid_envelope",
+    });
+  });
+
   it("rejects oversized stream messages without amplifying the raw payload into DLQ input", async () => {
     const namespace = createRedisNamespaceV1({
       deployment_environment: "dev",
@@ -706,6 +919,60 @@ describe("Redis Stream transport V1", () => {
       expect(Buffer.byteLength(JSON.stringify(delivery.raw_fields), "utf8"))
         .toBeLessThan(20_000);
     }
+  });
+
+  it("summarizes malformed fields without retaining bearer tokens, URLs, or prompts", async () => {
+    const namespace = createRedisNamespaceV1({
+      deployment_environment: "dev",
+      release_channel: "stable",
+      owner_service: "trigger_processor",
+      stream_epoch: "epoch_20260722",
+      stream_generation: 1,
+    });
+    const stream = namespacedRedisKeyV1(namespace, "stream:trigger_events");
+    const secretPayload =
+      "https://user:password@redis.invalid Authorization: Bearer stream-token prompt=private";
+    const consumer = createRedisStreamConsumerGroupPortV1(
+      {
+        async sendCommand(args) {
+          if (args[0] === "XREADGROUP") {
+            return [[stream, [["10-0", ["payload", secretPayload]]]]];
+          }
+          return "OK";
+        },
+      },
+      {
+        stream,
+        group: "trigger_processor",
+        consumer: "worker_001",
+        namespace,
+      },
+    );
+
+    const [delivery] = await consumer.readNew({ count: 1, block_ms: 0 });
+
+    expect(delivery).toMatchObject({
+      kind: "invalid",
+      error_code: "malformed_stream_fields",
+      error_message: "malformed_stream_fields",
+      raw_fields: [
+        expect.objectContaining({
+          kind: "string",
+          role: "field_name",
+          field_name: "payload",
+          utf8_bytes: 7,
+        }),
+        expect.objectContaining({
+          kind: "string",
+          role: "field_value",
+          field_name: null,
+          utf8_bytes: Buffer.byteLength(secretPayload, "utf8"),
+        }),
+      ],
+    });
+    expect(JSON.stringify(delivery)).not.toContain("stream-token");
+    expect(JSON.stringify(delivery)).not.toContain("private");
+    expect(JSON.stringify(delivery)).not.toContain("user:password");
   });
 
   it("bounds malformed raw-field evidence by count, UTF-8 bytes and serialized bytes", async () => {
@@ -768,7 +1035,11 @@ describe("Redis Stream transport V1", () => {
       expect(
         Buffer.byteLength(JSON.stringify(delivery.raw_fields), "utf8"),
       ).toBeLessThanOrEqual(16_384);
-      expect(delivery.raw_fields.at(-1)).toMatch(/raw fields omitted/u);
+      expect(delivery.raw_fields.at(-1)).toMatchObject({
+        schema_version: "eventing.raw_field_summary.v1",
+        kind: "omitted",
+        omitted_count: expect.any(Number),
+      });
     }
   });
 });

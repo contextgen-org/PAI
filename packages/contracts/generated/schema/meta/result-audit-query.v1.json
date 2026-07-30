@@ -1,0 +1,327 @@
+{
+  "$id": "urn:pai:meta:result-audit-query:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "meta_result_id",
+        "workspace_id",
+        "bot_id",
+        "owner_agent_id",
+        "deployment_environment",
+        "release_channel",
+        "cursor",
+        "limit"
+      ],
+      "properties": {
+        "meta_result_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "workspace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "owner_agent_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "deployment_environment": {
+          "anyOf": [
+            {
+              "const": "local",
+              "type": "string"
+            },
+            {
+              "const": "dev",
+              "type": "string"
+            },
+            {
+              "const": "staging",
+              "type": "string"
+            },
+            {
+              "const": "prod",
+              "type": "string"
+            }
+          ]
+        },
+        "release_channel": {
+          "anyOf": [
+            {
+              "const": "stable",
+              "type": "string"
+            },
+            {
+              "const": "canary",
+              "type": "string"
+            }
+          ]
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limit": {
+          "minimum": 1,
+          "maximum": 200,
+          "type": "integer"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "meta_result_id",
+        "trigger_process_id",
+        "bot_id",
+        "result_version",
+        "result_status",
+        "items",
+        "next_cursor",
+        "has_more",
+        "redacted_field_count",
+        "trace_id"
+      ],
+      "properties": {
+        "meta_result_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trigger_process_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "result_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "result_status": {
+          "anyOf": [
+            {
+              "const": "complete",
+              "type": "string"
+            },
+            {
+              "const": "partial_pending",
+              "type": "string"
+            },
+            {
+              "const": "partial_failed",
+              "type": "string"
+            }
+          ]
+        },
+        "items": {
+          "maxItems": 200,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "audit_id",
+              "result_version",
+              "previous_result_status",
+              "result_status",
+              "operation",
+              "changed_failure_ids",
+              "actor_kind",
+              "actor_ref",
+              "payload_summary",
+              "created_at"
+            ],
+            "properties": {
+              "audit_id": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "result_version": {
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "previous_result_status": {
+                "anyOf": [
+                  {
+                    "anyOf": [
+                      {
+                        "const": "complete",
+                        "type": "string"
+                      },
+                      {
+                        "const": "partial_pending",
+                        "type": "string"
+                      },
+                      {
+                        "const": "partial_failed",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "result_status": {
+                "anyOf": [
+                  {
+                    "const": "complete",
+                    "type": "string"
+                  },
+                  {
+                    "const": "partial_pending",
+                    "type": "string"
+                  },
+                  {
+                    "const": "partial_failed",
+                    "type": "string"
+                  }
+                ]
+              },
+              "operation": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "changed_failure_ids": {
+                "maxItems": 10000,
+                "uniqueItems": true,
+                "type": "array",
+                "items": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                }
+              },
+              "actor_kind": {
+                "anyOf": [
+                  {
+                    "const": "service",
+                    "type": "string"
+                  },
+                  {
+                    "const": "operator",
+                    "type": "string"
+                  },
+                  {
+                    "const": "system",
+                    "type": "string"
+                  }
+                ]
+              },
+              "actor_ref": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "payload_summary": {
+                "maxProperties": 1000,
+                "type": "object",
+                "patternProperties": {
+                  "^(.*)$": {
+                    "$id": "T2",
+                    "anyOf": [
+                      {
+                        "maxLength": 65536,
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "maxItems": 10000,
+                        "type": "array",
+                        "items": {
+                          "$ref": "T2"
+                        }
+                      },
+                      {
+                        "maxProperties": 1000,
+                        "type": "object",
+                        "patternProperties": {
+                          "^(.*)$": {
+                            "$ref": "T2"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "created_at": {
+                "minLength": 20,
+                "maxLength": 30,
+                "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+                "type": "string"
+              }
+            }
+          }
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "has_more": {
+          "type": "boolean"
+        },
+        "redacted_field_count": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

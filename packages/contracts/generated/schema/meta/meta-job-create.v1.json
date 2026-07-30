@@ -1,0 +1,579 @@
+{
+  "$id": "urn:pai:meta:meta-job-create:v1",
+  "anyOf": [
+    {
+      "$id": "urn:pai:meta:meta-job-create-request:v1",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "schema_version",
+            "trigger_process_id",
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "snapshot_ref",
+            "snapshot_version",
+            "snapshot_hash",
+            "snapshot_retention_until",
+            "learnable_snapshot_ready",
+            "idempotency_key",
+            "trace_id",
+            "cooldown_until",
+            "enqueue_reason",
+            "boundary_system_event_ref"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "meta_job_create.v1",
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "snapshot_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "snapshot_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "snapshot_hash": {
+              "minLength": 71,
+              "maxLength": 71,
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "snapshot_retention_until": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "learnable_snapshot_ready": {
+              "const": true,
+              "type": "boolean"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "cooldown_until": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "enqueue_reason": {
+              "const": "cooldown_expired",
+              "type": "string"
+            },
+            "boundary_system_event_ref": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "schema_version",
+            "trigger_process_id",
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "snapshot_ref",
+            "snapshot_version",
+            "snapshot_hash",
+            "snapshot_retention_until",
+            "learnable_snapshot_ready",
+            "idempotency_key",
+            "trace_id",
+            "cooldown_until",
+            "enqueue_reason",
+            "boundary_system_event_ref"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "meta_job_create.v1",
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "snapshot_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "snapshot_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "snapshot_hash": {
+              "minLength": 71,
+              "maxLength": 71,
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "snapshot_retention_until": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "learnable_snapshot_ready": {
+              "const": true,
+              "type": "boolean"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "cooldown_until": {
+              "type": "null"
+            },
+            "enqueue_reason": {
+              "const": "user_retracted",
+              "type": "string"
+            },
+            "boundary_system_event_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "schema_version",
+            "trigger_process_id",
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "snapshot_ref",
+            "snapshot_version",
+            "snapshot_hash",
+            "snapshot_retention_until",
+            "learnable_snapshot_ready",
+            "idempotency_key",
+            "trace_id",
+            "cooldown_until",
+            "enqueue_reason",
+            "boundary_system_event_ref"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "meta_job_create.v1",
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "snapshot_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "snapshot_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "snapshot_hash": {
+              "minLength": 71,
+              "maxLength": 71,
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "snapshot_retention_until": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "learnable_snapshot_ready": {
+              "const": true,
+              "type": "boolean"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "cooldown_until": {
+              "type": "null"
+            },
+            "enqueue_reason": {
+              "const": "system_interrupted",
+              "type": "string"
+            },
+            "boundary_system_event_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "schema_version",
+            "trigger_process_id",
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "snapshot_ref",
+            "snapshot_version",
+            "snapshot_hash",
+            "snapshot_retention_until",
+            "learnable_snapshot_ready",
+            "idempotency_key",
+            "trace_id",
+            "cooldown_until",
+            "enqueue_reason",
+            "boundary_system_event_ref"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "meta_job_create.v1",
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "snapshot_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "snapshot_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "snapshot_hash": {
+              "minLength": 71,
+              "maxLength": 71,
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "snapshot_retention_until": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "learnable_snapshot_ready": {
+              "const": true,
+              "type": "boolean"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "cooldown_until": {
+              "type": "null"
+            },
+            "enqueue_reason": {
+              "const": "failed_with_learnable_snapshot",
+              "type": "string"
+            },
+            "boundary_system_event_ref": {
+              "type": "null"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "job_id",
+        "status",
+        "duplicate_replayed",
+        "created_at"
+      ],
+      "properties": {
+        "job_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "const": "queued",
+              "type": "string"
+            },
+            {
+              "const": "leased",
+              "type": "string"
+            },
+            {
+              "const": "running",
+              "type": "string"
+            },
+            {
+              "const": "retry_wait",
+              "type": "string"
+            },
+            {
+              "const": "completed",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "type": "string"
+            }
+          ]
+        },
+        "duplicate_replayed": {
+          "type": "boolean"
+        },
+        "created_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

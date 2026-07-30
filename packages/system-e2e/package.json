@@ -1,0 +1,28 @@
+{
+  "name": "@pai/system-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@pai/action-runtime": "workspace:*",
+    "@pai/contracts": "workspace:*",
+    "@pai/eventing": "workspace:*",
+    "@pai/knowthat": "workspace:*",
+    "@pai/memory": "workspace:*",
+    "@pai/meta-cognition": "workspace:*",
+    "@pai/object-store": "workspace:*",
+    "@pai/observation-gateway": "workspace:*",
+    "@pai/timer-trigger-app": "workspace:*",
+    "@pai/trigger-processor": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

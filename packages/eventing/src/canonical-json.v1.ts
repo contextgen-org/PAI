@@ -1,103 +1,46 @@
 import { createHash } from "node:crypto";
 
 import {
+  CanonicalJsonViolationV1,
+  canonicalJsonV1 as sharedCanonicalJsonV1,
   ownerDurableEventContractV1,
+  type CanonicalJsonBoundsV1,
+  type CanonicalJsonViolationReasonV1,
   type DurableEventEnvelopeV1,
 } from "@pai/contracts";
 
-export class CanonicalJsonValidationErrorV1 extends Error {
-  public constructor(message: string) {
-    super(message);
+export type { CanonicalJsonBoundsV1 } from "@pai/contracts";
+
+/**
+ * Compatibility error for Eventing callers. Canonical validation and encoding
+ * are owned by @pai/contracts; Eventing only maps the shared failure type.
+ */
+export class CanonicalJsonValidationErrorV1 extends CanonicalJsonViolationV1 {
+  public constructor(
+    message: string,
+    reason: CanonicalJsonViolationReasonV1 = "invalid_value",
+  ) {
+    super(reason, message);
     this.name = "CanonicalJsonValidationErrorV1";
   }
 }
 
-function assertUnicodeScalarString(value: string): void {
-  for (let index = 0; index < value.length; index += 1) {
-    const codeUnit = value.charCodeAt(index);
-    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (!(next >= 0xdc00 && next <= 0xdfff)) {
-        throw new CanonicalJsonValidationErrorV1(
-          "canonical JSON rejects unpaired UTF-16 surrogates",
-        );
-      }
-      index += 1;
-    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
-      throw new CanonicalJsonValidationErrorV1(
-        "canonical JSON rejects unpaired UTF-16 surrogates",
-      );
-    }
-  }
-}
-
-function canonicalJsonValueV1(value: unknown, ancestors: Set<object>): string {
-  if (value === null) return "null";
-  if (typeof value === "boolean") return value ? "true" : "false";
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) {
-      throw new CanonicalJsonValidationErrorV1(
-        "canonical JSON rejects non-finite numbers",
-      );
-    }
-    return JSON.stringify(value);
-  }
-  if (typeof value === "string") {
-    assertUnicodeScalarString(value);
-    return JSON.stringify(value);
-  }
-  if (typeof value !== "object") {
-    throw new CanonicalJsonValidationErrorV1(
-      `canonical JSON rejects ${typeof value} values`,
-    );
-  }
-  if (ancestors.has(value)) {
-    throw new CanonicalJsonValidationErrorV1(
-      "canonical JSON rejects cyclic values",
-    );
-  }
-  ancestors.add(value);
+/** Delegates to the single Shared Architecture Contracts implementation. */
+export function canonicalJsonV1(
+  value: unknown,
+  options: CanonicalJsonBoundsV1 = {},
+): string {
   try {
-    if (Array.isArray(value)) {
-      const entries: string[] = [];
-      for (let index = 0; index < value.length; index += 1) {
-        if (!(index in value)) {
-          throw new CanonicalJsonValidationErrorV1(
-            "canonical JSON rejects sparse arrays",
-          );
-        }
-        entries.push(canonicalJsonValueV1(value[index], ancestors));
-      }
-      return `[${entries.join(",")}]`;
-    }
-    const prototype = Object.getPrototypeOf(value) as object | null;
-    if (prototype !== Object.prototype && prototype !== null) {
+    return sharedCanonicalJsonV1(value, options);
+  } catch (error) {
+    if (error instanceof CanonicalJsonViolationV1) {
       throw new CanonicalJsonValidationErrorV1(
-        "canonical JSON accepts only plain JSON objects",
+        error.message,
+        error.reason,
       );
     }
-    const symbols = Object.getOwnPropertySymbols(value);
-    if (symbols.length > 0) {
-      throw new CanonicalJsonValidationErrorV1(
-        "canonical JSON rejects symbol properties",
-      );
-    }
-    const record = value as Record<string, unknown>;
-    const entries = Object.keys(record)
-      .sort()
-      .map((key) => {
-        assertUnicodeScalarString(key);
-        return `${JSON.stringify(key)}:${canonicalJsonValueV1(record[key], ancestors)}`;
-      });
-    return `{${entries.join(",")}}`;
-  } finally {
-    ancestors.delete(value);
+    throw error;
   }
-}
-
-/** RFC 8785-compatible canonical JSON for already validated JSON values. */
-export function canonicalJsonV1(value: unknown): string {
-  return canonicalJsonValueV1(value, new Set());
 }
 
 export function canonicalPayloadHashV1(payload: unknown): string {
@@ -112,9 +55,24 @@ function sha256Canonical(value: unknown): string {
     .digest("hex")}`;
 }
 
+/**
+ * Hashes the complete canonical durable envelope received by an inbox.
+ *
+ * This is intentionally distinct from `canonicalPayloadHashV1`, which remains
+ * the outbox/transport payload-only hash. Inbox `payload_hash` binds every
+ * envelope byte represented by the owner contract, including occurred_at and
+ * trace_id, so a replay cannot silently rewrite transport provenance.
+ */
+export function canonicalDurableEventEnvelopePayloadHashV1(
+  envelope: DurableEventEnvelopeV1,
+): string {
+  return sha256Canonical(envelope);
+}
+
 export function canonicalDurableEventEnvelopeSemanticHashV1(
   envelope: DurableEventEnvelopeV1,
 ): string {
+  canonicalJsonV1(envelope);
   return sha256Canonical({
     producer: envelope.producer,
     event_type: envelope.event_type,
@@ -126,6 +84,7 @@ export function canonicalDurableEventEnvelopeSemanticHashV1(
 export function durableEventScopeFingerprintV1(
   envelope: DurableEventEnvelopeV1,
 ): string {
+  canonicalJsonV1(envelope);
   const payload = envelope.payload as Readonly<Record<string, unknown>>;
   if (payload.scope_kind === "bot") {
     return sha256Canonical({
@@ -140,6 +99,23 @@ export function durableEventScopeFingerprintV1(
   if (payload.scope_kind === "global") {
     return sha256Canonical({
       scope_kind: "global",
+    });
+  }
+  if (payload.scope_kind === "scoped") {
+    return sha256Canonical({
+      scope_kind: "scoped",
+      workspace_id: payload.workspace_id,
+      bot_id: payload.bot_id,
+      deployment_environment: payload.deployment_environment,
+      release_channel: payload.release_channel,
+    });
+  }
+  if (payload.scope_kind === "provenance") {
+    return sha256Canonical({
+      scope_kind: "provenance",
+      workspace_id: payload.workspace_id,
+      bot_id: payload.bot_id,
+      owner_agent_id: payload.owner_agent_id,
       deployment_environment: payload.deployment_environment,
       release_channel: payload.release_channel,
     });
@@ -149,6 +125,17 @@ export function durableEventScopeFingerprintV1(
     envelope.event_type,
   );
   if (contract?.payload_scope === "bot") {
+    const completeFiveTuple =
+      typeof payload.workspace_id === "string" &&
+      typeof payload.bot_id === "string" &&
+      typeof payload.owner_agent_id === "string" &&
+      typeof payload.deployment_environment === "string" &&
+      typeof payload.release_channel === "string";
+    if (!completeFiveTuple) {
+      throw new CanonicalJsonValidationErrorV1(
+        "durable bot event scope requires workspace_id, bot_id, owner_agent_id, deployment_environment, and release_channel",
+      );
+    }
     return sha256Canonical({
       scope_kind: "bot",
       workspace_id: payload.workspace_id,

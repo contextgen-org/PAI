@@ -16,6 +16,8 @@ export interface VerifyObjectAccessDecisionInputV1 {
   readonly operation: ObjectAccessOperationV1;
   readonly object_ref: ObjectRefV1;
   readonly owner_service: ServiceIdV1;
+  readonly owner_object_id: string;
+  readonly owner_state_version: number;
   readonly scope: ObjectScopeV1;
   readonly scope_fingerprint: string;
   readonly capability: string;

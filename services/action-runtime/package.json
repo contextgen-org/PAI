@@ -3,8 +3,38 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
-  "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc -p tsconfig.json --noEmit" },
-  "dependencies": { "@pai/contracts": "workspace:*", "@pai/persistence": "workspace:*", "@pai/service-kit": "workspace:*" },
-  "devDependencies": { "typescript": "catalog:" }
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./db/permission-manifest.v1": {
+      "types": "./src/db/permission-manifest.v1.ts",
+      "default": "./dist/db/permission-manifest.v1.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run test"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.212",
+    "@pai/contracts": "workspace:*",
+    "@pai/eventing": "workspace:*",
+    "@pai/object-store": "workspace:*",
+    "@pai/persistence": "workspace:*",
+    "@pai/service-kit": "workspace:*",
+    "@pai/skill-package": "workspace:*",
+    "@pai/auth": "workspace:*",
+    "@sinclair/typebox": "catalog:",
+    "jose": "catalog:",
+    "pg": "catalog:",
+    "redis": "catalog:"
+  },
+  "devDependencies": {
+    "@types/pg": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
 }

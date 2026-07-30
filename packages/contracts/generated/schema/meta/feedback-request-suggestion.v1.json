@@ -1,0 +1,272 @@
+{
+  "$id": "urn:pai:meta:feedback-request-suggestion:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_kind",
+        "source_service",
+        "source_ref",
+        "command_id",
+        "workspace_id",
+        "bot_id",
+        "owner_agent_id",
+        "deployment_environment",
+        "release_channel",
+        "dedupe_scope_ref",
+        "question_key",
+        "question_ref",
+        "question_hash",
+        "request_hash",
+        "trace_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "meta.feedback_request_suggestion.v1",
+          "type": "string"
+        },
+        "source_kind": {
+          "const": "service_command",
+          "type": "string"
+        },
+        "source_service": {
+          "anyOf": [
+            {
+              "const": "memory_service",
+              "type": "string"
+            },
+            {
+              "const": "timer_trigger_app",
+              "type": "string"
+            }
+          ]
+        },
+        "source_ref": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "command_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "workspace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "owner_agent_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "deployment_environment": {
+          "anyOf": [
+            {
+              "const": "local",
+              "type": "string"
+            },
+            {
+              "const": "dev",
+              "type": "string"
+            },
+            {
+              "const": "staging",
+              "type": "string"
+            },
+            {
+              "const": "prod",
+              "type": "string"
+            }
+          ]
+        },
+        "release_channel": {
+          "anyOf": [
+            {
+              "const": "stable",
+              "type": "string"
+            },
+            {
+              "const": "canary",
+              "type": "string"
+            }
+          ]
+        },
+        "dedupe_scope_ref": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "ref"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "conflict",
+                  "type": "string"
+                },
+                "ref": {
+                  "minLength": 10,
+                  "maxLength": 512,
+                  "pattern": "^conflict:[^\\r\\n:][^\\r\\n]*$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "ref"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "candidate",
+                  "type": "string"
+                },
+                "ref": {
+                  "minLength": 11,
+                  "maxLength": 512,
+                  "pattern": "^candidate:[^\\r\\n:][^\\r\\n]*$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "ref"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "schedule",
+                  "type": "string"
+                },
+                "ref": {
+                  "minLength": 10,
+                  "maxLength": 512,
+                  "pattern": "^schedule:[^\\r\\n:][^\\r\\n]*$",
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "question_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "question_ref": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "question_hash": {
+          "minLength": 71,
+          "maxLength": 71,
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "request_hash": {
+          "minLength": 71,
+          "maxLength": 71,
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "status",
+            "feedback_request_id",
+            "command_id",
+            "request_hash"
+          ],
+          "properties": {
+            "status": {
+              "anyOf": [
+                {
+                  "const": "accepted",
+                  "type": "string"
+                },
+                {
+                  "const": "replayed",
+                  "type": "string"
+                }
+              ]
+            },
+            "feedback_request_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "command_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "request_hash": {
+              "minLength": 71,
+              "maxLength": 71,
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "status",
+            "code"
+          ],
+          "properties": {
+            "status": {
+              "const": "conflict",
+              "type": "string"
+            },
+            "code": {
+              "anyOf": [
+                {
+                  "const": "idempotency_body_drift",
+                  "type": "string"
+                },
+                {
+                  "const": "open_request_conflict",
+                  "type": "string"
+                }
+              ]
+            },
+            "existing_feedback_request_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

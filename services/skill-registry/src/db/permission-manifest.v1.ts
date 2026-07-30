@@ -1,13 +1,49 @@
-import { OWNER_DURABLE_EVENT_TYPES_V1 } from "@pai/contracts";
+import {
+  SKILL_REGISTRY_DATABASE_COLUMNS_V1,
+  SKILL_REGISTRY_DATABASE_INDEXES_V1,
+  SKILL_REGISTRY_DATABASE_CHECKS_V1,
+  SKILL_REGISTRY_DATABASE_FUNCTIONS_V1,
+  SKILL_REGISTRY_DATABASE_TRIGGERS_V1,
+  SKILL_REGISTRY_DATABASE_UNIQUE_CONSTRAINTS_V1,
+  SKILL_REGISTRY_FOREIGN_KEYS_V1,
+} from "./catalog-snapshot.generated.v1.js";
+import { SKILL_REGISTRY_WRITER_ARTIFACTS_V1 } from "./writer-artifacts.generated.v1.js";
+import {
+  OWNER_DURABLE_EVENT_TYPES_V1,
+  SKILL_PERMISSION_SUMMARY_IMMUTABLE_TRIGGER_FUNCTION_BODY_V1,
+} from "@pai/contracts";
 import {
   defineOwnerRepositoryContractV1,
+  ownerDlqResolutionContractV1,
+  ownerEventingReconciliationContractV1,
   ownerEventingTransportEpochActivationSignatureV1,
   ownerEventingTransportEpochTablePermissionV1,
-  ownerForeignKeysV1,
   ownerFunctionSignatureV1,
+  ownerImmutableTriggerV1,
   type OwnerRepositoryPortV1,
   type OwnerUnitOfWorkPortV1,
 } from "@pai/persistence";
+
+const SKILL_REGISTRY_DLQ_RESOLUTION_V1 =
+  ownerDlqResolutionContractV1(
+    "skill_registry",
+    "skill_event_dlq",
+  );
+const SKILL_EVENT_RECONCILIATION_V1 =
+  ownerEventingReconciliationContractV1(
+    "skill_registry",
+    "skill_event_outbox",
+  );
+
+// The catalog predates the event-reconciliation writer promotion and still
+// lists these SECURITY DEFINER writers as private helpers. An application
+// writer is attested through its exact signature/artifact path, not through
+// the private-function catalog; it must never appear in both trust paths.
+const SKILL_REGISTRY_PRIVATE_DATABASE_FUNCTIONS_V1 =
+  SKILL_REGISTRY_DATABASE_FUNCTIONS_V1.filter(
+    ({ function_name }) =>
+      !SKILL_EVENT_RECONCILIATION_V1.mutable_writers.includes(function_name),
+  );
 
 export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
   defineOwnerRepositoryContractV1({
@@ -24,6 +60,7 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
     tables: [
       "skills",
       "skill_version_staging",
+      "skill_validation_attempts",
       "skill_versions",
       "skill_packages",
       "skill_package_retention_transitions",
@@ -39,12 +76,14 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
       "skill_event_outbox",
       "skill_event_inbox",
       "skill_event_dlq",
+      SKILL_REGISTRY_DLQ_RESOLUTION_V1.resolution_table,
       "skill_management_commands",
       "skill_catalog_revisions",
       "skill_catalog_revision_entries",
       "skill_catalog_current",
       "skill_permission_summary_snapshots",
       "skill_permission_summary_entries",
+      "skill_object_access_decisions",
       "skill_security_state",
       "eventing_transport_epochs",
     ],
@@ -59,11 +98,19 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "skill_version_staging",
-      select_columns: ["id","skill_id","proposed_version","artifact_ref","package_digest","manifest_digest","provenance","validation_result","scanner_versions","validation_expires_at","status","created_by","created_at","updated_at"],
+      select_columns: ["id","skill_id","skill_name","proposed_version","artifact_ref","object_access_decision_ref","owner_object_id","owner_state_version","package_digest","manifest_digest","manifest","runtime_target","media_type","size_bytes","provenance","validation_result","scanner_versions","validation_expires_at","status","staging_state_version","created_by","created_at","updated_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
       writer_kind: "state_transition",
+    },
+    {
+      table_name: "skill_validation_attempts",
+      select_columns: ["attempt_id","idempotency_key","request_hash","request_payload","outcome","validation_id","validation_record","success_payload","error_payload","response_hash","terminal_fingerprint","expires_at","actor_principal_id","trace_id","created_at"],
+      insert_columns: [],
+      update_columns: [],
+      delete_allowed: false,
+      writer_kind: "immutable_append",
     },
     {
       table_name: "skill_versions",
@@ -75,7 +122,7 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "skill_packages",
-      select_columns: ["id","version_id","package_ref","media_type","size_bytes","file_count","package_digest","manifest_digest","manifest","scan_result","retention_state","retention_until","deletion_requested_at","deleted_at","delete_error","state_version","created_at","updated_at"],
+      select_columns: ["id","version_id","package_ref","object_access_decision_ref","owner_object_id","owner_state_version","media_type","size_bytes","file_count","package_digest","manifest_digest","manifest","scan_result","retention_state","retention_until","deletion_requested_at","deleted_at","delete_error","state_version","created_at","updated_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -179,12 +226,13 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "skill_event_dlq",
-      select_columns: ["id","source_event_id","event_type","payload","last_error","failed_at","resolved_at"],
+      select_columns: ["id","source_event_id","event_type","payload","last_error","failed_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
       writer_kind: "immutable_append",
     },
+    SKILL_REGISTRY_DLQ_RESOLUTION_V1.table_permission,
     {
       table_name: "skill_management_commands",
       select_columns: ["id","operation","scope_kind","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","skill_id","version_id","target_version_id","capability_refs","scope_hash","expected_catalog_version","expected_activation_revision","expected_permission_revision","expected_lifecycle_version","emergency","request_hash","idempotency_key","actor_principal_id","actor_role","reason","status","previous_lifecycle_version","new_lifecycle_version","result_revision","result_catalog_version","result_security_revocation_epoch","response_payload","error","trace_id","created_at","completed_at"],
@@ -234,6 +282,14 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
       writer_kind: "immutable_append",
     },
     {
+      table_name: "skill_object_access_decisions",
+      select_columns: ["id","owner_object_id","owner_state_version","object_ref","operation","purpose","capability","scope_kind","prior_access_decision_ref","retention_policy_version","redaction_policy_version","decision","expires_at","trace_id","created_at"],
+      insert_columns: [],
+      update_columns: [],
+      delete_allowed: false,
+      writer_kind: "immutable_append",
+    },
+    {
       table_name: "skill_security_state",
       select_columns: ["singleton_key","security_revocation_epoch","updated_at"],
       insert_columns: [],
@@ -244,36 +300,44 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
     ownerEventingTransportEpochTablePermissionV1(),
     ],
     mutable_writers: [
+      ...SKILL_EVENT_RECONCILIATION_V1.mutable_writers,
       "transition_skill_version_lifecycle_v1",
-      "create_skill_staging_v1",
-      "transition_skill_v1",
-      "transition_skill_staging_v1",
-      "create_skill_version_v1",
-      "register_skill_package_v1",
+      "create_skill_version_staging_v1",
+      "settle_skill_validation_v1",
+      "publish_skill_version_v1",
       "append_skill_management_command_v1",
       "cas_skill_activation_current_v1",
       "cas_skill_permission_current_v1",
       "cas_skill_catalog_current_v1",
       "transition_skill_resolution_attempt_v1",
+      "fail_skill_resolution_attempt_v1",
+      "complete_empty_skill_resolution_attempt_v1",
       "transition_skill_candidate_application_v1",
       "transition_skill_package_retention_v1",
       "create_skill_package_retention_hold_v1",
       "release_skill_package_retention_hold_v1",
+      "create_skill_permission_summary_snapshot_v1",
+      "create_skill_resolution_attempt_v1",
+      "record_skill_object_access_decision_v1",
+      "record_skill_content_audit_v1",
       "claim_skill_event_outbox_v1",
       "ack_skill_event_outbox_v1",
       "activate_eventing_transport_epoch_v1",
+      ...SKILL_REGISTRY_DLQ_RESOLUTION_V1.mutable_writers,
     ],
     function_signatures: [
+    ...SKILL_EVENT_RECONCILIATION_V1.function_signatures,
     ownerFunctionSignatureV1({
       schema: "skill_registry",
       function_name: "transition_skill_version_lifecycle_v1",
       primary_table: "skill_versions",
       writer_kind: "state_transition",
-      arguments: [["p_skill_version_id", "text"], ["p_expected_lifecycle_state", "text"], ["p_expected_lifecycle_version", "bigint"], ["p_expected_security_revocation_epoch", "bigint"], ["p_next_lifecycle_state", "text"], ["p_version", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
-      reads_tables: ["skill_versions", "skill_security_state"],
-      writes_tables: ["skill_versions", "skill_security_state", "skill_audit_logs", "skill_event_outbox"],
+      arguments: [["p_skill_version_id", "text"], ["p_expected_lifecycle_state", "text"], ["p_expected_lifecycle_version", "bigint"], ["p_expected_security_revocation_epoch", "bigint"], ["p_next_lifecycle_state", "text"], ["p_version", "jsonb"], ["p_management_command", "jsonb"], ["p_version_event", "jsonb"], ["p_epoch_event", "jsonb", { nullable: true }], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["skill_versions", "skill_security_state", "skill_management_commands"],
+      writes_tables: ["skill_versions", "skill_security_state", "skill_management_commands", "skill_audit_logs", "skill_event_outbox"],
       effects: [
         { table_name: "skill_versions", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "skill_management_commands", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "skill_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "skill_security_state", operation: "upsert", concurrency_control: "expected_version" },
         { table_name: "skill_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
@@ -282,7 +346,7 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
     }),
     ownerFunctionSignatureV1({
       schema: "skill_registry",
-      function_name: "create_skill_staging_v1",
+      function_name: "create_skill_version_staging_v1",
       primary_table: "skills",
       writer_kind: "state_transition",
       arguments: [["p_skill_id", "text"], ["p_staging_id", "text"], ["p_skill", "jsonb"], ["p_staging", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
@@ -298,58 +362,63 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
     }),
     ownerFunctionSignatureV1({
       schema: "skill_registry",
-      function_name: "transition_skill_v1",
-      primary_table: "skills",
-      writer_kind: "state_transition",
-      arguments: [["p_skill_id", "text"], ["p_expected_status", "text"], ["p_expected_updated_at", "timestamptz"], ["p_next_status", "text"], ["p_reason", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
-      reads_tables: ["skills"],
-      writes_tables: ["skills", "skill_audit_logs", "skill_event_outbox"],
+      function_name: "settle_skill_validation_v1",
+      primary_table: "skill_validation_attempts",
+      writer_kind: "immutable_append",
+      arguments: [
+        ["p_attempt_id", "text"],
+        ["p_outcome", "text"],
+        ["p_request", "jsonb"],
+        ["p_request_hash", "text"],
+        ["p_validation_record", "jsonb", { nullable: true }],
+        ["p_success", "jsonb", { nullable: true }],
+        ["p_error", "jsonb", { nullable: true }],
+        ["p_response_hash", "text"],
+        ["p_terminal_fingerprint", "text"],
+        ["p_idempotency_key", "text"],
+        ["p_expires_at", "timestamptz"],
+        ["p_actor_principal_id", "text"],
+        ["p_trace_id", "text"],
+      ],
+      reads_tables: [
+        "skill_validation_attempts",
+        "skill_version_staging",
+      ],
+      writes_tables: [
+        "skill_validation_attempts",
+        "skill_version_staging",
+        "skill_audit_logs",
+      ],
       effects: [
-        { table_name: "skills", operation: "transition", concurrency_control: "expected_state_version" },
-        { table_name: "skill_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
-        { table_name: "skill_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+        {
+          table_name: "skill_validation_attempts",
+          operation: "append",
+          concurrency_control: "idempotency_key",
+        },
+        {
+          table_name: "skill_version_staging",
+          operation: "append",
+          concurrency_control: "idempotency_key",
+        },
+        {
+          table_name: "skill_audit_logs",
+          operation: "append",
+          concurrency_control: "idempotency_key",
+        },
       ],
       returns: "jsonb",
     }),
     ownerFunctionSignatureV1({
       schema: "skill_registry",
-      function_name: "transition_skill_staging_v1",
-      primary_table: "skill_version_staging",
-      writer_kind: "state_transition",
-      arguments: [["p_staging_id", "text"], ["p_expected_status", "text"], ["p_expected_updated_at", "timestamptz"], ["p_next_status", "text"], ["p_validation_result", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
-      reads_tables: ["skill_version_staging"],
-      writes_tables: ["skill_version_staging", "skill_audit_logs", "skill_event_outbox"],
-      effects: [
-        { table_name: "skill_version_staging", operation: "transition", concurrency_control: "expected_state_version" },
-        { table_name: "skill_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
-        { table_name: "skill_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
-      ],
-      returns: "jsonb",
-    }),
-    ownerFunctionSignatureV1({
-      schema: "skill_registry",
-      function_name: "create_skill_version_v1",
+      function_name: "publish_skill_version_v1",
       primary_table: "skill_versions",
       writer_kind: "state_transition",
-      arguments: [["p_skill_version_id", "text"], ["p_staging_id", "text"], ["p_expected_staging_status", "text"], ["p_expected_staging_updated_at", "timestamptz"], ["p_version", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
-      reads_tables: ["skill_version_staging", "skill_versions"],
-      writes_tables: ["skill_versions", "skill_audit_logs", "skill_event_outbox"],
+      arguments: [["p_skill_version_id", "text"], ["p_package_id", "text"], ["p_staging_id", "text"], ["p_expected_staging_status", "text"], ["p_expected_staging_state_version", "bigint"], ["p_version", "jsonb"], ["p_package", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["skill_version_staging", "skill_versions", "skill_packages"],
+      writes_tables: ["skill_version_staging", "skill_versions", "skill_packages", "skill_audit_logs", "skill_event_outbox"],
       effects: [
+        { table_name: "skill_version_staging", operation: "transition", concurrency_control: "expected_state_version" },
         { table_name: "skill_versions", operation: "append", concurrency_control: "idempotency_key" },
-        { table_name: "skill_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
-        { table_name: "skill_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
-      ],
-      returns: "jsonb",
-    }),
-    ownerFunctionSignatureV1({
-      schema: "skill_registry",
-      function_name: "register_skill_package_v1",
-      primary_table: "skill_packages",
-      writer_kind: "state_transition",
-      arguments: [["p_package_id", "text"], ["p_version_id", "text"], ["p_expected_version_lifecycle", "text"], ["p_expected_version_lifecycle_version", "bigint"], ["p_package", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
-      reads_tables: ["skill_versions", "skill_packages"],
-      writes_tables: ["skill_packages", "skill_audit_logs", "skill_event_outbox"],
-      effects: [
         { table_name: "skill_packages", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "skill_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "skill_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
@@ -378,12 +447,16 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
       function_name: "cas_skill_activation_current_v1",
       primary_table: "skill_activation_current",
       writer_kind: "pointer_cas",
-      arguments: [["p_skill_id", "text"], ["p_expected_activation_revision_id", "text"], ["p_activation_revision", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
-      reads_tables: ["skill_activation_current", "skill_activation_revisions"],
-      writes_tables: ["skill_activation_revisions", "skill_activation_current", "skill_audit_logs", "skill_event_outbox"],
+      arguments: [["p_skill_id", "text"], ["p_operation", "text"], ["p_expected_activation_revision_id", "text"], ["p_expected_catalog_version", "text"], ["p_activation_revision", "jsonb"], ["p_catalog_revision", "jsonb"], ["p_catalog_entries", "jsonb"], ["p_management_command", "jsonb"], ["p_activation_event", "jsonb"], ["p_catalog_event", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["skill_versions", "skill_activation_current", "skill_activation_revisions", "skill_catalog_current", "skill_catalog_revisions", "skill_catalog_revision_entries"],
+      writes_tables: ["skill_activation_revisions", "skill_activation_current", "skill_catalog_revisions", "skill_catalog_revision_entries", "skill_catalog_current", "skill_management_commands", "skill_audit_logs", "skill_event_outbox"],
       effects: [
         { table_name: "skill_activation_revisions", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "skill_activation_current", operation: "cas", concurrency_control: "expected_version" },
+        { table_name: "skill_catalog_revisions", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "skill_catalog_revision_entries", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "skill_catalog_current", operation: "cas", concurrency_control: "expected_version" },
+        { table_name: "skill_management_commands", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "skill_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "skill_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
       ], returns: "jsonb",
@@ -393,14 +466,18 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
       function_name: "cas_skill_permission_current_v1",
       primary_table: "skill_permission_current",
       writer_kind: "pointer_cas",
-      arguments: [["p_skill_id", "text"], ["p_expected_permission_revision_id", "text"], ["p_permission_revision", "jsonb"], ["p_summary", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
-      reads_tables: ["skill_permission_current", "skill_permission_revisions"],
-      writes_tables: ["skill_permission_revisions", "skill_permission_current", "skill_permission_summary_snapshots", "skill_permission_summary_entries", "skill_audit_logs", "skill_event_outbox"],
+      arguments: [["p_skill_id", "text"], ["p_operation", "text"], ["p_expected_permission_revision_id", "text"], ["p_expected_catalog_version", "text"], ["p_permission_revision", "jsonb"], ["p_catalog_revision", "jsonb"], ["p_catalog_entries", "jsonb"], ["p_summary", "jsonb"], ["p_management_command", "jsonb"], ["p_permission_event", "jsonb"], ["p_catalog_event", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["skill_permission_current", "skill_permission_revisions", "skill_catalog_current", "skill_catalog_revisions", "skill_catalog_revision_entries", "skill_management_commands"],
+      writes_tables: ["skill_permission_revisions", "skill_permission_current", "skill_permission_summary_snapshots", "skill_permission_summary_entries", "skill_catalog_revisions", "skill_catalog_revision_entries", "skill_catalog_current", "skill_management_commands", "skill_audit_logs", "skill_event_outbox"],
       effects: [
         { table_name: "skill_permission_revisions", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "skill_permission_current", operation: "cas", concurrency_control: "expected_version" },
         { table_name: "skill_permission_summary_snapshots", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "skill_permission_summary_entries", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "skill_catalog_revisions", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "skill_catalog_revision_entries", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "skill_catalog_current", operation: "cas", concurrency_control: "expected_version" },
+        { table_name: "skill_management_commands", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "skill_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "skill_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
       ], returns: "jsonb",
@@ -426,26 +503,66 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
       function_name: "transition_skill_resolution_attempt_v1",
       primary_table: "skill_resolution_attempts",
       writer_kind: "state_transition",
-      arguments: [["p_attempt_id", "text"], ["p_expected_status", "text"], ["p_next_status", "text"], ["p_resolution", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
-      reads_tables: ["skill_resolution_attempts", "skill_versions"],
-      writes_tables: ["skill_resolution_attempts", "skill_resolutions", "skill_audit_logs", "skill_event_outbox"],
+      arguments: [["p_attempt_id", "text"], ["p_expected_status", "text"], ["p_next_status", "text"], ["p_expected_catalog_version", "text"], ["p_catalog_as_of", "timestamptz"], ["p_expected_security_revocation_epoch", "bigint"], ["p_policy_input_hash", "text"], ["p_skill_permission_summary_ref", "text"], ["p_skill_permission_summary_hash", "text"], ["p_resolution", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["skill_resolution_attempts", "skill_versions", "skill_activation_revisions", "skill_activation_current", "skill_permission_revisions", "skill_permission_current", "skill_catalog_revisions", "skill_catalog_revision_entries", "skill_catalog_current", "skill_permission_summary_snapshots", "skill_permission_summary_entries", "skill_security_state"],
+      // Resolution is an owner-local, idempotent read decision. It has no
+      // contract-approved downstream event, so enqueueing a synthetic outbox
+      // row would either violate the event registry or manufacture a false
+      // integration signal. Keep the terminal audit durable, but do not make
+      // resolution success depend on a non-existent event payload.
+      writes_tables: ["skill_resolution_attempts", "skill_resolutions", "skill_audit_logs"],
       effects: [
         { table_name: "skill_resolution_attempts", operation: "transition", concurrency_control: "expected_state_version" },
         { table_name: "skill_resolutions", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "skill_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
-        { table_name: "skill_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
       ], returns: "jsonb",
+    }),
+    // A failed resolution has no `skill_resolutions` rows when a requested
+    // key does not exist.  Keep this terminal state in its own writer so the
+    // success writer never has to manufacture a foreign-key-invalid row.
+    ownerFunctionSignatureV1({
+      schema: "skill_registry",
+      function_name: "fail_skill_resolution_attempt_v1",
+      primary_table: "skill_resolution_attempts",
+      writer_kind: "state_transition",
+      arguments: [["p_attempt_id", "text"], ["p_expected_status", "text"], ["p_expected_catalog_version", "text"], ["p_expected_security_revocation_epoch", "bigint"], ["p_error_code", "text"], ["p_failure", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["skill_resolution_attempts", "skill_catalog_revisions", "skill_security_state"],
+      writes_tables: ["skill_resolution_attempts", "skill_audit_logs"],
+      effects: [
+        { table_name: "skill_resolution_attempts", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "skill_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    // Optional skills may all be unavailable.  The response is still a
+    // successful, durable resolution, but there is intentionally no row to
+    // insert into `skill_resolutions` (whose skill_id is required).  Keep the
+    // terminal-attempt write distinct from the per-skill success writer.
+    ownerFunctionSignatureV1({
+      schema: "skill_registry",
+      function_name: "complete_empty_skill_resolution_attempt_v1",
+      primary_table: "skill_resolution_attempts",
+      writer_kind: "state_transition",
+      arguments: [["p_attempt_id", "text"], ["p_expected_status", "text"], ["p_expected_catalog_version", "text"], ["p_expected_security_revocation_epoch", "bigint"], ["p_completion", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["skill_resolution_attempts", "skill_catalog_revisions", "skill_security_state"],
+      writes_tables: ["skill_resolution_attempts", "skill_audit_logs"],
+      effects: [
+        { table_name: "skill_resolution_attempts", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "skill_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
     }),
     ownerFunctionSignatureV1({
       schema: "skill_registry",
       function_name: "transition_skill_candidate_application_v1",
       primary_table: "skill_candidate_applications",
       writer_kind: "state_transition",
-      arguments: [["p_application_id", "text"], ["p_expected_status", "text"], ["p_expected_updated_at", "timestamptz"], ["p_next_status", "text"], ["p_application", "jsonb"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
-      reads_tables: ["skill_candidate_applications"],
+      arguments: [["p_application_id", "text"], ["p_workspace_id", "text"], ["p_bot_id", "text"], ["p_deployment_environment", "text"], ["p_release_channel", "text"], ["p_baseline_catalog_version", "text"], ["p_application", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["skill_candidate_applications", "skill_catalog_current", "skill_catalog_revisions"],
       writes_tables: ["skill_candidate_applications", "skill_audit_logs", "skill_event_outbox"],
       effects: [
-        { table_name: "skill_candidate_applications", operation: "transition", concurrency_control: "expected_state_version" },
+        { table_name: "skill_candidate_applications", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "skill_candidate_applications", operation: "append", concurrency_control: "catalog_baseline_fence" },
         { table_name: "skill_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "skill_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
       ], returns: "jsonb",
@@ -455,7 +572,7 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
       function_name: "transition_skill_package_retention_v1",
       primary_table: "skill_packages",
       writer_kind: "state_transition",
-      arguments: [["p_package_id", "text"], ["p_expected_state_version", "bigint"], ["p_to_state", "text"], ["p_reason_code", "text"], ["p_actor_principal_id", "text"], ["p_object_store_deletion_decision_version", "text", { nullable: true }], ["p_trace_id", "text"]],
+      arguments: [["p_package_id", "text"], ["p_expected_state_version", "bigint"], ["p_to_state", "text"], ["p_reason_code", "text"], ["p_actor_principal_id", "text"], ["p_object_store_deletion_decision_version", "bigint", { nullable: true }], ["p_trace_id", "text"]],
       reads_tables: ["skill_packages", "skill_versions", "skill_activation_current", "skill_activation_revisions", "skill_catalog_current", "skill_catalog_revision_entries", "skill_resolutions", "skill_package_retention_holds"],
       writes_tables: ["skill_packages", "skill_package_retention_transitions", "skill_audit_logs", "skill_event_outbox"],
       effects: [
@@ -486,12 +603,72 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
       primary_table: "skill_package_retention_holds",
       writer_kind: "state_transition",
       arguments: [["p_hold_id", "text"], ["p_expected_active", "boolean"], ["p_expected_created_at", "timestamptz"], ["p_actor_principal_id", "text"], ["p_reason_code", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
-      reads_tables: ["skill_package_retention_holds"],
+      reads_tables: ["skill_package_retention_holds", "skill_packages", "skill_versions"],
       writes_tables: ["skill_package_retention_holds", "skill_audit_logs", "skill_event_outbox"],
       effects: [
         { table_name: "skill_package_retention_holds", operation: "transition", concurrency_control: "expected_state_version" },
         { table_name: "skill_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "skill_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "skill_registry",
+      function_name: "create_skill_permission_summary_snapshot_v1",
+      primary_table: "skill_permission_summary_snapshots",
+      writer_kind: "immutable_append",
+      arguments: [["p_summary_ref", "text"], ["p_summary", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["skill_permission_summary_snapshots", "skill_permission_summary_entries", "skill_catalog_revisions"],
+      writes_tables: ["skill_permission_summary_snapshots", "skill_permission_summary_entries", "skill_audit_logs"],
+      effects: [
+        { table_name: "skill_permission_summary_snapshots", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "skill_permission_summary_entries", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "skill_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    // Resolution is a two-step transition by design: persist immutable input
+    // first, then fence its terminal resolved/failed transition. Without this
+    // writer the transition writer can never satisfy its required `resolving`
+    // row fence on a first attempt.
+    ownerFunctionSignatureV1({
+      schema: "skill_registry",
+      function_name: "create_skill_resolution_attempt_v1",
+      primary_table: "skill_resolution_attempts",
+      writer_kind: "state_transition",
+      arguments: [["p_attempt_id", "text"], ["p_attempt", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["skill_resolution_attempts", "skill_catalog_revisions", "skill_security_state", "skill_permission_summary_snapshots"],
+      writes_tables: ["skill_resolution_attempts", "skill_audit_logs"],
+      effects: [
+        { table_name: "skill_resolution_attempts", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "skill_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "skill_registry",
+      function_name: "record_skill_object_access_decision_v1",
+      primary_table: "skill_object_access_decisions",
+      writer_kind: "immutable_append",
+      arguments: [["p_decision_id", "text"], ["p_decision", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["skill_object_access_decisions", "skill_version_staging", "skill_packages"],
+      writes_tables: ["skill_object_access_decisions", "skill_audit_logs"],
+      effects: [
+        { table_name: "skill_object_access_decisions", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "skill_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "skill_registry",
+      function_name: "record_skill_content_audit_v1",
+      primary_table: "skill_audit_logs",
+      writer_kind: "immutable_append",
+      arguments: [["p_audit_id", "text"], ["p_audit", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      reads_tables: ["skill_audit_logs", "skill_resolutions"],
+      writes_tables: ["skill_audit_logs"],
+      effects: [
+        { table_name: "skill_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
       ],
       returns: "jsonb",
     }),
@@ -517,84 +694,29 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
       ], returns: "jsonb",
     }),
     ownerEventingTransportEpochActivationSignatureV1("skill_registry"),
+    ...SKILL_REGISTRY_DLQ_RESOLUTION_V1.function_signatures,
     ],
-    database_checks: [
-      {
-        constraint_name: "eventing_transport_epochs_active_generation_safe_check",
-        table_name: "eventing_transport_epochs",
-        required_definition_fragments: [
-          "active_generation >= 1",
-          "9007199254740991",
-        ],
-        semantic_constraint: {
-          kind: "integer_range",
-          column_name: "active_generation",
-          min: 1,
-          max: Number.MAX_SAFE_INTEGER,
-        },
-      },
-      {
-        constraint_name: "skill_event_outbox_event_type_check",
-        table_name: "skill_event_outbox",
-        required_definition_fragments: ["event_type", "skill.candidate.application.updated"],
-        semantic_constraint: {
-          kind: "text_enum",
-          column_name: "event_type",
-          allowed_values: OWNER_DURABLE_EVENT_TYPES_V1.skill_registry,
-        },
-      },
-      {
-        constraint_name: "skill_event_outbox_producer_check",
-        table_name: "skill_event_outbox",
-        required_definition_fragments: ["producer", "skill_registry"],
-        semantic_constraint: {
-          kind: "text_equals",
-          column_name: "producer",
-          value: "skill_registry",
-        },
-      },
-    ],
-    foreign_key_snapshot: {
+    // The generator imports this module under an explicit cache-busting
+    // `?writer=` URL so it can attest a changed signature before the new
+    // artifact exists. Normal application imports never carry that marker
+    // and therefore remain fail-closed on exact artifact drift.
+    ...(new URL(import.meta.url).searchParams.has("writer")
+      ? {}
+      : { writer_artifacts: SKILL_REGISTRY_WRITER_ARTIFACTS_V1 }),
+  database_columns: SKILL_REGISTRY_DATABASE_COLUMNS_V1,
+  database_checks: SKILL_REGISTRY_DATABASE_CHECKS_V1,
+  database_functions: SKILL_REGISTRY_DATABASE_FUNCTIONS_V1,
+  database_triggers: SKILL_REGISTRY_DATABASE_TRIGGERS_V1,
+  database_unique_constraints: SKILL_REGISTRY_DATABASE_UNIQUE_CONSTRAINTS_V1,
+  database_indexes: SKILL_REGISTRY_DATABASE_INDEXES_V1,
+  foreign_key_snapshot: {
     status: "complete",
-    source: "Database Design revision 476 / fresh 0450_skill_registry canonical DDL applied to PostgreSQL 17",
+    source:
+      "Database Design revision 585 contract target; pai-infra fresh 0450_skill_registry must supply the version-pinned physical and writer artifacts before live verification",
   },
-  foreign_keys: ownerForeignKeysV1("skill_registry", [
-    ["skill_activation_current_activation_revision_id_skill_id_w_fkey","skill_activation_current",["activation_revision_id","skill_id","workspace_id","bot_id","deployment_environment","release_channel"],"skill_activation_revisions",["id","skill_id","workspace_id","bot_id","deployment_environment","release_channel"]],
-    ["skill_activation_current_skill_id_fkey","skill_activation_current",["skill_id"],"skills",["id"]],
-    ["skill_activation_revisions_previous_revision_id_skill_id_w_fkey","skill_activation_revisions",["previous_revision_id","skill_id","workspace_id","bot_id","deployment_environment","release_channel"],"skill_activation_revisions",["id","skill_id","workspace_id","bot_id","deployment_environment","release_channel"]],
-    ["skill_activation_revisions_skill_id_fkey","skill_activation_revisions",["skill_id"],"skills",["id"]],
-    ["skill_activation_revisions_version_id_skill_id_fkey","skill_activation_revisions",["version_id","skill_id"],"skill_versions",["id","skill_id"]],
-    ["skill_audit_logs_application_id_fkey","skill_audit_logs",["application_id"],"skill_candidate_applications",["id"]],
-    ["skill_audit_logs_skill_id_fkey","skill_audit_logs",["skill_id"],"skills",["id"]],
-    ["skill_audit_logs_version_id_fkey","skill_audit_logs",["version_id"],"skill_versions",["id"]],
-    ["skill_candidate_applications_staging_version_id_fkey","skill_candidate_applications",["staging_version_id"],"skill_version_staging",["id"]],
-    ["skill_catalog_current_catalog_revision_id_workspace_id_bot_fkey","skill_catalog_current",["catalog_revision_id","workspace_id","bot_id","deployment_environment","release_channel"],"skill_catalog_revisions",["id","workspace_id","bot_id","deployment_environment","release_channel"]],
-    ["skill_catalog_revision_entrie_activation_revision_id_skill_fkey","skill_catalog_revision_entries",["activation_revision_id","skill_id","workspace_id","bot_id","deployment_environment","release_channel"],"skill_activation_revisions",["id","skill_id","workspace_id","bot_id","deployment_environment","release_channel"]],
-    ["skill_catalog_revision_entrie_catalog_revision_id_workspac_fkey","skill_catalog_revision_entries",["catalog_revision_id","workspace_id","bot_id","deployment_environment","release_channel"],"skill_catalog_revisions",["id","workspace_id","bot_id","deployment_environment","release_channel"],{ on_delete: "cascade" }],
-    ["skill_catalog_revision_entries_skill_id_fkey","skill_catalog_revision_entries",["skill_id"],"skills",["id"]],
-    ["skill_catalog_revision_entries_version_id_skill_id_fkey","skill_catalog_revision_entries",["version_id","skill_id"],"skill_versions",["id","skill_id"]],
-    ["skill_management_commands_skill_id_fkey","skill_management_commands",["skill_id"],"skills",["id"]],
-    ["skill_management_commands_target_version_id_fkey","skill_management_commands",["target_version_id"],"skill_versions",["id"]],
-    ["skill_management_commands_version_id_fkey","skill_management_commands",["version_id"],"skill_versions",["id"]],
-    ["skill_package_retention_holds_package_id_fkey","skill_package_retention_holds",["package_id"],"skill_packages",["id"]],
-    ["skill_package_retention_transitions_package_id_fkey","skill_package_retention_transitions",["package_id"],"skill_packages",["id"]],
-    ["skill_packages_version_id_fkey","skill_packages",["version_id"],"skill_versions",["id"]],
-    ["skill_permission_current_permission_revision_id_skill_id_w_fkey","skill_permission_current",["permission_revision_id","skill_id","workspace_id","bot_id","deployment_environment","release_channel","scope_hash"],"skill_permission_revisions",["id","skill_id","workspace_id","bot_id","deployment_environment","release_channel","scope_hash"]],
-    ["skill_permission_current_skill_id_fkey","skill_permission_current",["skill_id"],"skills",["id"]],
-    ["skill_permission_revisions_previous_revision_id_skill_id_w_fkey","skill_permission_revisions",["previous_revision_id","skill_id","workspace_id","bot_id","deployment_environment","release_channel","scope_hash"],"skill_permission_revisions",["id","skill_id","workspace_id","bot_id","deployment_environment","release_channel","scope_hash"]],
-    ["skill_permission_revisions_skill_id_fkey","skill_permission_revisions",["skill_id"],"skills",["id"]],
-    ["skill_permission_summary_entries_skill_id_fkey","skill_permission_summary_entries",["skill_id"],"skills",["id"]],
-    ["skill_permission_summary_entries_summary_ref_fkey","skill_permission_summary_entries",["summary_ref"],"skill_permission_summary_snapshots",["summary_ref"],{ on_delete: "restrict" }],
-    ["skill_permission_summary_snap_catalog_revision_id_workspac_fkey","skill_permission_summary_snapshots",["catalog_revision_id","workspace_id","bot_id","deployment_environment","release_channel"],"skill_catalog_revisions",["id","workspace_id","bot_id","deployment_environment","release_channel"]],
-    ["skill_resolution_attempt_summary_fk","skill_resolution_attempts",["skill_permission_summary_ref","skill_permission_summary_hash"],"skill_permission_summary_snapshots",["summary_ref","summary_hash"]],
-    ["skill_resolutions_resolution_attempt_id_runtime_run_id_sta_fkey","skill_resolutions",["resolution_attempt_id","runtime_run_id","start_attempt_no"],"skill_resolution_attempts",["id","runtime_run_id","start_attempt_no"]],
-    ["skill_resolutions_skill_id_fkey","skill_resolutions",["skill_id"],"skills",["id"]],
-    ["skill_resolutions_version_id_skill_id_fkey","skill_resolutions",["version_id","skill_id"],"skill_versions",["id","skill_id"]],
-    ["skill_version_staging_skill_id_fkey","skill_version_staging",["skill_id"],"skills",["id"]],
-    ["skill_versions_skill_id_fkey","skill_versions",["skill_id"],"skills",["id"]],
-    ["skill_versions_validation_id_skill_id_fkey","skill_versions",["validation_id","skill_id"],"skill_version_staging",["id","skill_id"]],
-  ]),
+  foreign_keys: SKILL_REGISTRY_FOREIGN_KEYS_V1,
   append_only_tables: [
+      "skill_validation_attempts",
       "skill_package_retention_transitions",
       "skill_activation_revisions",
       "skill_permission_revisions",
@@ -603,6 +725,7 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
       "skill_event_outbox",
       "skill_event_inbox",
       "skill_event_dlq",
+      SKILL_REGISTRY_DLQ_RESOLUTION_V1.resolution_table,
       "skill_management_commands",
       "skill_catalog_revisions",
       "skill_catalog_revision_entries",
@@ -612,6 +735,9 @@ export const SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 =
     outbox_tables: ["skill_event_outbox"],
     inbox_tables: ["skill_event_inbox"],
     dlq_tables: ["skill_event_dlq"],
+    dlq_resolutions: [
+      SKILL_REGISTRY_DLQ_RESOLUTION_V1.binding,
+    ],
     object_metadata_tables: [
       "skill_version_staging",
       "skill_packages",

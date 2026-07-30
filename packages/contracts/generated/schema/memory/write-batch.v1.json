@@ -1,0 +1,746 @@
+{
+  "$id": "urn:pai:memory:write-batch:v1",
+  "anyOf": [
+    {
+      "$id": "urn:pai:memory:write-batch-request:v1",
+      "additionalProperties": false,
+      "maxCanonicalJsonBytes": 2097152,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "bot_id",
+        "trigger_process_id",
+        "source_meta_job_id",
+        "idempotency_key",
+        "items"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "memory.write_batch.v1",
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "trigger_process_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "source_meta_job_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxUtf8Bytes": 128,
+          "type": "string"
+        },
+        "compatibility_mode": {
+          "const": "legacy_subject_order",
+          "type": "string"
+        },
+        "items": {
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueByCanonicalIdentity": "client_item_id",
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "maxCanonicalJsonBytes": 65536,
+            "type": "object",
+            "required": [
+              "client_item_id",
+              "content_summary",
+              "subject_refs",
+              "human_agent_relation",
+              "keyword_tags",
+              "scene_tags",
+              "emotion_tags",
+              "source_info",
+              "confidence_score",
+              "occurred_at"
+            ],
+            "properties": {
+              "client_item_id": {
+                "minLength": 1,
+                "maxUtf8Bytes": 256,
+                "type": "string"
+              },
+              "source_item_id": {
+                "minLength": 1,
+                "maxUtf8Bytes": 256,
+                "type": "string"
+              },
+              "content_summary": {
+                "minLength": 1,
+                "maxUtf8Bytes": 16384,
+                "type": "string"
+              },
+              "subject_refs": {
+                "minItems": 1,
+                "maxItems": 32,
+                "uniqueByCanonicalIdentity": true,
+                "exactlyOnePrimary": "required_when_multiple",
+                "type": "array",
+                "items": {
+                  "additionalProperties": false,
+                  "atLeastOneOf": [
+                    "canonical_id",
+                    "label"
+                  ],
+                  "type": "object",
+                  "required": [
+                    "subject_type"
+                  ],
+                  "properties": {
+                    "subject_type": {
+                      "anyOf": [
+                        {
+                          "const": "user",
+                          "type": "string"
+                        },
+                        {
+                          "const": "agent",
+                          "type": "string"
+                        },
+                        {
+                          "const": "organization",
+                          "type": "string"
+                        },
+                        {
+                          "const": "project",
+                          "type": "string"
+                        },
+                        {
+                          "const": "system",
+                          "type": "string"
+                        },
+                        {
+                          "const": "other",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "canonical_id": {
+                      "minLength": 1,
+                      "maxUtf8Bytes": 256,
+                      "type": "string"
+                    },
+                    "label": {
+                      "minLength": 1,
+                      "maxUtf8Bytes": 256,
+                      "type": "string"
+                    },
+                    "primary": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              },
+              "topic_hint": {
+                "minLength": 1,
+                "maxUtf8Bytes": 256,
+                "type": "string"
+              },
+              "aspect_hint": {
+                "minLength": 1,
+                "maxUtf8Bytes": 256,
+                "type": "string"
+              },
+              "scope_hint": {
+                "minLength": 1,
+                "maxUtf8Bytes": 256,
+                "type": "string"
+              },
+              "human_agent_relation": {
+                "maxItems": 64,
+                "uniqueByCanonicalIdentity": true,
+                "type": "array",
+                "items": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "relation_type",
+                    "target",
+                    "direction",
+                    "confidence_score"
+                  ],
+                  "properties": {
+                    "relation_type": {
+                      "minLength": 1,
+                      "maxUtf8Bytes": 256,
+                      "type": "string"
+                    },
+                    "target": {
+                      "additionalProperties": false,
+                      "atLeastOneOf": [
+                        "canonical_id",
+                        "label"
+                      ],
+                      "type": "object",
+                      "required": [
+                        "subject_type"
+                      ],
+                      "properties": {
+                        "subject_type": {
+                          "anyOf": [
+                            {
+                              "const": "user",
+                              "type": "string"
+                            },
+                            {
+                              "const": "agent",
+                              "type": "string"
+                            },
+                            {
+                              "const": "organization",
+                              "type": "string"
+                            },
+                            {
+                              "const": "project",
+                              "type": "string"
+                            },
+                            {
+                              "const": "system",
+                              "type": "string"
+                            },
+                            {
+                              "const": "other",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "canonical_id": {
+                          "minLength": 1,
+                          "maxUtf8Bytes": 256,
+                          "type": "string"
+                        },
+                        "label": {
+                          "minLength": 1,
+                          "maxUtf8Bytes": 256,
+                          "type": "string"
+                        },
+                        "primary": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "direction": {
+                      "anyOf": [
+                        {
+                          "const": "outbound",
+                          "type": "string"
+                        },
+                        {
+                          "const": "inbound",
+                          "type": "string"
+                        },
+                        {
+                          "const": "bidirectional",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "confidence_score": {
+                      "minimum": 0,
+                      "maximum": 1,
+                      "type": "number"
+                    },
+                    "evidence_refs": {
+                      "maxItems": 64,
+                      "uniqueByCanonicalIdentity": true,
+                      "type": "array",
+                      "items": {
+                        "$id": "urn:pai:shared:typed-evidence-ref:v1",
+                        "minLength": 3,
+                        "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              },
+              "keyword_tags": {
+                "maxItems": 64,
+                "uniqueByCanonicalIdentity": true,
+                "type": "array",
+                "items": {
+                  "minLength": 1,
+                  "maxUtf8Bytes": 256,
+                  "type": "string"
+                }
+              },
+              "scene_tags": {
+                "maxItems": 16,
+                "uniqueByCanonicalIdentity": true,
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "const": "work_planning",
+                      "type": "string"
+                    },
+                    {
+                      "const": "architecture_review",
+                      "type": "string"
+                    },
+                    {
+                      "const": "implementation",
+                      "type": "string"
+                    },
+                    {
+                      "const": "debugging",
+                      "type": "string"
+                    },
+                    {
+                      "const": "decision_making",
+                      "type": "string"
+                    },
+                    {
+                      "const": "follow_up",
+                      "type": "string"
+                    },
+                    {
+                      "const": "personal_preference",
+                      "type": "string"
+                    },
+                    {
+                      "const": "relationship",
+                      "type": "string"
+                    },
+                    {
+                      "const": "other",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "emotion_tags": {
+                "maxItems": 16,
+                "uniqueByCanonicalIdentity": true,
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "const": "neutral",
+                      "type": "string"
+                    },
+                    {
+                      "const": "satisfied",
+                      "type": "string"
+                    },
+                    {
+                      "const": "confused",
+                      "type": "string"
+                    },
+                    {
+                      "const": "frustrated",
+                      "type": "string"
+                    },
+                    {
+                      "const": "urgent",
+                      "type": "string"
+                    },
+                    {
+                      "const": "uncertain",
+                      "type": "string"
+                    },
+                    {
+                      "const": "concerned",
+                      "type": "string"
+                    },
+                    {
+                      "const": "positive",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "source_info": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "source_type",
+                  "source_ref",
+                  "actor_type"
+                ],
+                "properties": {
+                  "source_type": {
+                    "anyOf": [
+                      {
+                        "const": "trigger_snapshot",
+                        "type": "string"
+                      },
+                      {
+                        "const": "user_explicit",
+                        "type": "string"
+                      },
+                      {
+                        "const": "agent_observation",
+                        "type": "string"
+                      },
+                      {
+                        "const": "tool_result",
+                        "type": "string"
+                      },
+                      {
+                        "const": "system_event",
+                        "type": "string"
+                      },
+                      {
+                        "const": "import",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "source_ref": {
+                    "$id": "urn:pai:shared:typed-evidence-ref:v1",
+                    "minLength": 3,
+                    "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+                    "type": "string"
+                  },
+                  "source_refs": {
+                    "maxItems": 64,
+                    "uniqueByCanonicalIdentity": true,
+                    "type": "array",
+                    "items": {
+                      "$id": "urn:pai:shared:typed-evidence-ref:v1",
+                      "minLength": 3,
+                      "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+                      "type": "string"
+                    }
+                  },
+                  "actor_type": {
+                    "anyOf": [
+                      {
+                        "const": "user",
+                        "type": "string"
+                      },
+                      {
+                        "const": "agent",
+                        "type": "string"
+                      },
+                      {
+                        "const": "system",
+                        "type": "string"
+                      },
+                      {
+                        "const": "tool",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "actor_id": {
+                    "minLength": 1,
+                    "maxUtf8Bytes": 256,
+                    "type": "string"
+                  },
+                  "evidence_refs": {
+                    "maxItems": 64,
+                    "uniqueByCanonicalIdentity": true,
+                    "type": "array",
+                    "items": {
+                      "$id": "urn:pai:shared:typed-evidence-ref:v1",
+                      "minLength": 3,
+                      "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+                      "type": "string"
+                    }
+                  },
+                  "trace_id": {
+                    "minLength": 1,
+                    "maxUtf8Bytes": 256,
+                    "type": "string"
+                  }
+                }
+              },
+              "confidence_score": {
+                "minimum": 0,
+                "maximum": 1,
+                "type": "number"
+              },
+              "occurred_at": {
+                "format": "date-time",
+                "maxUtf8Bytes": 64,
+                "type": "string"
+              },
+              "evidence_valid_until": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "maxUtf8Bytes": 64,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "$id": "urn:pai:memory:write-batch-response:v1",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "write_batch_id",
+        "batch_status",
+        "item_results",
+        "accepted_point_ids",
+        "rejected_items",
+        "conflict_ids",
+        "warnings",
+        "duplicate_replayed"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "memory.write_batch.v1",
+          "type": "string"
+        },
+        "write_batch_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "batch_status": {
+          "anyOf": [
+            {
+              "const": "completed",
+              "type": "string"
+            },
+            {
+              "const": "partial_failed",
+              "type": "string"
+            }
+          ]
+        },
+        "item_results": {
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueByCanonicalIdentity": "client_item_id",
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "client_item_id",
+                  "status",
+                  "decision",
+                  "series_id",
+                  "topic_key",
+                  "conflict_ids"
+                ],
+                "properties": {
+                  "client_item_id": {
+                    "minLength": 1,
+                    "maxUtf8Bytes": 256,
+                    "type": "string"
+                  },
+                  "status": {
+                    "const": "succeeded",
+                    "type": "string"
+                  },
+                  "decision": {
+                    "anyOf": [
+                      {
+                        "const": "new_series",
+                        "type": "string"
+                      },
+                      {
+                        "const": "append_version",
+                        "type": "string"
+                      },
+                      {
+                        "const": "merge_existing",
+                        "type": "string"
+                      },
+                      {
+                        "const": "conflict_review",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "memory_point_id": {
+                    "minLength": 1,
+                    "maxUtf8Bytes": 256,
+                    "type": "string"
+                  },
+                  "series_id": {
+                    "minLength": 1,
+                    "maxUtf8Bytes": 256,
+                    "type": "string"
+                  },
+                  "topic_key": {
+                    "minLength": 1,
+                    "maxUtf8Bytes": 256,
+                    "type": "string"
+                  },
+                  "version_no": {
+                    "minimum": 1,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "conflict_ids": {
+                    "maxItems": 64,
+                    "uniqueByCanonicalIdentity": true,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "maxUtf8Bytes": 256,
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "client_item_id",
+                  "status",
+                  "code",
+                  "message"
+                ],
+                "properties": {
+                  "client_item_id": {
+                    "minLength": 1,
+                    "maxUtf8Bytes": 256,
+                    "type": "string"
+                  },
+                  "status": {
+                    "const": "rejected",
+                    "type": "string"
+                  },
+                  "code": {
+                    "minLength": 1,
+                    "maxUtf8Bytes": 256,
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "maxUtf8Bytes": 1024,
+                    "type": "string"
+                  },
+                  "field_path": {
+                    "maxUtf8Bytes": 256,
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "accepted_point_ids": {
+          "maxItems": 100,
+          "uniqueByCanonicalIdentity": true,
+          "type": "array",
+          "items": {
+            "minLength": 1,
+            "maxUtf8Bytes": 256,
+            "type": "string"
+          }
+        },
+        "rejected_items": {
+          "maxItems": 100,
+          "uniqueByCanonicalIdentity": "client_item_id",
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "client_item_id",
+              "status",
+              "code",
+              "message"
+            ],
+            "properties": {
+              "client_item_id": {
+                "minLength": 1,
+                "maxUtf8Bytes": 256,
+                "type": "string"
+              },
+              "status": {
+                "const": "rejected",
+                "type": "string"
+              },
+              "code": {
+                "minLength": 1,
+                "maxUtf8Bytes": 256,
+                "type": "string"
+              },
+              "message": {
+                "minLength": 1,
+                "maxUtf8Bytes": 1024,
+                "type": "string"
+              },
+              "field_path": {
+                "maxUtf8Bytes": 256,
+                "type": "string"
+              }
+            }
+          }
+        },
+        "conflict_ids": {
+          "maxItems": 6400,
+          "uniqueByCanonicalIdentity": true,
+          "type": "array",
+          "items": {
+            "minLength": 1,
+            "maxUtf8Bytes": 256,
+            "type": "string"
+          }
+        },
+        "warnings": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "code",
+              "field_path",
+              "compatibility_mode",
+              "audit_ref"
+            ],
+            "properties": {
+              "code": {
+                "const": "legacy_primary_fallback",
+                "type": "string"
+              },
+              "field_path": {
+                "maxUtf8Bytes": 256,
+                "type": "string"
+              },
+              "compatibility_mode": {
+                "const": "legacy_subject_order",
+                "type": "string"
+              },
+              "audit_ref": {
+                "minLength": 1,
+                "maxUtf8Bytes": 256,
+                "type": "string"
+              },
+              "client_item_id": {
+                "minLength": 1,
+                "maxUtf8Bytes": 256,
+                "type": "string"
+              }
+            }
+          }
+        },
+        "duplicate_replayed": {
+          "type": "boolean"
+        }
+      }
+    }
+  ]
+}

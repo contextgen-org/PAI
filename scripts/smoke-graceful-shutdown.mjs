@@ -20,19 +20,27 @@ async function reservePort() {
   return port;
 }
 
-async function waitUntilReady(url, child) {
+async function waitUntilHealthy(url, child, childOutput) {
   const deadline = Date.now() + 5_000;
+  let lastStatus;
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new Error("service exited before readiness");
+    if (child.exitCode !== null) {
+      throw new Error(
+        `service exited before becoming healthy\n${childOutput()}`,
+      );
+    }
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, { signal: AbortSignal.timeout(250) });
+      lastStatus = response.status;
       if (response.status === 200) return;
     } catch {
       // The listener may not be bound yet.
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, 25));
   }
-  throw new Error("service did not become ready within 5 seconds");
+  throw new Error(
+    `service did not become healthy within 5 seconds; last_status=${lastStatus ?? "unreachable"}\n${childOutput()}`,
+  );
 }
 
 async function waitForExit(child, timeoutMs, message) {
@@ -70,7 +78,14 @@ child.stderr.on("data", (chunk) => {
 });
 
 try {
-  await waitUntilReady(`http://127.0.0.1:${port}/ready`, child);
+  // This smoke exercises signal handling, so wait for the listener rather than
+  // production readiness. Trigger Processor intentionally keeps /ready closed
+  // until every pipeline dependency is composed.
+  await waitUntilHealthy(
+    `http://127.0.0.1:${port}/health`,
+    child,
+    () => output,
+  );
   const signalAt = performance.now();
   child.kill("SIGTERM");
   const exit = await waitForExit(

@@ -1,0 +1,159 @@
+{
+  "$id": "urn:pai:action-runtime:tool-invocation-list:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "runtime_run_id",
+    "items",
+    "next_cursor",
+    "has_more"
+  ],
+  "properties": {
+    "runtime_run_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "items": {
+      "maxItems": 200,
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tool_invocation_id",
+          "tool_name",
+          "status",
+          "side_effect_status",
+          "input_ref",
+          "output_ref",
+          "failure_class",
+          "started_at",
+          "completed_at"
+        ],
+        "properties": {
+          "tool_invocation_id": {
+            "minLength": 1,
+            "maxLength": 512,
+            "type": "string"
+          },
+          "tool_name": {
+            "minLength": 1,
+            "maxLength": 512,
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "requested",
+                "type": "string"
+              },
+              {
+                "const": "running",
+                "type": "string"
+              },
+              {
+                "const": "completed",
+                "type": "string"
+              },
+              {
+                "const": "failed",
+                "type": "string"
+              },
+              {
+                "const": "cancelled",
+                "type": "string"
+              }
+            ]
+          },
+          "side_effect_status": {
+            "anyOf": [
+              {
+                "const": "none",
+                "type": "string"
+              },
+              {
+                "const": "produced",
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
+              }
+            ]
+          },
+          "input_ref": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "output_ref": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failure_class": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "started_at": {
+            "minLength": 20,
+            "maxLength": 35,
+            "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+            "type": "string"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "minLength": 20,
+                "maxLength": 35,
+                "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "next_cursor": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "has_more": {
+      "type": "boolean"
+    }
+  }
+}

@@ -18,6 +18,24 @@ describe("verified owner PostgreSQL transport security", () => {
     expect(assertOwnerPostgresTransportSecurityV1(databaseUrl)).toBe("local");
   });
 
+  it("permits only the explicitly opted-in local Docker postgres service", () => {
+    const databaseUrl = "postgresql://runtime:secret@postgres:5432/pai";
+    expect(() => assertOwnerPostgresTransportSecurityV1(databaseUrl)).toThrow(
+      /requires sslmode=verify-full/u,
+    );
+    expect(
+      assertOwnerPostgresTransportSecurityV1(databaseUrl, {
+        allow_local_docker_postgres: true,
+      }),
+    ).toBe("local");
+    expect(() =>
+      assertOwnerPostgresTransportSecurityV1(
+        "postgresql://runtime:secret@postgres.example/pai",
+        { allow_local_docker_postgres: true },
+      )
+    ).toThrow(/requires sslmode=verify-full/u);
+  });
+
   it.each([
     "postgresql://runtime:secret@db.internal/pai",
     "postgresql://runtime:secret@db.internal/pai?sslmode=disable",

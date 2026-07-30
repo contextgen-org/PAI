@@ -1,6 +1,7 @@
 import {
   ACTIVE_OWNER_DURABLE_EVENT_TYPES_V1,
   SERVICE_IDS,
+  assertDurableInboxIdentityV1,
   assertOwnerDurableEventEnvelopeV1,
   DurableEventEnvelopeValidationErrorV1,
   isDurableEventConsumerAllowedV1,
@@ -8,19 +9,26 @@ import {
   isOwnerDurableEventTypeV1,
   type DurableEventConsumerServiceIdV1,
   type DurableEventEnvelopeV1,
+  type DurableInboxIdentityV1,
   type ServiceIdV1,
 } from "@pai/contracts";
 import type { OwnerOutboxStorePortV1 } from "@pai/persistence";
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
+import { isProxy } from "node:util/types";
 
 import {
+  canonicalDurableEventEnvelopePayloadHashV1,
   canonicalDurableEventEnvelopeSemanticHashV1,
   canonicalJsonV1,
   canonicalPayloadHashV1,
   durableEventScopeFingerprintV1,
   CanonicalJsonValidationErrorV1,
 } from "./canonical-json.v1.js";
+import {
+  closedDurableFailureMessageV1,
+  summarizeDurableRawFieldsV1,
+} from "./durable-failure-sanitization.v1.js";
 
 const sha256Pattern = /^sha256:[0-9a-f]{64}$/;
 const MAX_EVENTING_IDENTITY_LENGTH_V1 = 256;
@@ -36,29 +44,117 @@ const MAX_DURABLE_JSON_NODES_V1 = 100_000;
  */
 export const DURABLE_EVENT_BATCH_MAX_V1 = 16;
 
+function capturePortMethodV1<TMethod>(
+  value: unknown,
+  methodName: string,
+  label: string,
+): TMethod {
+  if (typeof value !== "object" || value === null || isProxy(value)) {
+    throw new OutboxClaimContractErrorV1(`${label} port is invalid`);
+  }
+  let candidate: object | null = value;
+  for (let depth = 0; candidate !== null && depth < 16; depth += 1) {
+    if (isProxy(candidate)) {
+      throw new OutboxClaimContractErrorV1(`${label} port is invalid`);
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(candidate, methodName);
+    if (descriptor !== undefined) {
+      if (
+        !("value" in descriptor) ||
+        typeof descriptor.value !== "function" ||
+        isProxy(descriptor.value)
+      ) {
+        throw new OutboxClaimContractErrorV1(
+          `${label}.${methodName} must be a data method`,
+        );
+      }
+      return Function.prototype.bind.call(
+        descriptor.value,
+        value,
+      ) as TMethod;
+    }
+    candidate = Object.getPrototypeOf(candidate);
+  }
+  throw new OutboxClaimContractErrorV1(
+    `${label}.${methodName} is required`,
+  );
+}
+
+function captureOptionalPortMethodV1<TMethod>(
+  value: unknown,
+  methodName: string,
+  label: string,
+): TMethod | undefined {
+  if (typeof value !== "object" || value === null || isProxy(value)) {
+    throw new OutboxClaimContractErrorV1(`${label} port is invalid`);
+  }
+  let candidate: object | null = value;
+  for (let depth = 0; candidate !== null && depth < 16; depth += 1) {
+    if (isProxy(candidate)) {
+      throw new OutboxClaimContractErrorV1(`${label} port is invalid`);
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(candidate, methodName);
+    if (descriptor !== undefined) {
+      if (
+        !("value" in descriptor) ||
+        typeof descriptor.value !== "function" ||
+        isProxy(descriptor.value)
+      ) {
+        throw new OutboxClaimContractErrorV1(
+          `${label}.${methodName} must be a data method`,
+        );
+      }
+      return Function.prototype.bind.call(
+        descriptor.value,
+        value,
+      ) as TMethod;
+    }
+    candidate = Object.getPrototypeOf(candidate);
+  }
+  return undefined;
+}
+
 function snapshotOwnDataFieldsV1(
   value: unknown,
   fields: readonly string[],
   label: string,
   exact = false,
 ): Readonly<Record<string, unknown>> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    isProxy(value)
+  ) {
     throw new OutboxClaimContractErrorV1(`${label} must be an object`);
   }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new OutboxClaimContractErrorV1(`${label} must be a plain object`);
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
   if (exact) {
-    const actualKeys = Object.keys(value).sort();
+    const actualKeys = Reflect.ownKeys(descriptors);
+    const actualStringKeys = actualKeys
+      .filter((key): key is string => typeof key === "string")
+      .sort();
     const expectedKeys = [...fields].sort();
     if (
       actualKeys.length !== expectedKeys.length ||
-      actualKeys.some((key, index) => key !== expectedKeys[index])
+      actualStringKeys.length !== expectedKeys.length ||
+      actualStringKeys.some((key, index) => key !== expectedKeys[index])
     ) {
       throw new OutboxClaimContractErrorV1(`${label} fields must be exact`);
     }
   }
   const snapshot: Record<string, unknown> = {};
   for (const field of fields) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, field);
-    if (descriptor === undefined || !("value" in descriptor)) {
+    const descriptor = descriptors[field];
+    if (
+      descriptor === undefined ||
+      !("value" in descriptor) ||
+      descriptor.enumerable !== true
+    ) {
       throw new OutboxClaimContractErrorV1(
         `${label}.${field} must be an own data property`,
       );
@@ -74,10 +170,18 @@ function snapshotBoundedDenseArrayV1<T>(
   label: string,
   snapshotEntry: (entry: unknown, index: number) => T,
 ): readonly T[] {
-  if (!Array.isArray(value)) {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    isProxy(value) ||
+    !Array.isArray(value)
+  ) {
     throw new OutboxClaimContractErrorV1(`${label} must be an array`);
   }
-  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  const descriptors = Object.getOwnPropertyDescriptors(
+    value,
+  ) as unknown as Record<PropertyKey, PropertyDescriptor>;
+  const lengthDescriptor = descriptors["length"];
   const length = lengthDescriptor?.value;
   if (
     !Number.isSafeInteger(length) ||
@@ -88,20 +192,34 @@ function snapshotBoundedDenseArrayV1<T>(
       `${label} exceeded the bounded requested batch`,
     );
   }
+  const expectedKeys = new Set<string>(["length"]);
+  for (let index = 0; index < (length as number); index += 1) {
+    expectedKeys.add(String(index));
+  }
+  const ownKeys = Reflect.ownKeys(descriptors);
+  if (
+    ownKeys.length !== expectedKeys.size ||
+    ownKeys.some(
+      (key) => typeof key !== "string" || !expectedKeys.has(key),
+    )
+  ) {
+    throw new OutboxClaimContractErrorV1(
+      `${label} must contain only dense array indexes`,
+    );
+  }
   const snapshot: T[] = [];
   for (let index = 0; index < (length as number); index += 1) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
-    if (descriptor === undefined || !("value" in descriptor)) {
+    const descriptor = descriptors[String(index)];
+    if (
+      descriptor === undefined ||
+      !("value" in descriptor) ||
+      descriptor.enumerable !== true
+    ) {
       throw new OutboxClaimContractErrorV1(
         `${label} must be dense and contain only data properties`,
       );
     }
     snapshot.push(snapshotEntry(descriptor.value, index));
-  }
-  if (Object.getOwnPropertyDescriptor(value, "length")?.value !== length) {
-    throw new OutboxClaimContractErrorV1(
-      `${label} changed while its bounded snapshot was captured`,
-    );
   }
   return Object.freeze(snapshot);
 }
@@ -116,126 +234,13 @@ function deepFreezeJsonSnapshotV1(value: unknown): unknown {
   return Object.freeze(value);
 }
 
-function assertBoundedJsonCandidateV1(value: unknown): void {
-  const pending: Array<Readonly<{ value: unknown; depth: number }>> = [
-    { value, depth: 0 },
-  ];
-  const seen = new WeakSet<object>();
-  let nodes = 0;
-  let estimatedBytes = 0;
-  while (pending.length > 0) {
-    const current = pending.pop()!;
-    nodes += 1;
-    if (
-      nodes > MAX_DURABLE_JSON_NODES_V1 ||
-      current.depth > MAX_DURABLE_JSON_DEPTH_V1
-    ) {
-      throw new CanonicalJsonValidationErrorV1(
-        "durable JSON exceeds the bounded depth or node count",
-      );
-    }
-    const candidate = current.value;
-    if (candidate === null) {
-      estimatedBytes += 4;
-    } else if (typeof candidate === "string") {
-      estimatedBytes += Buffer.byteLength(candidate, "utf8") + 2;
-    } else if (typeof candidate === "number") {
-      if (!Number.isFinite(candidate)) {
-        throw new CanonicalJsonValidationErrorV1(
-          "durable JSON rejects non-finite numbers",
-        );
-      }
-      estimatedBytes += 24;
-    } else if (typeof candidate === "boolean") {
-      estimatedBytes += 5;
-    } else if (typeof candidate !== "object") {
-      throw new CanonicalJsonValidationErrorV1(
-        `durable JSON rejects ${typeof candidate} values`,
-      );
-    } else {
-      if (seen.has(candidate)) {
-        throw new CanonicalJsonValidationErrorV1(
-          "durable JSON rejects cyclic or aliased object graphs",
-        );
-      }
-      seen.add(candidate);
-      if (Array.isArray(candidate)) {
-        const length = Object.getOwnPropertyDescriptor(candidate, "length")
-          ?.value;
-        if (
-          !Number.isSafeInteger(length) ||
-          (length as number) < 0 ||
-          (length as number) > MAX_DURABLE_JSON_NODES_V1 - nodes
-        ) {
-          throw new CanonicalJsonValidationErrorV1(
-            "durable JSON array length is outside the bounded contract",
-          );
-        }
-        estimatedBytes += (length as number) + 2;
-        for (let index = 0; index < (length as number); index += 1) {
-          const descriptor = Object.getOwnPropertyDescriptor(
-            candidate,
-            String(index),
-          );
-          if (descriptor === undefined || !("value" in descriptor)) {
-            throw new CanonicalJsonValidationErrorV1(
-              "durable JSON arrays must be dense data properties",
-            );
-          }
-          pending.push({
-            value: descriptor.value,
-            depth: current.depth + 1,
-          });
-        }
-      } else {
-        const prototype = Object.getPrototypeOf(candidate) as object | null;
-        if (prototype !== Object.prototype && prototype !== null) {
-          throw new CanonicalJsonValidationErrorV1(
-            "durable JSON accepts only plain objects",
-          );
-        }
-        for (const key in candidate as Record<string, unknown>) {
-          const descriptor = Object.getOwnPropertyDescriptor(candidate, key);
-          if (descriptor === undefined || !("value" in descriptor)) {
-            throw new CanonicalJsonValidationErrorV1(
-              "durable JSON object fields must be own data properties",
-            );
-          }
-          estimatedBytes += Buffer.byteLength(key, "utf8") + 4;
-          if (
-            estimatedBytes > MAX_DURABLE_JSON_BYTES_V1 ||
-            pending.length + nodes >= MAX_DURABLE_JSON_NODES_V1
-          ) {
-            throw new CanonicalJsonValidationErrorV1(
-              "durable JSON exceeds the bounded byte or node budget",
-            );
-          }
-          pending.push({
-            value: descriptor.value,
-            depth: current.depth + 1,
-          });
-        }
-      }
-    }
-    if (
-      estimatedBytes > MAX_DURABLE_JSON_BYTES_V1 ||
-      pending.length + nodes > MAX_DURABLE_JSON_NODES_V1
-    ) {
-      throw new CanonicalJsonValidationErrorV1(
-        "durable JSON exceeds the bounded byte or node budget",
-      );
-    }
-  }
-}
-
 export function immutableBoundedJsonSnapshotV1(value: unknown): unknown {
-  assertBoundedJsonCandidateV1(value);
-  const canonical = canonicalJsonV1(value);
-  if (Buffer.byteLength(canonical, "utf8") > MAX_DURABLE_JSON_BYTES_V1) {
-    throw new CanonicalJsonValidationErrorV1(
-      "durable JSON exceeds the exact serialized byte bound",
-    );
-  }
+  const canonical = canonicalJsonV1(value, {
+    max_bytes: MAX_DURABLE_JSON_BYTES_V1,
+    max_depth: MAX_DURABLE_JSON_DEPTH_V1,
+    max_nodes: MAX_DURABLE_JSON_NODES_V1,
+    max_container_entries: MAX_DURABLE_JSON_NODES_V1,
+  });
   return deepFreezeJsonSnapshotV1(JSON.parse(canonical) as unknown);
 }
 
@@ -307,7 +312,7 @@ export interface DurableOutboxStorePortV1 {
     now: string;
     current_transport_epoch: string;
     current_transport_generation: number;
-  }>): Promise<readonly ClaimedOutboxRecordV1[]>;
+  }>, signal?: AbortSignal): Promise<readonly ClaimedOutboxRecordV1[]>;
   acknowledge(request: Readonly<{
     outbox_id: string;
     claim_token: string;
@@ -320,7 +325,7 @@ export interface DurableOutboxStorePortV1 {
     current_transport_epoch: string;
     current_transport_generation: number;
     now: string;
-  }>): Promise<void>;
+  }>, signal?: AbortSignal): Promise<void>;
 }
 
 export interface DurableEventTransportReceiptV1 {
@@ -336,7 +341,13 @@ export interface DurableEventTransportPortV1 {
     payload_hash: string;
     current_transport_epoch: string;
     current_transport_generation: number;
-  }>): Promise<DurableEventTransportReceiptV1>;
+  }>, signal?: AbortSignal): Promise<DurableEventTransportReceiptV1>;
+}
+
+function throwIfEventingBatchAbortedV1(
+  signal: AbortSignal | undefined,
+): void {
+  signal?.throwIfAborted();
 }
 
 function assertTransportReceiptV1(
@@ -483,9 +494,39 @@ export function createPostgresOwnerOutboxStoreV1(
   ownerOutbox: OwnerOutboxStorePortV1,
   outboxTable: string,
 ): DurableOutboxStorePortV1 {
-  if (!ownerOutbox.outbox_tables.includes(outboxTable)) {
+  const ownerMetadata = snapshotOwnDataFieldsV1(
+    ownerOutbox,
+    ["owner_service", "outbox_tables"],
+    "owner outbox port",
+  );
+  const outboxTables = snapshotBoundedDenseArrayV1(
+    ownerMetadata.outbox_tables,
+    256,
+    "owner outbox tables",
+    (entry) => {
+      if (
+        typeof entry !== "string" ||
+        entry.length === 0 ||
+        entry.length > MAX_EVENTING_IDENTITY_LENGTH_V1
+      ) {
+        throw new OutboxClaimContractErrorV1(
+          "owner outbox table identity is invalid",
+        );
+      }
+      return entry;
+    },
+  );
+  const claimOwner = capturePortMethodV1<OwnerOutboxStorePortV1["claim"]>(
+    ownerOutbox,
+    "claim",
+    "owner outbox",
+  );
+  const acknowledgeOwner = capturePortMethodV1<
+    OwnerOutboxStorePortV1["acknowledge"]
+  >(ownerOutbox, "acknowledge", "owner outbox");
+  if (!outboxTables.includes(outboxTable)) {
     throw new Error(
-      `outbox table is outside ${ownerOutbox.owner_service}: ${outboxTable}`,
+      `outbox table is outside ${String(ownerMetadata.owner_service)}: ${outboxTable}`,
     );
   }
   return Object.freeze({
@@ -496,8 +537,9 @@ export function createPostgresOwnerOutboxStoreV1(
       now: string;
       current_transport_epoch: string;
       current_transport_generation: number;
-    }>) {
-      const rows = await ownerOutbox.claim({
+    }>, signal?: AbortSignal) {
+      throwIfEventingBatchAbortedV1(signal);
+      const rows = await claimOwner({
         outbox_table: outboxTable,
         worker_id: request.worker_id,
         limit: request.limit,
@@ -506,7 +548,12 @@ export function createPostgresOwnerOutboxStoreV1(
         current_transport_epoch: request.current_transport_epoch,
         current_transport_generation: request.current_transport_generation,
       });
-      return rows.map(claimedOutboxRecordV1);
+      throwIfEventingBatchAbortedV1(signal);
+      return snapshotClaimedOutboxBatchV1(
+        rows,
+        request.limit,
+        "owner outbox claim",
+      );
     },
     async acknowledge(request: Readonly<{
       outbox_id: string;
@@ -520,21 +567,33 @@ export function createPostgresOwnerOutboxStoreV1(
       current_transport_epoch: string;
       current_transport_generation: number;
       now: string;
-    }>) {
-      await ownerOutbox.acknowledge({
-        outbox_table: outboxTable,
-        outbox_id: request.outbox_id,
-        claim_token: request.claim_token,
-        outcome: request.outcome,
-        next_retry_at: request.next_retry_at,
-        error: request.error,
-        transport_ref: request.transport_ref,
-        transport_epoch: request.transport_epoch,
-        transport_generation: request.transport_generation,
-        current_transport_epoch: request.current_transport_epoch,
-        current_transport_generation: request.current_transport_generation,
-        now: request.now,
-      });
+    }>, signal?: AbortSignal) {
+      throwIfEventingBatchAbortedV1(signal);
+      const confirmation = snapshotOwnDataFieldsV1(
+        await acknowledgeOwner({
+          outbox_table: outboxTable,
+          outbox_id: request.outbox_id,
+          claim_token: request.claim_token,
+          outcome: request.outcome,
+          next_retry_at: request.next_retry_at,
+          error: request.error,
+          transport_ref: request.transport_ref,
+          transport_epoch: request.transport_epoch,
+          transport_generation: request.transport_generation,
+          current_transport_epoch: request.current_transport_epoch,
+          current_transport_generation: request.current_transport_generation,
+          now: request.now,
+        }),
+        ["acknowledged"],
+        "owner outbox acknowledge confirmation",
+        true,
+      );
+      if (confirmation.acknowledged !== true) {
+        throw new OutboxClaimContractErrorV1(
+          "owner outbox acknowledge did not confirm its fenced compare-and-set",
+        );
+      }
+      throwIfEventingBatchAbortedV1(signal);
     },
   });
 }
@@ -577,6 +636,7 @@ function assertDispatcherConfig(config: DurableOutboxDispatcherConfigV1): void {
     !Number.isSafeInteger(config.retry_max_delay_ms) ||
     config.retry_max_delay_ms < config.retry_base_delay_ms ||
     config.retry_max_delay_ms > 300_000 ||
+    (config.retry_jitter !== "none" && config.retry_jitter !== "full") ||
     config.current_transport_epoch.trim().length === 0 ||
     config.current_transport_epoch.length > MAX_EVENTING_EPOCH_LENGTH_V1 ||
     !Number.isSafeInteger(config.current_transport_generation) ||
@@ -629,16 +689,34 @@ export function createDurableOutboxDispatcherV1(
     now?: () => Date;
     random?: () => number;
   }> = {},
-): Readonly<{ dispatchBatch: () => Promise<DurableOutboxDispatchSummaryV1> }> {
+): Readonly<{
+  dispatchBatch: (
+    signal?: AbortSignal,
+  ) => Promise<DurableOutboxDispatchSummaryV1>;
+}> {
   const dispatcherConfig = Object.freeze({ ...config });
   assertActiveOwnerDurableEventContractV1(dispatcherConfig.owner_service);
   assertDispatcherConfig(dispatcherConfig);
   const now = dependencies.now ?? (() => new Date());
   const random = dependencies.random ?? Math.random;
+  const claimOutbox = capturePortMethodV1<DurableOutboxStorePortV1["claim"]>(
+    store,
+    "claim",
+    "durable outbox store",
+  );
+  const acknowledgeOutbox = capturePortMethodV1<
+    DurableOutboxStorePortV1["acknowledge"]
+  >(store, "acknowledge", "durable outbox store");
+  const publishEvent = capturePortMethodV1<
+    DurableEventTransportPortV1["publish"]
+  >(transport, "publish", "durable event transport");
   return Object.freeze({
-    async dispatchBatch(): Promise<DurableOutboxDispatchSummaryV1> {
+    async dispatchBatch(
+      signal?: AbortSignal,
+    ): Promise<DurableOutboxDispatchSummaryV1> {
+      throwIfEventingBatchAbortedV1(signal);
       const claimedAt = now().toISOString();
-      const claimedRecords = await store.claim({
+      const claimedRecords = await claimOutbox({
         worker_id: dispatcherConfig.worker_id,
         limit: dispatcherConfig.batch_size,
         lease_seconds: dispatcherConfig.lease_seconds,
@@ -646,7 +724,8 @@ export function createDurableOutboxDispatcherV1(
         current_transport_epoch: dispatcherConfig.current_transport_epoch,
         current_transport_generation:
           dispatcherConfig.current_transport_generation,
-      });
+      }, signal);
+      throwIfEventingBatchAbortedV1(signal);
       const records = snapshotClaimedOutboxBatchV1(
         claimedRecords,
         dispatcherConfig.batch_size,
@@ -656,6 +735,7 @@ export function createDurableOutboxDispatcherV1(
       let retryWait = 0;
       let failed = 0;
       for (const record of records) {
+        throwIfEventingBatchAbortedV1(signal);
         let failure: Readonly<{ code: string; retryable: boolean }> | undefined;
         let publishAttempted = false;
         let publishOutcomeAmbiguous = false;
@@ -711,20 +791,22 @@ export function createDurableOutboxDispatcherV1(
             );
           }
           publishAttempted = true;
-          receipt = snapshotTransportReceiptV1(await transport.publish({
+          receipt = snapshotTransportReceiptV1(await publishEvent({
             target: record.target,
             envelope: record.envelope,
             payload_hash: record.payload_hash,
             current_transport_epoch: dispatcherConfig.current_transport_epoch,
             current_transport_generation:
               dispatcherConfig.current_transport_generation,
-          }));
+          }, signal));
+          throwIfEventingBatchAbortedV1(signal);
           assertTransportReceiptV1(
             receipt,
             dispatcherConfig.current_transport_epoch,
             dispatcherConfig.current_transport_generation,
           );
         } catch (error) {
+          throwIfEventingBatchAbortedV1(signal);
           publishOutcomeAmbiguous =
             publishAttempted &&
             !(error instanceof EventTransportPreflightErrorV1);
@@ -732,9 +814,11 @@ export function createDurableOutboxDispatcherV1(
             ? { code: "delivery_outcome_ambiguous", retryable: true }
             : deliveryFailure(error);
         }
+        throwIfEventingBatchAbortedV1(signal);
         const acknowledgedAt = now();
         if (failure === undefined) {
-          await store.acknowledge({
+          throwIfEventingBatchAbortedV1(signal);
+          await acknowledgeOutbox({
             outbox_id: record.outbox_id,
             claim_token: record.claim_token,
             outcome: "sent",
@@ -747,14 +831,16 @@ export function createDurableOutboxDispatcherV1(
             current_transport_generation:
               dispatcherConfig.current_transport_generation,
             now: acknowledgedAt.toISOString(),
-          });
+          }, signal);
+          throwIfEventingBatchAbortedV1(signal);
           sent += 1;
           continue;
         }
         const exhausted = attemptCount >= dispatcherConfig.max_attempts;
         const retryable =
           publishOutcomeAmbiguous || (failure.retryable && !exhausted);
-        await store.acknowledge({
+        throwIfEventingBatchAbortedV1(signal);
+        await acknowledgeOutbox({
           outbox_id: record.outbox_id,
           claim_token: record.claim_token,
           outcome: retryable ? "retry_wait" : "failed",
@@ -777,7 +863,8 @@ export function createDurableOutboxDispatcherV1(
           current_transport_generation:
             dispatcherConfig.current_transport_generation,
           now: acknowledgedAt.toISOString(),
-        });
+        }, signal);
+        throwIfEventingBatchAbortedV1(signal);
         if (retryable) retryWait += 1;
         else failed += 1;
       }
@@ -869,6 +956,7 @@ export interface DurableSentOutboxPermanentFailureAckResultV1 {
 export function assertDurableSentOutboxPermanentFailureAckResultV1(
   value: unknown,
 ): asserts value is DurableSentOutboxPermanentFailureAckResultV1 {
+  canonicalJsonV1(value);
   if (
     typeof value !== "object" ||
     value === null ||
@@ -895,7 +983,7 @@ export interface DurableSentOutboxRedriveStorePortV1 {
     now: string;
     current_transport_epoch: string;
     current_transport_generation: number;
-  }>): Promise<readonly ClaimedSentOutboxRecordV1[]>;
+  }>, signal?: AbortSignal): Promise<readonly ClaimedSentOutboxRecordV1[]>;
   acknowledgeSentRedrive(request: Readonly<{
     outbox_id: string;
     claim_token: string;
@@ -906,13 +994,14 @@ export interface DurableSentOutboxRedriveStorePortV1 {
     transport_epoch: string;
     current_transport_generation: number;
     now: string;
-  }>): Promise<void>;
+  }>, signal?: AbortSignal): Promise<void>;
   /**
    * Claim-fenced terminalization. The authoritative row must be retained and
    * durably moved out of the redrive candidate set before this resolves.
    */
   acknowledgeSentRedrivePermanentFailure(
     request: Readonly<DurableSentOutboxPermanentFailureAckV1>,
+    signal?: AbortSignal,
   ): Promise<DurableSentOutboxPermanentFailureAckResultV1>;
 }
 
@@ -923,16 +1012,6 @@ export interface DurableSentOutboxRedriveSummaryV1 {
   readonly permanent_failures: number;
 }
 
-const MAX_DURABLE_FAILURE_MESSAGE_LENGTH_V1 = 512;
-
-function boundedDurableFailureMessageV1(error: unknown, code: string): string {
-  const message = error instanceof Error ? error.message.trim() : "";
-  return (message.length === 0 ? code : message).slice(
-    0,
-    MAX_DURABLE_FAILURE_MESSAGE_LENGTH_V1,
-  );
-}
-
 function sentOutboxPermanentFailureAckV1(
   record: ClaimedSentOutboxRecordV1,
   config: Readonly<{
@@ -940,7 +1019,6 @@ function sentOutboxPermanentFailureAckV1(
     current_transport_generation: number;
   }>,
   failure: Readonly<{ code: string }>,
-  error: unknown,
   now: string,
 ): DurableSentOutboxPermanentFailureAckV1 {
   if (
@@ -976,7 +1054,10 @@ function sentOutboxPermanentFailureAckV1(
     current_transport_epoch: config.current_transport_epoch,
     current_transport_generation: config.current_transport_generation,
     failure_code: failure.code,
-    failure_message: boundedDurableFailureMessageV1(error, failure.code),
+    failure_message: closedDurableFailureMessageV1(
+      failure.code,
+      "outbox_contract_violation",
+    ),
     now,
   });
 }
@@ -999,7 +1080,11 @@ export function createDurableSentOutboxRedriverV1(
     current_transport_generation: number;
   }>,
   dependencies: Readonly<{ now?: () => Date }> = {},
-): Readonly<{ redriveBatch: () => Promise<DurableSentOutboxRedriveSummaryV1> }> {
+): Readonly<{
+  redriveBatch: (
+    signal?: AbortSignal,
+  ) => Promise<DurableSentOutboxRedriveSummaryV1>;
+}> {
   const redriveConfig = Object.freeze({ ...config });
   assertActiveOwnerDurableEventContractV1(redriveConfig.owner_service);
   if (
@@ -1020,10 +1105,31 @@ export function createDurableSentOutboxRedriverV1(
     throw new Error("invalid sent outbox redrive configuration");
   }
   const now = dependencies.now ?? (() => new Date());
+  const claimSentForRedrive = capturePortMethodV1<
+    DurableSentOutboxRedriveStorePortV1["claimSentForRedrive"]
+  >(store, "claimSentForRedrive", "sent outbox redrive store");
+  const acknowledgeSentRedrive = capturePortMethodV1<
+    DurableSentOutboxRedriveStorePortV1["acknowledgeSentRedrive"]
+  >(store, "acknowledgeSentRedrive", "sent outbox redrive store");
+  const acknowledgePermanentFailure = capturePortMethodV1<
+    DurableSentOutboxRedriveStorePortV1[
+      "acknowledgeSentRedrivePermanentFailure"
+    ]
+  >(
+    store,
+    "acknowledgeSentRedrivePermanentFailure",
+    "sent outbox redrive store",
+  );
+  const publishEvent = capturePortMethodV1<
+    DurableEventTransportPortV1["publish"]
+  >(transport, "publish", "durable event transport");
   return Object.freeze({
-    async redriveBatch(): Promise<DurableSentOutboxRedriveSummaryV1> {
+    async redriveBatch(
+      signal?: AbortSignal,
+    ): Promise<DurableSentOutboxRedriveSummaryV1> {
+      throwIfEventingBatchAbortedV1(signal);
       const claimedAt = now().toISOString();
-      const claimedRecords = await store.claimSentForRedrive({
+      const claimedRecords = await claimSentForRedrive({
         worker_id: redriveConfig.worker_id,
         limit: redriveConfig.batch_size,
         lease_seconds: redriveConfig.lease_seconds,
@@ -1031,7 +1137,8 @@ export function createDurableSentOutboxRedriverV1(
         current_transport_epoch: redriveConfig.current_transport_epoch,
         current_transport_generation:
           redriveConfig.current_transport_generation,
-      });
+      }, signal);
+      throwIfEventingBatchAbortedV1(signal);
       const records = snapshotClaimedSentOutboxBatchV1(
         claimedRecords,
         redriveConfig.batch_size,
@@ -1040,6 +1147,7 @@ export function createDurableSentOutboxRedriverV1(
       let retryableFailures = 0;
       let permanentFailures = 0;
       for (const record of records) {
+        throwIfEventingBatchAbortedV1(signal);
         let publishAttempted = false;
         try {
           assertOwnerDurableEventEnvelopeV1(record.envelope);
@@ -1090,20 +1198,21 @@ export function createDurableSentOutboxRedriverV1(
           // retryable for every publish attempt, not only when a receipt was
           // returned to this process.
           publishAttempted = true;
-          const receipt = snapshotTransportReceiptV1(await transport.publish({
+          const receipt = snapshotTransportReceiptV1(await publishEvent({
             target: record.target,
             envelope: record.envelope,
             payload_hash: record.payload_hash,
             current_transport_epoch: redriveConfig.current_transport_epoch,
             current_transport_generation:
               redriveConfig.current_transport_generation,
-          }));
+          }, signal));
+          throwIfEventingBatchAbortedV1(signal);
           assertTransportReceiptV1(
             receipt,
             redriveConfig.current_transport_epoch,
             redriveConfig.current_transport_generation,
           );
-          await store.acknowledgeSentRedrive({
+          await acknowledgeSentRedrive({
             outbox_id: record.outbox_id,
             claim_token: record.claim_token,
             previous_transport_ref: record.transport_ref,
@@ -1117,9 +1226,11 @@ export function createDurableSentOutboxRedriverV1(
             current_transport_generation:
               redriveConfig.current_transport_generation,
             now: now().toISOString(),
-          });
+          }, signal);
+          throwIfEventingBatchAbortedV1(signal);
           redriven += 1;
         } catch (error) {
+          throwIfEventingBatchAbortedV1(signal);
           if (
             publishAttempted &&
             !(error instanceof EventTransportPreflightErrorV1)
@@ -1133,23 +1244,26 @@ export function createDurableSentOutboxRedriverV1(
             continue;
           }
           try {
+            throwIfEventingBatchAbortedV1(signal);
             const quarantineAck = snapshotOwnDataFieldsV1(
-              await store.acknowledgeSentRedrivePermanentFailure(
+              await acknowledgePermanentFailure(
                 sentOutboxPermanentFailureAckV1(
                   record,
                   redriveConfig,
                   failure,
-                  error,
                   now().toISOString(),
                 ),
+                signal,
               ),
               ["acknowledged", "status"],
               "permanent sent-outbox failure ACK",
               true,
             ) as unknown as DurableSentOutboxPermanentFailureAckResultV1;
+            throwIfEventingBatchAbortedV1(signal);
             assertDurableSentOutboxPermanentFailureAckResultV1(quarantineAck);
             permanentFailures += 1;
           } catch {
+            throwIfEventingBatchAbortedV1(signal);
             // Without the claim-fenced durable ACK the row remains retryable;
             // counting it as terminal would recreate poison-row starvation.
             retryableFailures += 1;
@@ -1166,36 +1280,62 @@ export function createDurableSentOutboxRedriverV1(
   });
 }
 
+export type DurableInboxApplyResultV1 =
+  | Readonly<{ status: "processed" | "replayed" }>
+  | Readonly<{
+      status: "isolated";
+      isolation_code: "durable_inbox_identity_conflict";
+      isolation_ref: string;
+    }>;
+
 export interface TransactionalInboxApplyPortV1 {
-  apply(request: Readonly<{
-    source: ServiceIdV1;
-    event_id: string;
-    idempotency_key: string;
-    payload_hash: string;
-    semantic_hash: string;
-    scope_fingerprint: string;
+  /** Resolves only after the inbox, owner effects, or isolation transaction commits. */
+  apply(request: Readonly<DurableInboxIdentityV1 & {
     envelope: DurableEventEnvelopeV1;
-  }>): Promise<Readonly<{ status: "processed" | "replayed" }>>;
+  }>): Promise<DurableInboxApplyResultV1>;
 }
 
 function assertInboxApplyResultV1(
   value: unknown,
-): asserts value is Readonly<{ status: "processed" | "replayed" }> {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    Array.isArray(value) ||
-    (Object.getPrototypeOf(value) !== Object.prototype &&
-      Object.getPrototypeOf(value) !== null) ||
-    Object.keys(value).length !== 1 ||
-    !Object.prototype.hasOwnProperty.call(value, "status") ||
-    ((value as Readonly<Record<string, unknown>>).status !== "processed" &&
-      (value as Readonly<Record<string, unknown>>).status !== "replayed")
-  ) {
-    throw new Error(
-      "durable inbox apply returned an invalid result status before XACK",
+): asserts value is DurableInboxApplyResultV1 {
+  let status: Readonly<Record<string, unknown>>;
+  try {
+    status = snapshotOwnDataFieldsV1(
+      value,
+      ["status"],
+      "durable inbox apply result",
     );
+    if (status.status === "processed" || status.status === "replayed") {
+      snapshotOwnDataFieldsV1(
+        value,
+        ["status"],
+        "durable inbox apply result",
+        true,
+      );
+      return;
+    }
+    if (status.status === "isolated") {
+      const isolated = snapshotOwnDataFieldsV1(
+        value,
+        ["status", "isolation_code", "isolation_ref"],
+        "durable inbox apply result",
+        true,
+      );
+      if (
+        isolated.isolation_code === "durable_inbox_identity_conflict" &&
+        typeof isolated.isolation_ref === "string" &&
+        isolated.isolation_ref.trim().length > 0 &&
+        isolated.isolation_ref.length <= MAX_EVENTING_TRANSPORT_REF_LENGTH_V1
+      ) {
+        return;
+      }
+    }
+  } catch {
+    // Normalize all malformed port replies to the same closed contract error.
   }
+  throw new Error(
+    "durable inbox apply returned an invalid result status before XACK",
+  );
 }
 
 export function createDurableInboxConsumerV1(
@@ -1204,7 +1344,7 @@ export function createDurableInboxConsumerV1(
 ): Readonly<{
   consume: (
     envelope: DurableEventEnvelopeV1,
-  ) => Promise<Readonly<{ status: "processed" | "replayed" }>>;
+  ) => Promise<DurableInboxApplyResultV1>;
 }> {
   const consumerService = config.consumer_service;
   if (!SERVICE_IDS.includes(consumerService)) {
@@ -1212,7 +1352,11 @@ export function createDurableInboxConsumerV1(
       "durable inbox consumer service is outside the V1 service registry",
     );
   }
-  const applyInbox = inbox.apply.bind(inbox);
+  const applyInbox = capturePortMethodV1<TransactionalInboxApplyPortV1["apply"]>(
+    inbox,
+    "apply",
+    "transactional inbox",
+  );
   return Object.freeze({
     async consume(envelope) {
       const envelopeSnapshot = immutableBoundedJsonSnapshotV1(
@@ -1236,24 +1380,36 @@ export function createDurableInboxConsumerV1(
           "/producer: event branch is not accepted by this durable consumer",
         ]);
       }
-      const result = await applyInbox(Object.freeze({
+      const identity = {
         source: envelopeSnapshot.producer,
         event_id: envelopeSnapshot.event_id,
         idempotency_key: envelopeSnapshot.idempotency_key,
-        payload_hash: canonicalPayloadHashV1(envelopeSnapshot.payload),
+        payload_hash:
+          canonicalDurableEventEnvelopePayloadHashV1(envelopeSnapshot),
         semantic_hash:
           canonicalDurableEventEnvelopeSemanticHashV1(envelopeSnapshot),
         scope_fingerprint: durableEventScopeFingerprintV1(envelopeSnapshot),
+      } satisfies DurableInboxIdentityV1;
+      assertDurableInboxIdentityV1(identity);
+      const result = await applyInbox(Object.freeze({
+        ...identity,
         envelope: envelopeSnapshot,
       }));
-      let stableResult: Readonly<{ status: "processed" | "replayed" }>;
+      let stableResult: DurableInboxApplyResultV1;
       try {
+        const fields =
+          typeof result === "object" &&
+          result !== null &&
+          !Array.isArray(result) &&
+          (result as Readonly<Record<string, unknown>>).status === "isolated"
+            ? ["status", "isolation_code", "isolation_ref"]
+            : ["status"];
         stableResult = snapshotOwnDataFieldsV1(
           result,
-          ["status"],
+          fields,
           "durable inbox apply result",
           true,
-        ) as unknown as Readonly<{ status: "processed" | "replayed" }>;
+        ) as unknown as DurableInboxApplyResultV1;
       } catch {
         throw new Error(
           "durable inbox apply returned an invalid result status before XACK",
@@ -1352,7 +1508,7 @@ function deliverySnapshotV1(value: unknown): DurableEventDeliveryV1 {
         "invalid durable delivery failure metadata is outside the contract",
       );
     }
-    const rawFields = immutableBoundedJsonSnapshotV1(message.raw_fields);
+    const rawFields = summarizeDurableRawFieldsV1(message.raw_fields);
     if (
       !Array.isArray(rawFields) ||
       rawFields.length > MAX_INVALID_RAW_FIELD_CAPTURE_ELEMENTS_V1
@@ -1366,11 +1522,11 @@ function deliverySnapshotV1(value: unknown): DurableEventDeliveryV1 {
       delivery_id: header.delivery_id,
       delivery_ref: header.delivery_ref,
       error_code: message.error_code,
-      error_message: message.error_message.slice(
-        0,
-        MAX_DURABLE_FAILURE_MESSAGE_LENGTH_V1,
+      error_message: closedDurableFailureMessageV1(
+        message.error_code,
+        "consumer_contract_violation",
       ),
-      raw_fields: rawFields as readonly unknown[],
+      raw_fields: rawFields,
     }) as DurableEventInvalidDeliveryV1;
   }
   throw new OutboxClaimContractErrorV1(
@@ -1438,6 +1594,10 @@ export interface DurableEventReclaimBatchV1 {
 }
 
 export interface DurableEventDeliveryConsumerPortV1 {
+  /** Reads entries already pending for this exact stable consumer identity. */
+  readOwnPending?(request: Readonly<{
+    count: number;
+  }>): Promise<readonly DurableEventDeliveryV1[]>;
   readNew(request: Readonly<{
     count: number;
     block_ms: number;
@@ -1569,6 +1729,7 @@ function canonicalIsoMillisecondsV1(value: unknown): value is string {
 export function assertDurablePeriodicFullAuditGuardRequestV1(
   request: Readonly<DurablePeriodicFullAuditGuardRequestV1>,
 ): void {
+  canonicalJsonV1(request);
   const requestKeys =
     typeof request === "object" && request !== null
       ? Object.keys(request).sort()
@@ -1607,6 +1768,7 @@ export function assertDurablePeriodicFullAuditGuardAckV1(
   request: Readonly<DurablePeriodicFullAuditGuardRequestV1>,
   policy: Readonly<DurablePeriodicFullAuditGuardPolicyV1>,
 ): asserts value is DurablePeriodicFullAuditGuardAckV1 {
+  canonicalJsonV1(value);
   assertDurablePeriodicFullAuditGuardRequestV1(request);
   if (
     !Number.isSafeInteger(policy.max_heartbeat_age_ms) ||
@@ -1705,17 +1867,6 @@ export interface DurableEventConsumerWorkerSummaryV1 {
   readonly next_start_id: string | null;
 }
 
-function boundedConsumerFailureMessageV1(
-  value: unknown,
-  fallback: string,
-): string {
-  const raw = typeof value === "string" ? value.trim() : "";
-  return (raw.length === 0 ? fallback : raw).slice(
-    0,
-    MAX_DURABLE_FAILURE_MESSAGE_LENGTH_V1,
-  );
-}
-
 function assertDurableConsumerDeadLetterAckV1(value: unknown): void {
   if (
     typeof value !== "object" ||
@@ -1752,6 +1903,9 @@ export function createDurableEventConsumerWorkerV1(
     }>;
   }>,
 ): Readonly<{
+  consumeOwnPendingBatch: (
+    request: Readonly<{ count: number }>,
+  ) => Promise<DurableEventConsumerWorkerSummaryV1>;
   consumeNewBatch: (
     request: Readonly<{ count: number; block_ms: number }>,
   ) => Promise<DurableEventConsumerWorkerSummaryV1>;
@@ -1771,13 +1925,26 @@ export function createDurableEventConsumerWorkerV1(
       "durable event consumer service is outside the V1 service registry",
     );
   }
-  const readNew = delivery.readNew.bind(delivery);
-  const reclaimPending = delivery.reclaimPending.bind(delivery);
-  const acknowledgeDelivery = delivery.acknowledge.bind(delivery);
-  const transportRefForDeliveryId =
-    delivery.transportRefForDeliveryId?.bind(delivery);
-  const recordPermanentFailure =
-    deadLetter.recordPermanentFailure.bind(deadLetter);
+  const readNew = capturePortMethodV1<
+    DurableEventDeliveryConsumerPortV1["readNew"]
+  >(delivery, "readNew", "durable event delivery");
+  const readOwnPending = captureOptionalPortMethodV1<
+    NonNullable<DurableEventDeliveryConsumerPortV1["readOwnPending"]>
+  >(delivery, "readOwnPending", "durable event delivery");
+  const reclaimPending = capturePortMethodV1<
+    DurableEventDeliveryConsumerPortV1["reclaimPending"]
+  >(delivery, "reclaimPending", "durable event delivery");
+  const acknowledgeDelivery = capturePortMethodV1<
+    DurableEventDeliveryConsumerPortV1["acknowledge"]
+  >(delivery, "acknowledge", "durable event delivery");
+  const transportRefForDeliveryId = captureOptionalPortMethodV1<
+    NonNullable<
+      DurableEventDeliveryConsumerPortV1["transportRefForDeliveryId"]
+    >
+  >(delivery, "transportRefForDeliveryId", "durable event delivery");
+  const recordPermanentFailure = capturePortMethodV1<
+    DurableEventConsumerDeadLetterPortV1["recordPermanentFailure"]
+  >(deadLetter, "recordPermanentFailure", "durable consumer dead letter");
   const deletedDeliveryReconciliation =
     config.deleted_delivery_reconciliation === undefined
       ? undefined
@@ -1812,6 +1979,26 @@ export function createDurableEventConsumerWorkerV1(
   ) {
     throw new Error("invalid deleted delivery reconciliation configuration");
   }
+  const verifyPeriodicFullAuditActive =
+    deletedDeliveryReconciliation === undefined
+      ? undefined
+      : capturePortMethodV1<
+          DurableDeletedDeliveryReconciliationPortV1["verifyPeriodicFullAuditActive"]
+        >(
+          deletedDeliveryReconciliation.recorder,
+          "verifyPeriodicFullAuditActive",
+          "deleted delivery reconciliation",
+        );
+  const recordDeletedTransportRefs =
+    deletedDeliveryReconciliation === undefined
+      ? undefined
+      : capturePortMethodV1<
+          DurableDeletedDeliveryReconciliationPortV1["recordDeletedTransportRefs"]
+        >(
+          deletedDeliveryReconciliation.recorder,
+          "recordDeletedTransportRefs",
+          "deleted delivery reconciliation",
+        );
   const consumer = createDurableInboxConsumerV1(inbox, {
     consumer_service: consumerService,
   });
@@ -1864,9 +2051,9 @@ export function createDurableEventConsumerWorkerV1(
               delivery_id: message.delivery_id,
               delivery_ref: message.delivery_ref,
               failure_code: message.error_code,
-              failure_message: boundedConsumerFailureMessageV1(
-                message.error_message,
+              failure_message: closedDurableFailureMessageV1(
                 message.error_code,
+                "consumer_contract_violation",
               ),
               raw_fields: message.raw_fields,
               envelope: null,
@@ -1887,25 +2074,27 @@ export function createDurableEventConsumerWorkerV1(
         const result = await consumer.consume(message.envelope);
         acknowledged += await acknowledgeOne(message.delivery_id);
         if (result.status === "processed") processed += 1;
-        else replayed += 1;
+        else if (result.status === "replayed") replayed += 1;
+        else deadLettered += 1;
       } catch (error) {
         if (!isPermanentFailure(error)) {
           failed += 1;
           continue;
         }
         try {
+          const failureCode =
+            error instanceof DurableInboxApplyErrorV1
+              ? error.code
+              : "consumer_contract_violation";
           const deadLetterAck = snapshotOwnDataFieldsV1(
             await recordPermanentFailure({
               consumer_service: consumerService,
               delivery_id: message.delivery_id,
               delivery_ref: message.delivery_ref,
-              failure_code:
-                error instanceof DurableInboxApplyErrorV1
-                  ? error.code
-                  : "consumer_contract_violation",
-              failure_message: boundedConsumerFailureMessageV1(
-                error instanceof Error ? error.message : undefined,
-                "permanent consumer failure",
+              failure_code: failureCode,
+              failure_message: closedDurableFailureMessageV1(
+                failureCode,
+                "consumer_contract_violation",
               ),
               raw_fields: null,
               envelope: message.envelope,
@@ -1934,6 +2123,27 @@ export function createDurableEventConsumerWorkerV1(
     };
   };
   return Object.freeze({
+    async consumeOwnPendingBatch(request) {
+      if (readOwnPending === undefined) {
+        throw new Error(
+          "durable event delivery does not support own-pending recovery",
+        );
+      }
+      const readRequest = Object.freeze({ count: request.count });
+      if (
+        !Number.isSafeInteger(readRequest.count) ||
+        readRequest.count < 1 ||
+        readRequest.count > DURABLE_EVENT_DELIVERY_BATCH_MAX_V1
+      ) {
+        throw new Error("Redis pending read is outside the bounded V1 page");
+      }
+      const messages = deliveryBatchSnapshotV1(
+        await readOwnPending(readRequest),
+        readRequest.count,
+        "Redis own-pending read",
+      );
+      return consumeMessages(messages);
+    },
     async consumeNewBatch(request) {
       const readRequest = Object.freeze({
         count: request.count,
@@ -1957,7 +2167,11 @@ export function createDurableEventConsumerWorkerV1(
       return consumeMessages(messages);
     },
     async reclaimAndConsumeBatch(request) {
-      if (deletedDeliveryReconciliation === undefined) {
+      if (
+        deletedDeliveryReconciliation === undefined ||
+        verifyPeriodicFullAuditActive === undefined ||
+        recordDeletedTransportRefs === undefined
+      ) {
         throw new Error(
           "durable deleted-delivery reconciliation is required before XAUTOCLAIM",
         );
@@ -2024,8 +2238,7 @@ export function createDurableEventConsumerWorkerV1(
         }
         guardRequestIds.add(guardRequest.request_id);
         const guardAck = periodicAuditGuardAckSnapshotV1(
-          await deletedDeliveryReconciliation.recorder
-            .verifyPeriodicFullAuditActive(guardRequest),
+          await verifyPeriodicFullAuditActive(guardRequest),
         );
         assertDurablePeriodicFullAuditGuardAckV1(
           guardAck,
@@ -2109,8 +2322,7 @@ export function createDurableEventConsumerWorkerV1(
             );
           }
           const recorded = snapshotOwnDataFieldsV1(
-            await deletedDeliveryReconciliation.recorder
-              .recordDeletedTransportRefs({
+            await recordDeletedTransportRefs({
               consumer_service: consumerService,
               transport_refs: transportRefs,
               observed_transport_epoch:

@@ -164,6 +164,8 @@
         "kind",
         "retry_record_ref",
         "next_retry_at",
+        "attempt_count",
+        "last_error",
         "expected_process_updated_at",
         "process_lock_ref",
         "transition_audit_ref",
@@ -182,6 +184,17 @@
         "next_retry_at": {
           "minLength": 1,
           "format": "date-time",
+          "type": "string"
+        },
+        "attempt_count": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "last_error": {
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
           "type": "string"
         },
         "expected_process_updated_at": {
@@ -1690,6 +1703,8 @@
       "required": [
         "kind",
         "execution_provenance",
+        "execution_transition_ref",
+        "deferred_transition_ref",
         "terminal_outcome",
         "terminal_outcome_finalized_at",
         "canonical_reason_code",
@@ -1702,42 +1717,21 @@
           "type": "string"
         },
         "execution_provenance": {
-          "anyOf": [
-            {
-              "const": "direct_execution",
-              "type": "string"
-            },
-            {
-              "const": "deferred_execution",
-              "type": "string"
-            },
-            {
-              "const": "not_applicable",
-              "type": "string"
-            }
-          ]
+          "const": "direct_execution",
+          "type": "string"
+        },
+        "execution_transition_ref": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        },
+        "deferred_transition_ref": {
+          "type": "null"
         },
         "terminal_outcome": {
-          "$id": "urn:pai:trigger-processor:terminal-outcome:v1",
           "anyOf": [
             {
               "const": "executed",
-              "type": "string"
-            },
-            {
-              "const": "merged_and_executed",
-              "type": "string"
-            },
-            {
-              "const": "superseded_by_later_trigger",
-              "type": "string"
-            },
-            {
-              "const": "deferred_then_executed",
-              "type": "string"
-            },
-            {
-              "const": "expired_with_audit_record",
               "type": "string"
             },
             {
@@ -1745,15 +1739,153 @@
               "type": "string"
             },
             {
-              "const": "failed_with_reason",
+              "const": "interrupted_with_reason",
               "type": "string"
             },
             {
-              "const": "preempted_and_handed_off",
+              "const": "failed_with_reason",
+              "type": "string"
+            }
+          ]
+        },
+        "terminal_outcome_finalized_at": {
+          "minLength": 1,
+          "format": "date-time",
+          "type": "string"
+        },
+        "canonical_reason_code": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        },
+        "transition_audit_ref": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        },
+        "outbox_event_ref": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "execution_provenance",
+        "execution_transition_ref",
+        "deferred_transition_ref",
+        "terminal_outcome",
+        "terminal_outcome_finalized_at",
+        "canonical_reason_code",
+        "transition_audit_ref",
+        "outbox_event_ref"
+      ],
+      "properties": {
+        "kind": {
+          "const": "meta_finalization",
+          "type": "string"
+        },
+        "execution_provenance": {
+          "const": "deferred_execution",
+          "type": "string"
+        },
+        "execution_transition_ref": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        },
+        "deferred_transition_ref": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        },
+        "terminal_outcome": {
+          "anyOf": [
+            {
+              "const": "deferred_then_executed",
+              "type": "string"
+            },
+            {
+              "const": "cancelled_with_reason",
               "type": "string"
             },
             {
               "const": "interrupted_with_reason",
+              "type": "string"
+            },
+            {
+              "const": "failed_with_reason",
+              "type": "string"
+            }
+          ]
+        },
+        "terminal_outcome_finalized_at": {
+          "minLength": 1,
+          "format": "date-time",
+          "type": "string"
+        },
+        "canonical_reason_code": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        },
+        "transition_audit_ref": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        },
+        "outbox_event_ref": {
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "execution_provenance",
+        "execution_transition_ref",
+        "deferred_transition_ref",
+        "terminal_outcome",
+        "terminal_outcome_finalized_at",
+        "canonical_reason_code",
+        "transition_audit_ref",
+        "outbox_event_ref"
+      ],
+      "properties": {
+        "kind": {
+          "const": "meta_finalization",
+          "type": "string"
+        },
+        "execution_provenance": {
+          "const": "not_applicable",
+          "type": "string"
+        },
+        "execution_transition_ref": {
+          "type": "null"
+        },
+        "deferred_transition_ref": {
+          "type": "null"
+        },
+        "terminal_outcome": {
+          "anyOf": [
+            {
+              "const": "cancelled_with_reason",
+              "type": "string"
+            },
+            {
+              "const": "interrupted_with_reason",
+              "type": "string"
+            },
+            {
+              "const": "failed_with_reason",
               "type": "string"
             }
           ]

@@ -1,0 +1,116 @@
+{
+  "$id": "urn:pai:meta:snapshot-repair-response:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "job_id",
+        "repair_id",
+        "input_revision",
+        "snapshot_version",
+        "duplicate_replayed",
+        "status",
+        "next_retry_at",
+        "accepted_at"
+      ],
+      "properties": {
+        "job_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "repair_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "input_revision": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "snapshot_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "duplicate_replayed": {
+          "type": "boolean"
+        },
+        "status": {
+          "const": "accepted",
+          "type": "string"
+        },
+        "next_retry_at": {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        "accepted_at": {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "job_id",
+        "repair_id",
+        "input_revision",
+        "snapshot_version",
+        "duplicate_replayed",
+        "status",
+        "next_retry_at",
+        "accepted_at",
+        "reason_code"
+      ],
+      "properties": {
+        "job_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "repair_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "input_revision": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "snapshot_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "duplicate_replayed": {
+          "type": "boolean"
+        },
+        "status": {
+          "const": "rejected",
+          "type": "string"
+        },
+        "next_retry_at": {
+          "type": "null"
+        },
+        "accepted_at": {
+          "type": "null"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

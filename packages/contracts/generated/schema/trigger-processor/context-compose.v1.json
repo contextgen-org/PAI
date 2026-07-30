@@ -1,0 +1,594 @@
+{
+  "$id": "urn:pai:trigger-processor:context-compose:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "trigger_process_id",
+        "workspace_id",
+        "bot_id",
+        "owner_agent_id",
+        "deployment_environment",
+        "release_channel",
+        "trigger",
+        "context_version",
+        "source_policy",
+        "idempotency_key",
+        "trace_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "context_compose_request.v1",
+          "type": "string"
+        },
+        "trigger_process_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "workspace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "owner_agent_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "deployment_environment": {
+          "$id": "urn:pai:shared:deployment-environment:v1",
+          "anyOf": [
+            {
+              "const": "local",
+              "type": "string"
+            },
+            {
+              "const": "dev",
+              "type": "string"
+            },
+            {
+              "const": "staging",
+              "type": "string"
+            },
+            {
+              "const": "prod",
+              "type": "string"
+            }
+          ]
+        },
+        "release_channel": {
+          "$id": "urn:pai:shared:release-channel:v1",
+          "anyOf": [
+            {
+              "const": "stable",
+              "type": "string"
+            },
+            {
+              "const": "canary",
+              "type": "string"
+            }
+          ]
+        },
+        "trigger": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "trigger_id",
+            "source",
+            "actor_type"
+          ],
+          "properties": {
+            "trigger_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "source": {
+              "anyOf": [
+                {
+                  "const": "chat",
+                  "type": "string"
+                },
+                {
+                  "const": "notification",
+                  "type": "string"
+                },
+                {
+                  "const": "timer",
+                  "type": "string"
+                }
+              ]
+            },
+            "actor_type": {
+              "anyOf": [
+                {
+                  "const": "super_user",
+                  "type": "string"
+                },
+                {
+                  "const": "user",
+                  "type": "string"
+                },
+                {
+                  "const": "agent",
+                  "type": "string"
+                },
+                {
+                  "const": "developer",
+                  "type": "string"
+                },
+                {
+                  "const": "system",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        "context_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "source_policy": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "required_sources",
+            "allowed_sources",
+            "skip_decisions"
+          ],
+          "properties": {
+            "required_sources": {
+              "maxItems": 5,
+              "uniqueItems": true,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "const": "knowthat",
+                    "type": "string"
+                  },
+                  {
+                    "const": "memory",
+                    "type": "string"
+                  },
+                  {
+                    "const": "skill",
+                    "type": "string"
+                  },
+                  {
+                    "const": "environment",
+                    "type": "string"
+                  },
+                  {
+                    "const": "history",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "allowed_sources": {
+              "minItems": 1,
+              "maxItems": 5,
+              "uniqueItems": true,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "const": "knowthat",
+                    "type": "string"
+                  },
+                  {
+                    "const": "memory",
+                    "type": "string"
+                  },
+                  {
+                    "const": "skill",
+                    "type": "string"
+                  },
+                  {
+                    "const": "environment",
+                    "type": "string"
+                  },
+                  {
+                    "const": "history",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "skip_decisions": {
+              "maxItems": 5,
+              "type": "array",
+              "items": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "source",
+                  "policy_id",
+                  "reason_code",
+                  "source_owner"
+                ],
+                "properties": {
+                  "source": {
+                    "anyOf": [
+                      {
+                        "const": "knowthat",
+                        "type": "string"
+                      },
+                      {
+                        "const": "memory",
+                        "type": "string"
+                      },
+                      {
+                        "const": "skill",
+                        "type": "string"
+                      },
+                      {
+                        "const": "environment",
+                        "type": "string"
+                      },
+                      {
+                        "const": "history",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "policy_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "reason_code": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                    "type": "string"
+                  },
+                  "source_owner": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "trace_id",
+        "details"
+      ],
+      "properties": {
+        "code": {
+          "const": "context_composed",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "retryable": {
+          "const": false,
+          "type": "boolean"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "details": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "context_snapshot_ref",
+            "context_snapshot_version",
+            "context_snapshot_hash",
+            "source_status",
+            "assembly_notes"
+          ],
+          "properties": {
+            "context_snapshot_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "context_snapshot_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "context_snapshot_hash": {
+              "minLength": 71,
+              "maxLength": 71,
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "source_status": {
+              "minItems": 5,
+              "maxItems": 5,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "source",
+                      "retrieved_at",
+                      "source_as_of",
+                      "source_version",
+                      "latency_ms",
+                      "result_count",
+                      "failure_reason",
+                      "status"
+                    ],
+                    "properties": {
+                      "source": {
+                        "anyOf": [
+                          {
+                            "const": "knowthat",
+                            "type": "string"
+                          },
+                          {
+                            "const": "memory",
+                            "type": "string"
+                          },
+                          {
+                            "const": "skill",
+                            "type": "string"
+                          },
+                          {
+                            "const": "environment",
+                            "type": "string"
+                          },
+                          {
+                            "const": "history",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "retrieved_at": {
+                        "minLength": 20,
+                        "maxLength": 35,
+                        "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                        "type": "string"
+                      },
+                      "source_as_of": {
+                        "anyOf": [
+                          {
+                            "minLength": 20,
+                            "maxLength": 35,
+                            "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "source_version": {
+                        "anyOf": [
+                          {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "latency_ms": {
+                        "minimum": 0,
+                        "maximum": 300000,
+                        "type": "integer"
+                      },
+                      "result_count": {
+                        "minimum": 0,
+                        "maximum": 1000000,
+                        "type": "integer"
+                      },
+                      "failure_reason": {
+                        "anyOf": [
+                          {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "status": {
+                        "anyOf": [
+                          {
+                            "const": "ok",
+                            "type": "string"
+                          },
+                          {
+                            "const": "empty",
+                            "type": "string"
+                          },
+                          {
+                            "const": "timeout",
+                            "type": "string"
+                          },
+                          {
+                            "const": "failed",
+                            "type": "string"
+                          },
+                          {
+                            "const": "degraded",
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "source",
+                      "retrieved_at",
+                      "source_as_of",
+                      "source_version",
+                      "latency_ms",
+                      "result_count",
+                      "failure_reason",
+                      "status",
+                      "policy_id",
+                      "reason_code",
+                      "source_owner"
+                    ],
+                    "properties": {
+                      "source": {
+                        "anyOf": [
+                          {
+                            "const": "knowthat",
+                            "type": "string"
+                          },
+                          {
+                            "const": "memory",
+                            "type": "string"
+                          },
+                          {
+                            "const": "skill",
+                            "type": "string"
+                          },
+                          {
+                            "const": "environment",
+                            "type": "string"
+                          },
+                          {
+                            "const": "history",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "retrieved_at": {
+                        "minLength": 20,
+                        "maxLength": 35,
+                        "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                        "type": "string"
+                      },
+                      "source_as_of": {
+                        "anyOf": [
+                          {
+                            "minLength": 20,
+                            "maxLength": 35,
+                            "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "source_version": {
+                        "anyOf": [
+                          {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "latency_ms": {
+                        "minimum": 0,
+                        "maximum": 300000,
+                        "type": "integer"
+                      },
+                      "result_count": {
+                        "minimum": 0,
+                        "maximum": 1000000,
+                        "type": "integer"
+                      },
+                      "failure_reason": {
+                        "anyOf": [
+                          {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "status": {
+                        "const": "skipped_by_policy",
+                        "type": "string"
+                      },
+                      "policy_id": {
+                        "minLength": 1,
+                        "maxLength": 512,
+                        "type": "string"
+                      },
+                      "reason_code": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                        "type": "string"
+                      },
+                      "source_owner": {
+                        "minLength": 1,
+                        "maxLength": 512,
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "assembly_notes": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

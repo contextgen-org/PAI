@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   InternalClientError,
   requestInternalJson,
+  requestWorkloadJson,
 } from "../src/index.js";
 
 const WORKLOAD_CREDENTIAL = "header.payload.signature";
@@ -149,6 +150,88 @@ describe("internal JSON client", () => {
       }),
     ).rejects.toThrow("own string data properties");
     expect(headerGetterCalls).toBe(0);
+
+    let optionProxyTrapCalls = 0;
+    const proxyRequest = new Proxy(
+      {
+        url: "https://service.test/internal/work",
+        workloadCredential: WORKLOAD_CREDENTIAL,
+        timeoutMs: 100,
+      },
+      {
+        getOwnPropertyDescriptor() {
+          optionProxyTrapCalls += 1;
+          throw new Error("proxy trap must not run");
+        },
+        getPrototypeOf() {
+          optionProxyTrapCalls += 1;
+          throw new Error("proxy trap must not run");
+        },
+        ownKeys() {
+          optionProxyTrapCalls += 1;
+          throw new Error("proxy trap must not run");
+        },
+      },
+    );
+    await expect(requestInternalJson(proxyRequest as never)).rejects.toThrow(
+      "own data properties",
+    );
+    expect(optionProxyTrapCalls).toBe(0);
+  });
+
+  it("preflights outbound JSON before recursive serialization or network I/O", async () => {
+    const fetchImpl = vi.fn();
+    let getterCalls = 0;
+    const accessorBody: Record<string, unknown> = {};
+    Object.defineProperty(accessorBody, "secret", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return "must-not-run";
+      },
+    });
+
+    await expect(
+      requestInternalJson({
+        url: "https://service.test/internal/work",
+        workloadCredential: WORKLOAD_CREDENTIAL,
+        method: "POST",
+        json: accessorBody,
+        timeoutMs: 100,
+        traceId: TRACE_ID,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
+    ).rejects.toThrow();
+    expect(getterCalls).toBe(0);
+
+    let proxyTrapCalls = 0;
+    const proxyBody = new Proxy(
+      { action: "must-not-read" },
+      {
+        getOwnPropertyDescriptor() {
+          proxyTrapCalls += 1;
+          throw new Error("proxy trap must not run");
+        },
+        ownKeys() {
+          proxyTrapCalls += 1;
+          throw new Error("proxy trap must not run");
+        },
+      },
+    );
+    await expect(
+      requestInternalJson({
+        url: "https://service.test/internal/work",
+        workloadCredential: WORKLOAD_CREDENTIAL,
+        method: "POST",
+        json: proxyBody,
+        timeoutMs: 100,
+        traceId: TRACE_ID,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
+    ).rejects.toThrow();
+    expect(proxyTrapCalls).toBe(0);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("does not retry non-idempotent requests by default", async () => {
@@ -295,6 +378,33 @@ describe("internal JSON client", () => {
     ).rejects.toThrow("only be sent to /internal/**");
   });
 
+  it("sends workload credentials to versioned mixed-ingress API routes only", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ accepted: true }, 200));
+    await requestWorkloadJson({
+      url: "https://service.test/v1/work",
+      workloadCredential: WORKLOAD_CREDENTIAL,
+      timeoutMs: 100,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    expect(fetchImpl.mock.calls[0]?.[1]?.headers).toMatchObject({
+      authorization: `Bearer ${WORKLOAD_CREDENTIAL}`,
+    });
+
+    await expect(
+      requestWorkloadJson({
+        url: "https://service.test/internal/work",
+        workloadCredential: WORKLOAD_CREDENTIAL,
+        timeoutMs: 100,
+      }),
+    ).rejects.toThrow("only be sent to /v1/**");
+    await expect(
+      requestWorkloadJson({
+        url: "https://service.test/v1/work",
+        timeoutMs: 100,
+      }),
+    ).rejects.toThrow("workloadCredential is required");
+  });
+
   it("refuses redirects without forwarding the workload credential", async () => {
     const fetchImpl = vi.fn().mockImplementation(
       async (_url: string | URL | Request, init?: RequestInit) => {
@@ -386,6 +496,33 @@ describe("internal JSON client", () => {
     expect(confusedTrace).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects an over-deep upstream JSON graph before response schema traversal", async () => {
+    let deep: Record<string, unknown> = { accepted: true };
+    for (let depth = 0; depth < 129; depth += 1) {
+      deep = { next: deep };
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(deep), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await expect(
+      requestInternalJson({
+        url: "https://service.test/internal/work",
+        workloadCredential: WORKLOAD_CREDENTIAL,
+        timeoutMs: 100,
+        traceId: TRACE_ID,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
+    ).rejects.toMatchObject({
+      code: "invalid_upstream_response",
+      retryable: false,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects URL userinfo and generic credential-bearing headers", async () => {
     await expect(
       requestInternalJson({
@@ -441,5 +578,69 @@ describe("internal JSON client", () => {
         timeoutMs: 100,
       }),
     ).rejects.toThrow("HTTPS except for loopback");
+  });
+
+  it("permits only the fixed local Docker origins after explicit local opt-in", async () => {
+    vi.stubEnv("PAI_DEPLOYMENT_ENVIRONMENT", "local");
+    vi.stubEnv("PAI_LOCAL_DOCKER_TRANSPORT", "true");
+    try {
+      const fetchImpl = vi.fn<typeof fetch>(async () =>
+        jsonResponse({ accepted: true }, 200),
+      );
+      await expect(
+        requestInternalJson({
+          url: "http://trigger-processor:3001/internal/work",
+          workloadCredential: WORKLOAD_CREDENTIAL,
+          timeoutMs: 100,
+          fetchImpl,
+        }),
+      ).resolves.toMatchObject({ body: { accepted: true }, status: 200 });
+      await expect(
+        requestInternalJson({
+          url: "http://jwks:8080/internal/work",
+          workloadCredential: WORKLOAD_CREDENTIAL,
+          timeoutMs: 100,
+          fetchImpl,
+        }),
+      ).resolves.toMatchObject({ body: { accepted: true }, status: 200 });
+      await expect(
+        requestInternalJson({
+          url: "http://outside.example/internal/work",
+          workloadCredential: WORKLOAD_CREDENTIAL,
+          timeoutMs: 100,
+        }),
+      ).rejects.toThrow("HTTPS except for loopback");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("propagates caller abort and does not retry an interrupted request", async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(init.signal?.reason),
+          { once: true },
+        );
+      });
+    });
+    const request = requestInternalJson({
+      url: "https://service.test/internal/work",
+      workloadCredential: WORKLOAD_CREDENTIAL,
+      timeoutMs: 10_000,
+      idempotent: true,
+      maxRetries: 2,
+      traceId: TRACE_ID,
+      signal: controller.signal,
+      fetchImpl,
+    });
+    controller.abort(new Error("caller stopped"));
+    await expect(request).rejects.toMatchObject({
+      code: "upstream_aborted",
+      retryable: false,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 });

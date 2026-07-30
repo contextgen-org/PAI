@@ -1,0 +1,14 @@
+[
+  {
+    "kind": "conflict",
+    "ref": "conflict:fixture-1"
+  },
+  {
+    "kind": "candidate",
+    "ref": "candidate:fixture-1"
+  },
+  {
+    "kind": "schedule",
+    "ref": "schedule:fixture-1"
+  }
+]

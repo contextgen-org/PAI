@@ -9,6 +9,7 @@ import type { ServiceIdV1 } from "@pai/contracts";
 
 import {
   loadServiceRuntimeConfig,
+  requiresProductionDependenciesV1,
   type ServiceRuntimeConfigV1,
 } from "./config.js";
 import {
@@ -152,8 +153,10 @@ export async function startService(options: StartServiceOptions): Promise<void> 
   const verifier =
     options.workloadVerifier ?? createWorkloadVerifierFromEnv(env);
   const workloadVerifierRequired =
-    options.requireWorkloadVerifier ??
-    (options.internalRouteAuthPolicies?.length ?? 0) > 0;
+    requiresProductionDependenciesV1(env) ||
+    options.requireWorkloadVerifier === true ||
+    (options.requireWorkloadVerifier !== false &&
+      (options.internalRouteAuthPolicies?.length ?? 0) > 0);
   if (workloadVerifierRequired && verifier === undefined) {
     throw new Error(
       "PAI_WORKLOAD_JWKS_URL or an explicit workload verifier is required when internal routes are configured",

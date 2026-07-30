@@ -3,8 +3,9 @@ import {
   errors,
   type JSONWebKeySet,
 } from "jose";
+import { canonicalJsonV1 } from "@pai/contracts";
+import { isProxy } from "node:util/types";
 
-import { snapshotVerifiedJwtJsonV1 } from "./jwt-policy.js";
 
 export interface JwksProvider {
   load(): Promise<JSONWebKeySet>;
@@ -22,6 +23,12 @@ const MAX_JWKS_CACHE_AGE_MS = 3_600_000;
 const MAX_UNKNOWN_KID_REFRESH_COOLDOWN_MS = 60_000;
 const MAX_JWKS_TIMEOUT_MS = 30_000;
 const MAX_JWKS_KEYS = 128;
+const JWKS_CANONICAL_BOUNDS_V1 = Object.freeze({
+  max_bytes: 1_048_576,
+  max_depth: 32,
+  max_nodes: 10_000,
+  max_container_entries: 1_000,
+} as const);
 const JWKS_REFRESH_FAILURE_BASE_DELAY_MS = 250;
 const MAX_JWKS_REFRESH_FAILURE_BACKOFF_MS = 30_000;
 
@@ -34,6 +41,7 @@ function snapshotOptionsV1(
     typeof value !== "object" ||
     value === null ||
     Array.isArray(value) ||
+    isProxy(value) ||
     (Object.getPrototypeOf(value) !== Object.prototype &&
       Object.getPrototypeOf(value) !== null)
   ) {
@@ -60,6 +68,60 @@ function snapshotOptionsV1(
     });
   }
   return Object.freeze(snapshot);
+}
+
+function captureJwksLoadV1(provider: unknown): JwksProvider["load"] {
+  if (
+    typeof provider !== "object" ||
+    provider === null ||
+    isProxy(provider)
+  ) {
+    throw new Error("JWKS cache options are invalid");
+  }
+  let prototype: object | null = provider;
+  for (let depth = 0; prototype !== null && depth < 8; depth += 1) {
+    if (isProxy(prototype)) {
+      throw new Error("JWKS cache options are invalid");
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, "load");
+    if (descriptor !== undefined) {
+      if (
+        !("value" in descriptor) ||
+        typeof descriptor.value !== "function" ||
+        isProxy(descriptor.value)
+      ) {
+        throw new Error("JWKS cache options are invalid");
+      }
+      return Function.prototype.bind.call(
+        descriptor.value,
+        provider,
+      ) as JwksProvider["load"];
+    }
+    prototype = Object.getPrototypeOf(prototype);
+  }
+  throw new Error("JWKS cache options are invalid");
+}
+
+function snapshotCanonicalJwksV1(value: unknown): JSONWebKeySet {
+  const parsed = JSON.parse(
+    canonicalJsonV1(value, JWKS_CANONICAL_BOUNDS_V1),
+  ) as unknown;
+  const freeze = (entry: unknown): unknown => {
+    if (typeof entry !== "object" || entry === null) return entry;
+    if (Array.isArray(entry)) {
+      for (let index = 0; index < entry.length; index += 1) {
+        entry[index] = freeze(entry[index]);
+      }
+      return Object.freeze(entry);
+    }
+    for (const key of Object.keys(entry)) {
+      (entry as Record<string, unknown>)[key] = freeze(
+        (entry as Record<string, unknown>)[key],
+      );
+    }
+    return Object.freeze(entry);
+  };
+  return freeze(parsed) as JSONWebKeySet;
 }
 
 function assertJwks(value: unknown): asserts value is JSONWebKeySet {
@@ -100,10 +162,10 @@ export class JwksCache {
       "JWKS cache options",
     );
     const provider = stableOptions.provider as JwksProvider | undefined;
-    const load = provider?.load;
+    const load = captureJwksLoadV1(provider);
     if (
-      typeof load !== "function" ||
-      (stableOptions.now !== undefined && typeof stableOptions.now !== "function")
+      stableOptions.now !== undefined &&
+      (typeof stableOptions.now !== "function" || isProxy(stableOptions.now))
     ) {
       throw new Error("JWKS cache options are invalid");
     }
@@ -117,7 +179,7 @@ export class JwksCache {
       throw new Error("JWKS maxAgeMs must be an integer from 1 to 3600000");
     }
     const maxAgeMs = maxAgeMsValue;
-    this.#load = load.bind(provider);
+    this.#load = load;
     this.#maxAgeMs = maxAgeMs;
     const unknownKidRefreshCooldownMsValue =
       stableOptions.unknownKidRefreshCooldownMs ?? 5_000;
@@ -155,9 +217,7 @@ export class JwksCache {
     const refresh = Promise.resolve()
       .then(() => this.#load())
       .then((jwks) => {
-        const stableJwks = snapshotVerifiedJwtJsonV1(
-          jwks as unknown as Readonly<Record<string, unknown>>,
-        ) as unknown as JSONWebKeySet;
+        const stableJwks = snapshotCanonicalJwksV1(jwks);
         assertJwks(stableJwks);
         const local = createLocalJWKSet(stableJwks);
         const loadedAt = this.#time();
@@ -265,11 +325,23 @@ async function readBoundedJwksResponse(response: Response): Promise<unknown> {
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
+  let parsed: unknown;
   try {
-    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+    parsed = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+    ) as unknown;
   } catch (error) {
     throw new Error("JWKS response is not valid UTF-8 JSON", { cause: error });
   }
+  try {
+    canonicalJsonV1(parsed, JWKS_CANONICAL_BOUNDS_V1);
+  } catch (error) {
+    throw new Error(
+      "JWKS response is outside the bounded canonical JSON contract",
+      { cause: error },
+    );
+  }
+  return parsed;
 }
 
 export class RemoteJwksProvider implements JwksProvider {
@@ -284,10 +356,14 @@ export class RemoteJwksProvider implements JwksProvider {
       "remote JWKS provider options",
     );
     if (
+      (typeof stableOptions.url === "object" &&
+        stableOptions.url !== null &&
+        isProxy(stableOptions.url)) ||
       (typeof stableOptions.url !== "string" &&
         !(stableOptions.url instanceof URL)) ||
       (stableOptions.fetchImpl !== undefined &&
-        typeof stableOptions.fetchImpl !== "function")
+        (typeof stableOptions.fetchImpl !== "function" ||
+          isProxy(stableOptions.fetchImpl)))
     ) {
       throw new Error("remote JWKS provider options are invalid");
     }
@@ -295,9 +371,16 @@ export class RemoteJwksProvider implements JwksProvider {
     const isLoopback = ["localhost", "127.0.0.1", "[::1]"].includes(
       this.#url.hostname,
     );
+    const isTrustedLocalDockerJwks =
+      process.env.PAI_DEPLOYMENT_ENVIRONMENT === "local" &&
+      process.env.PAI_LOCAL_DOCKER_TRANSPORT === "true" &&
+      this.#url.protocol === "http:" &&
+      this.#url.hostname === "jwks" &&
+      this.#url.port === "8080";
     if (
       (this.#url.protocol !== "https:" &&
-        !(this.#url.protocol === "http:" && isLoopback)) ||
+        !(this.#url.protocol === "http:" &&
+          (isLoopback || isTrustedLocalDockerJwks))) ||
       this.#url.username.length > 0 ||
       this.#url.password.length > 0 ||
       this.#url.search.length > 0 ||
@@ -305,7 +388,7 @@ export class RemoteJwksProvider implements JwksProvider {
       this.#url.href.length > 2_048
     ) {
       throw new Error(
-        "JWKS URL must use HTTPS except for loopback and cannot contain credentials, a query, or a fragment",
+        "JWKS URL must use HTTPS except for loopback or the explicitly configured local Docker JWKS service and cannot contain credentials, a query, or a fragment",
       );
     }
     this.#timeoutMs = (stableOptions.timeoutMs as number | undefined) ?? 3_000;
@@ -331,9 +414,7 @@ export class RemoteJwksProvider implements JwksProvider {
       });
       if (!response.ok) throw new Error("JWKS endpoint returned a non-success status");
       const value = await readBoundedJwksResponse(response);
-      const stableJwks = snapshotVerifiedJwtJsonV1(
-        value as Readonly<Record<string, unknown>>,
-      ) as unknown as JSONWebKeySet;
+      const stableJwks = snapshotCanonicalJwksV1(value);
       assertJwks(stableJwks);
       return stableJwks;
     } finally {

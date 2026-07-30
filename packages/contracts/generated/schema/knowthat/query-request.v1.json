@@ -1,0 +1,211 @@
+{
+  "$id": "urn:pai:knowthat:query-request:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "workspace_id",
+        "bot_id",
+        "owner_agent_id",
+        "deployment_environment",
+        "release_channel"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "knowthat_query.v1",
+          "type": "string"
+        },
+        "workspace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+          "type": "string"
+        },
+        "owner_agent_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+          "type": "string"
+        },
+        "deployment_environment": {
+          "$id": "urn:pai:shared:deployment-environment:v1",
+          "anyOf": [
+            {
+              "const": "local",
+              "type": "string"
+            },
+            {
+              "const": "dev",
+              "type": "string"
+            },
+            {
+              "const": "staging",
+              "type": "string"
+            },
+            {
+              "const": "prod",
+              "type": "string"
+            }
+          ]
+        },
+        "release_channel": {
+          "$id": "urn:pai:shared:release-channel:v1",
+          "anyOf": [
+            {
+              "const": "stable",
+              "type": "string"
+            },
+            {
+              "const": "canary",
+              "type": "string"
+            }
+          ]
+        },
+        "categories": {
+          "maxItems": 7,
+          "uniqueItems": true,
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "const": "user_profile",
+                "type": "string"
+              },
+              {
+                "const": "relationship_state",
+                "type": "string"
+              },
+              {
+                "const": "world_state",
+                "type": "string"
+              },
+              {
+                "const": "self_state",
+                "type": "string"
+              },
+              {
+                "const": "project_fact",
+                "type": "string"
+              },
+              {
+                "const": "preference",
+                "type": "string"
+              },
+              {
+                "const": "rule",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "query": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "limit": {
+          "minimum": 1,
+          "maximum": 200,
+          "default": 50,
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "workspace_id",
+        "bot_id",
+        "owner_agent_id",
+        "deployment_environment",
+        "release_channel",
+        "snapshot_token",
+        "cursor"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "knowthat_query.v1",
+          "type": "string"
+        },
+        "workspace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+          "type": "string"
+        },
+        "owner_agent_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+          "type": "string"
+        },
+        "deployment_environment": {
+          "$id": "urn:pai:shared:deployment-environment:v1",
+          "anyOf": [
+            {
+              "const": "local",
+              "type": "string"
+            },
+            {
+              "const": "dev",
+              "type": "string"
+            },
+            {
+              "const": "staging",
+              "type": "string"
+            },
+            {
+              "const": "prod",
+              "type": "string"
+            }
+          ]
+        },
+        "release_channel": {
+          "$id": "urn:pai:shared:release-channel:v1",
+          "anyOf": [
+            {
+              "const": "stable",
+              "type": "string"
+            },
+            {
+              "const": "canary",
+              "type": "string"
+            }
+          ]
+        },
+        "snapshot_token": {
+          "minLength": 16,
+          "maxLength": 8192,
+          "type": "string"
+        },
+        "cursor": {
+          "minLength": 16,
+          "maxLength": 8192,
+          "type": "string"
+        },
+        "limit": {
+          "minimum": 1,
+          "maximum": 200,
+          "default": 50,
+          "type": "integer"
+        }
+      }
+    }
+  ]
+}

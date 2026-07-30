@@ -4,25 +4,17 @@ import {
   type TLiteral,
   type TProperties,
 } from "@sinclair/typebox";
+import {
+  TERMINAL_OUTCOMES_V1,
+  TerminalOutcomeV1Schema,
+  type TerminalOutcomeV1,
+} from "./terminal-outcome.v1.js";
 
-export const TERMINAL_OUTCOMES_V1 = [
-  "executed",
-  "merged_and_executed",
-  "superseded_by_later_trigger",
-  "deferred_then_executed",
-  "expired_with_audit_record",
-  "cancelled_with_reason",
-  "failed_with_reason",
-  "preempted_and_handed_off",
-  "interrupted_with_reason",
-] as const;
-
-export const TerminalOutcomeV1Schema = Type.Union(
-  TERMINAL_OUTCOMES_V1.map((outcome) => Type.Literal(outcome)),
-  { $id: "urn:pai:trigger-processor:terminal-outcome:v1" },
-);
-
-export type TerminalOutcomeV1 = Static<typeof TerminalOutcomeV1Schema>;
+export {
+  TERMINAL_OUTCOMES_V1,
+  TerminalOutcomeV1Schema,
+  type TerminalOutcomeV1,
+} from "./terminal-outcome.v1.js";
 
 export const META_ENQUEUE_REASONS_V1 = [
   "cooldown_expired",
@@ -193,6 +185,12 @@ const safeGenerationSchema = Type.Integer({
 });
 const sha256Pattern = /^sha256:[0-9a-f]{64}$/u;
 const sha256Schema = Type.String({ pattern: sha256Pattern.source });
+const reasonCodePattern = /^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$/u;
+const reasonCodeSchema = Type.String({
+  minLength: 1,
+  maxLength: 128,
+  pattern: reasonCodePattern.source,
+});
 
 const coupledTransitionProperties = {
   expected_process_updated_at: timestampSchema,
@@ -263,6 +261,11 @@ export const TriggerProcessTransitionEvidenceV1Schema = Type.Union(
       kind: Type.Literal("stage_retry_scheduled"),
       retry_record_ref: evidenceRefSchema,
       next_retry_at: timestampSchema,
+      attempt_count: Type.Integer({
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+      }),
+      last_error: reasonCodeSchema,
       ...coupledTransitionProperties,
     }),
     strictEvidenceObject({
@@ -432,12 +435,44 @@ export const TriggerProcessTransitionEvidenceV1Schema = Type.Union(
     }),
     strictEvidenceObject({
       kind: Type.Literal("meta_finalization"),
-      execution_provenance: Type.Union([
-        Type.Literal("direct_execution"),
-        Type.Literal("deferred_execution"),
-        Type.Literal("not_applicable"),
+      execution_provenance: Type.Literal("direct_execution"),
+      execution_transition_ref: evidenceRefSchema,
+      deferred_transition_ref: Type.Null(),
+      terminal_outcome: Type.Union([
+        Type.Literal("executed"),
+        Type.Literal("cancelled_with_reason"),
+        Type.Literal("interrupted_with_reason"),
+        Type.Literal("failed_with_reason"),
       ]),
-      ...terminalTransactionProperties,
+      ...Type.Omit(Type.Object(terminalTransactionProperties), ["terminal_outcome"])
+        .properties,
+    }),
+    strictEvidenceObject({
+      kind: Type.Literal("meta_finalization"),
+      execution_provenance: Type.Literal("deferred_execution"),
+      execution_transition_ref: evidenceRefSchema,
+      deferred_transition_ref: evidenceRefSchema,
+      terminal_outcome: Type.Union([
+        Type.Literal("deferred_then_executed"),
+        Type.Literal("cancelled_with_reason"),
+        Type.Literal("interrupted_with_reason"),
+        Type.Literal("failed_with_reason"),
+      ]),
+      ...Type.Omit(Type.Object(terminalTransactionProperties), ["terminal_outcome"])
+        .properties,
+    }),
+    strictEvidenceObject({
+      kind: Type.Literal("meta_finalization"),
+      execution_provenance: Type.Literal("not_applicable"),
+      execution_transition_ref: Type.Null(),
+      deferred_transition_ref: Type.Null(),
+      terminal_outcome: Type.Union([
+        Type.Literal("cancelled_with_reason"),
+        Type.Literal("interrupted_with_reason"),
+        Type.Literal("failed_with_reason"),
+      ]),
+      ...Type.Omit(Type.Object(terminalTransactionProperties), ["terminal_outcome"])
+        .properties,
     }),
   ],
   { $id: "urn:pai:trigger-processor:trigger-process-transition-evidence:v1" },
@@ -509,7 +544,10 @@ function hasCoupledTransitionFacts(
     case "stage_retry_scheduled":
       return (
         isNonEmptyRef(evidence.retry_record_ref) &&
-        isTimestamp(evidence.next_retry_at)
+        isTimestamp(evidence.next_retry_at) &&
+        Number.isSafeInteger(evidence.attempt_count) &&
+        evidence.attempt_count >= 1 &&
+        reasonCodePattern.test(evidence.last_error)
       );
     case "stage_retry_claimed":
       return (
@@ -823,23 +861,31 @@ export function isTriggerProcessTransitionV1Allowed(
     }
 
     if (evidence?.kind === "meta_finalization") {
+      const provenanceRefsMatch =
+        (evidence.execution_provenance === "direct_execution" &&
+          isNonEmptyRef(evidence.execution_transition_ref) &&
+          evidence.deferred_transition_ref === null) ||
+        (evidence.execution_provenance === "deferred_execution" &&
+          isNonEmptyRef(evidence.execution_transition_ref) &&
+          isNonEmptyRef(evidence.deferred_transition_ref) &&
+          evidence.execution_transition_ref !== evidence.deferred_transition_ref) ||
+        (evidence.execution_provenance === "not_applicable" &&
+          evidence.execution_transition_ref === null &&
+          evidence.deferred_transition_ref === null);
       const reasonOutcomeMatches =
         (from.phase === "meta_enqueued" &&
           from.meta_enqueue_reason === "user_retracted" &&
           to.status === "cancelled" &&
-          evidence.terminal_outcome === "cancelled_with_reason" &&
-          evidence.execution_provenance === "not_applicable") ||
+          evidence.terminal_outcome === "cancelled_with_reason") ||
         (from.phase === "meta_enqueued" &&
           from.meta_enqueue_reason === "system_interrupted" &&
           to.status === "cancelled" &&
-          evidence.terminal_outcome === "interrupted_with_reason" &&
-          evidence.execution_provenance === "not_applicable") ||
+          evidence.terminal_outcome === "interrupted_with_reason") ||
         (from.phase === "meta_enqueued" &&
           from.meta_enqueue_reason ===
             "failed_with_learnable_snapshot" &&
           to.status === "failed" &&
-          evidence.terminal_outcome === "failed_with_reason" &&
-          evidence.execution_provenance === "not_applicable") ||
+          evidence.terminal_outcome === "failed_with_reason") ||
         (from.phase === "meta_enqueued" &&
           from.meta_enqueue_reason === "cooldown_expired" &&
           ((to.status === "completed" &&
@@ -852,6 +898,7 @@ export function isTriggerProcessTransitionV1Allowed(
               evidence.execution_provenance !== "not_applicable")));
       return (
         from.phase === "meta_enqueued" &&
+        provenanceRefsMatch &&
         reasonOutcomeMatches &&
         hasTerminalTransactionEvidence(to, evidence)
       );

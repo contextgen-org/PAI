@@ -9,9 +9,6 @@ import type {
 } from "./object-store-port.v1.js";
 
 const expiredUploadTerminationMs = 10 * 60_000;
-const transactionalPostgresObjectMetadataRepositoryBrand = Symbol(
-  "transactionalPostgresObjectMetadataRepositoryV1",
-);
 
 function foregroundUploadTerminalAt(foregroundLeaseUntil: Date): Date {
   return new Date(foregroundLeaseUntil.getTime() + expiredUploadTerminationMs);
@@ -26,6 +23,8 @@ export type ObjectMetadataStateV1 =
 export interface ObjectMetadataRecordV1 {
   readonly object_ref: ObjectRefV1;
   readonly owner_service: ServiceIdV1;
+  readonly owner_object_id: string;
+  readonly owner_state_version: number;
   readonly object_class: string;
   readonly scope: ObjectScopeV1;
   readonly scope_fingerprint: string;
@@ -38,12 +37,14 @@ export interface ObjectMetadataRecordV1 {
   readonly retention_until: string;
   readonly state: ObjectMetadataStateV1;
   readonly legal_hold: boolean;
-  readonly deletion_decision_version?: string;
+  readonly deletion_decision_version?: number;
   readonly deletion_idempotency_key?: string;
 }
 
 export interface ReservePutInputV1 {
   readonly owner_service: ServiceIdV1;
+  readonly owner_object_id: string;
+  readonly owner_state_version: number;
   readonly object_class: string;
   readonly scope: ObjectScopeV1;
   readonly scope_fingerprint: string;
@@ -95,7 +96,14 @@ export type DeleteFinalizationV1 =
 
 export interface ReserveDeleteInputV1 {
   readonly object_ref: ObjectRefV1;
-  readonly deletion_decision_version: string;
+  readonly owner_service: ServiceIdV1;
+  readonly owner_object_id: string;
+  readonly owner_state_version: number;
+  readonly object_class: string;
+  readonly scope: ObjectScopeV1;
+  readonly scope_fingerprint: string;
+  readonly request_fingerprint: string;
+  readonly deletion_decision_version: number;
   readonly idempotency_key: string;
   readonly now: Date;
 }
@@ -170,8 +178,11 @@ export interface RedirectObjectReconciliationInputV1 {
 }
 
 /**
- * Implementations live in each owner schema. They must make every reserve/commit
- * transition atomic and never persist a bucket, physical key, or signed URL.
+ * The production implementation is the shared `object_store` schema owned by
+ * fresh migration 0050. It must use only the eight versioned writer ABIs from
+ * `db/metadata-contract.v1.ts`; an owner schema must not copy this state
+ * machine. No implementation may persist a bucket, physical key, signed URL,
+ * or plaintext lease/attempt/claim token.
  */
 export interface ObjectMetadataRepositoryV1 {
   readonly durability: "volatile_test" | "transactional_postgres";
@@ -215,23 +226,6 @@ export interface ObjectMetadataRepositoryV1 {
   ): Promise<void>;
 }
 
-export interface TransactionalPostgresObjectMetadataRepositoryV1
-  extends ObjectMetadataRepositoryV1 {
-  readonly durability: "transactional_postgres";
-  readonly [transactionalPostgresObjectMetadataRepositoryBrand]: true;
-}
-
-export function isTransactionalPostgresObjectMetadataRepositoryV1(
-  repository: ObjectMetadataRepositoryV1,
-): repository is TransactionalPostgresObjectMetadataRepositoryV1 {
-  return (
-    repository.durability === "transactional_postgres" &&
-    (repository as Partial<TransactionalPostgresObjectMetadataRepositoryV1>)[
-      transactionalPostgresObjectMetadataRepositoryBrand
-    ] === true
-  );
-}
-
 interface ReconciliationLease {
   operation: ObjectReconciliationOperationV1 | "put_uploading";
   claimToken?: string;
@@ -258,17 +252,36 @@ interface PendingDelete extends ReconciliationLease {
   readonly reservationId: string;
   readonly objectRef: ObjectRefV1;
   readonly previous: ObjectMetadataRecordV1;
-  readonly deletionDecisionVersion: string;
+  readonly deletionDecisionVersion: number;
   readonly idempotencyKey: string;
 }
 
 function putIdentity(input: ReservePutInputV1): string {
   return JSON.stringify([
     input.owner_service,
+    input.owner_object_id,
+    input.owner_state_version,
     input.object_class,
     input.scope_fingerprint,
     input.idempotency_key,
   ]);
+}
+
+function sameObjectScopeV1(
+  left: ObjectScopeV1,
+  right: ObjectScopeV1,
+): boolean {
+  if (left.scope_kind !== right.scope_kind) return false;
+  if (left.scope_kind === "global" || right.scope_kind === "global") {
+    return left.scope_kind === "global" && right.scope_kind === "global";
+  }
+  return (
+    left.workspace_id === right.workspace_id &&
+    left.bot_id === right.bot_id &&
+    left.owner_agent_id === right.owner_agent_id &&
+    left.deployment_environment === right.deployment_environment &&
+    left.release_channel === right.release_channel
+  );
 }
 
 /** Test/dev fake; production owners provide a transactional Postgres adapter. */
@@ -288,6 +301,11 @@ export class InMemoryObjectMetadataRepositoryV1
     input: ReservePutInputV1,
   ): Promise<ReservePutResultV1> {
     if (
+      typeof input.owner_object_id !== "string" ||
+      input.owner_object_id.length < 1 ||
+      input.owner_object_id.length > 512 ||
+      !Number.isSafeInteger(input.owner_state_version) ||
+      input.owner_state_version < 1 ||
       !Number.isFinite(input.now.getTime()) ||
       !Number.isFinite(input.foreground_lease_until.getTime()) ||
       input.foreground_lease_until <= input.now
@@ -321,6 +339,8 @@ export class InMemoryObjectMetadataRepositoryV1
     const record: ObjectMetadataRecordV1 = {
       object_ref: objectRef,
       owner_service: input.owner_service,
+      owner_object_id: input.owner_object_id,
+      owner_state_version: input.owner_state_version,
       object_class: input.object_class,
       scope: input.scope,
       scope_fingerprint: input.scope_fingerprint,
@@ -458,6 +478,17 @@ export class InMemoryObjectMetadataRepositoryV1
     }
     const record = this.#records.get(input.object_ref);
     if (record === undefined) return { kind: "not_found" };
+    if (
+      record.owner_service !== input.owner_service ||
+      record.owner_object_id !== input.owner_object_id ||
+      record.owner_state_version !== input.owner_state_version ||
+      record.object_class !== input.object_class ||
+      record.scope_fingerprint !== input.scope_fingerprint ||
+      record.request_fingerprint !== input.request_fingerprint ||
+      !sameObjectScopeV1(record.scope, input.scope)
+    ) {
+      return { kind: "conflict" };
+    }
     if (record.state === "deleted") {
       return record.deletion_decision_version === input.deletion_decision_version &&
         record.deletion_idempotency_key === input.idempotency_key
@@ -485,7 +516,10 @@ export class InMemoryObjectMetadataRepositoryV1
         retention_until: record.retention_until,
       };
     }
-    if (input.deletion_decision_version.length === 0) {
+    if (
+      !Number.isSafeInteger(input.deletion_decision_version) ||
+      input.deletion_decision_version < 1
+    ) {
       return { kind: "conflict" };
     }
     const reservationId = randomUUID();

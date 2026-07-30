@@ -13,6 +13,8 @@ import {
 import {
   PAI_OBJECT_CLASS_POLICY_BASES_V1,
   SupabaseStorageAdapter,
+  createPostgresObjectMetadataRepositoryV1,
+  createSupabaseStorageAdapterV1,
   ObjectStoreReconciliationWorkerV1,
   type ObjectAccessOperationV1,
   type ObjectAccessPolicyVerifierV1,
@@ -287,7 +289,13 @@ function authorizedRequest<
   T extends Pick<
     VerifyObjectAccessDecisionInputV1,
     "object_ref" | "owner_service" | "scope" | "capability"
-  >,
+  > &
+    Partial<
+      Pick<
+        VerifyObjectAccessDecisionInputV1,
+        "owner_object_id" | "owner_state_version"
+      >
+    >,
 >(
   harness: Harness,
   operation: ObjectAccessOperationV1,
@@ -301,6 +309,8 @@ function authorizedRequest<
   Pick<
     VerifyObjectAccessDecisionInputV1,
     | "access_decision_ref"
+    | "owner_object_id"
+    | "owner_state_version"
     | "retention_policy_version"
     | "redaction_policy_version"
   > {
@@ -308,11 +318,15 @@ function authorizedRequest<
     options.retentionPolicyVersion ?? "retention-v1";
   const redactionPolicyVersion =
     options.redactionPolicyVersion ?? "redaction-v1";
+  const ownerObjectId = request.owner_object_id ?? "trigger-process-1";
+  const ownerStateVersion = request.owner_state_version ?? 1;
   const decision = harness.accessPolicy.authorize(
     {
       operation,
       object_ref: request.object_ref,
       owner_service: request.owner_service,
+      owner_object_id: ownerObjectId,
+      owner_state_version: ownerStateVersion,
       scope: request.scope,
       capability: request.capability,
       scope_fingerprint: objectScopeFingerprintV1(request.scope),
@@ -321,7 +335,12 @@ function authorizedRequest<
     },
     options.retentionUntil,
   );
-  return { ...request, ...decision };
+  return {
+    ...request,
+    owner_object_id: ownerObjectId,
+    owner_state_version: ownerStateVersion,
+    ...decision,
+  };
 }
 
 function createHarness(
@@ -367,6 +386,8 @@ function putRequest(
 ): Parameters<ObjectStorePortV1["putImmutable"]>[0] {
   return {
     owner_service: "trigger_processor",
+    owner_object_id: "trigger-process-1",
+    owner_state_version: 1,
     object_class: "trigger_process_snapshot",
     scope,
     capability: "trigger_process.snapshot.manage",
@@ -442,6 +463,52 @@ for (const kind of ["memory", "supabase"] as const) {
       expect(persisted).not.toHaveProperty("bucket");
       expect(persisted).not.toHaveProperty("key");
       expect(persisted).not.toHaveProperty("signed_url");
+    });
+
+    it("never replays or authorizes metadata across owner object/state identities", async () => {
+      const harness = createHarness(kind);
+      const body = new TextEncoder().encode("owner-state-bound");
+      const first = await harness.store.putImmutable(
+        putRequest(body, {
+          idempotency_key: "owner-state-bound",
+          owner_object_id: "trigger-process-owner-a",
+          owner_state_version: 1,
+        }),
+      );
+      const nextState = await harness.store.putImmutable(
+        putRequest(body, {
+          idempotency_key: "owner-state-bound",
+          owner_object_id: "trigger-process-owner-a",
+          owner_state_version: 2,
+        }),
+      );
+      expect(nextState.replayed).toBe(false);
+      expect(nextState.object_ref).not.toBe(first.object_ref);
+
+      await expect(
+        harness.store.head(
+          authorizedRequest(harness, "head", {
+            owner_service: "trigger_processor",
+            owner_object_id: "trigger-process-owner-b",
+            owner_state_version: 1,
+            scope,
+            capability: "trigger_process.snapshot.resolve",
+            object_ref: first.object_ref,
+          }),
+        ),
+      ).rejects.toSatisfy(expectCode("authorization_scope_mismatch"));
+      await expect(
+        harness.store.head(
+          authorizedRequest(harness, "head", {
+            owner_service: "trigger_processor",
+            owner_object_id: "trigger-process-owner-a",
+            owner_state_version: 2,
+            scope,
+            capability: "trigger_process.snapshot.resolve",
+            object_ref: first.object_ref,
+          }),
+        ),
+      ).rejects.toSatisfy(expectCode("authorization_scope_mismatch"));
     });
 
     it("replays identical writes and rejects idempotency drift", async () => {
@@ -553,6 +620,8 @@ for (const kind of ["memory", "supabase"] as const) {
       );
       const unauthorized = {
         owner_service: "trigger_processor" as const,
+        owner_object_id: "trigger-process-1",
+        owner_state_version: 1,
         scope,
         capability: "trigger_process.snapshot.resolve",
         access_decision_ref: "decision-not-issued",
@@ -639,7 +708,7 @@ for (const kind of ["memory", "supabase"] as const) {
         scope,
         capability: "trigger_process.snapshot.manage",
         object_ref: created.object_ref,
-        deletion_decision_version: "decision-v1",
+        deletion_decision_version: 1,
         idempotency_key: "delete-1",
       });
       await expect(
@@ -675,6 +744,36 @@ for (const kind of ["memory", "supabase"] as const) {
       ).rejects.toSatisfy(expectCode("object_not_found"));
     });
 
+    it("enforces numeric deletion decision safe-integer boundaries", async () => {
+      const harness = createHarness(kind);
+      const created = await harness.store.putImmutable(
+        putRequest(new TextEncoder().encode("deletion-version-boundary"), {
+          idempotency_key: "deletion-version-boundary",
+        }),
+      );
+      harness.setNow("2026-07-22T00:00:00.000Z");
+      const deletion = (version: number) =>
+        authorizedRequest(harness, "delete", {
+          owner_service: "trigger_processor" as const,
+          scope,
+          capability: "trigger_process.snapshot.manage",
+          object_ref: created.object_ref,
+          deletion_decision_version: version,
+          idempotency_key: `delete-boundary-${version}`,
+        });
+      await expect(
+        harness.store.deleteIfEligible(deletion(0)),
+      ).rejects.toSatisfy(expectCode("precondition_failed"));
+      await expect(
+        harness.store.deleteIfEligible(
+          deletion(Number.MAX_SAFE_INTEGER + 1),
+        ),
+      ).rejects.toSatisfy(expectCode("precondition_failed"));
+      await expect(
+        harness.store.deleteIfEligible(deletion(Number.MAX_SAFE_INTEGER)),
+      ).resolves.toMatchObject({ deleted: true, replayed: false });
+    });
+
     it("fails closed instead of bypassing retention when the clock is invalid", async () => {
       const harness = createHarness(kind);
       const created = await harness.store.putImmutable(
@@ -685,7 +784,7 @@ for (const kind of ["memory", "supabase"] as const) {
         scope,
         capability: "trigger_process.snapshot.manage",
         object_ref: created.object_ref,
-        deletion_decision_version: "invalid-clock-decision-v1",
+        deletion_decision_version: 1,
         idempotency_key: "invalid-clock-delete-1",
       });
 
@@ -713,10 +812,58 @@ for (const kind of ["memory", "supabase"] as const) {
 }
 
 describe("ObjectStore adapter policy validation", () => {
+  it("treats bot scopes with different property insertion order as the same durable identity", async () => {
+    const metadata = new InMemoryObjectMetadataRepositoryV1();
+    const reserved = await metadata.reservePut({
+      owner_service: "trigger_processor",
+      owner_object_id: "trigger-process-scope-order",
+      owner_state_version: 1,
+      object_class: "trigger_process_snapshot",
+      scope,
+      scope_fingerprint: objectScopeFingerprintV1(scope),
+      idempotency_key: "scope-order-put",
+      request_fingerprint: "scope-order-fingerprint",
+      sha256: digest(new Uint8Array()),
+      size_bytes: 0,
+      media_type: "application/octet-stream",
+      retention_until: "2026-07-20T00:01:00.000Z",
+      now: new Date("2026-07-20T00:00:00.000Z"),
+      foreground_lease_until: new Date("2026-07-20T00:05:00.000Z"),
+    });
+    expect(reserved.kind).toBe("claimed");
+    if (reserved.kind !== "claimed") throw new Error("reservation was not claimed");
+    await metadata.completePut({
+      reservation_id: reserved.reservation_id,
+      foreground_lease_token: reserved.foreground_lease_token,
+      version: "scope-order-version",
+    });
+    const reorderedScope = Object.fromEntries(
+      Object.entries(scope).reverse(),
+    ) as unknown as ObjectScopeV1;
+
+    await expect(
+      metadata.reserveDelete({
+        object_ref: reserved.object_ref,
+        owner_service: "trigger_processor",
+        owner_object_id: "trigger-process-scope-order",
+        owner_state_version: 1,
+        object_class: "trigger_process_snapshot",
+        scope: reorderedScope,
+        scope_fingerprint: objectScopeFingerprintV1(reorderedScope),
+        request_fingerprint: "scope-order-fingerprint",
+        deletion_decision_version: 1,
+        idempotency_key: "scope-order-delete",
+        now: new Date("2026-07-20T00:02:00.000Z"),
+      }),
+    ).resolves.toMatchObject({ kind: "claimed" });
+  });
+
   it("persists late-arrival provenance across an explicit uncertain handoff", async () => {
     const metadata = new InMemoryObjectMetadataRepositoryV1();
     const reserved = await metadata.reservePut({
       owner_service: "trigger_processor",
+      owner_object_id: "trigger-process-1",
+      owner_state_version: 1,
       object_class: "trigger_process_snapshot",
       scope,
       scope_fingerprint: objectScopeFingerprintV1(scope),
@@ -779,6 +926,8 @@ describe("ObjectStore adapter policy validation", () => {
     const metadata = new InMemoryObjectMetadataRepositoryV1();
     const reserved = await metadata.reservePut({
       owner_service: "trigger_processor",
+      owner_object_id: "trigger-process-1",
+      owner_state_version: 1,
       object_class: "trigger_process_snapshot",
       scope,
       scope_fingerprint: objectScopeFingerprintV1(scope),
@@ -857,6 +1006,8 @@ describe("ObjectStore adapter policy validation", () => {
     const metadata = new InMemoryObjectMetadataRepositoryV1();
     const reserved = await metadata.reservePut({
       owner_service: "trigger_processor",
+      owner_object_id: "trigger-process-1",
+      owner_state_version: 1,
       object_class: "trigger_process_snapshot",
       scope,
       scope_fingerprint: objectScopeFingerprintV1(scope),
@@ -938,6 +1089,8 @@ describe("ObjectStore adapter policy validation", () => {
     const metadata = new InMemoryObjectMetadataRepositoryV1();
     const reserved = await metadata.reservePut({
       owner_service: "trigger_processor",
+      owner_object_id: "trigger-process-1",
+      owner_state_version: 1,
       object_class: "trigger_process_snapshot",
       scope,
       scope_fingerprint: objectScopeFingerprintV1(scope),
@@ -959,7 +1112,14 @@ describe("ObjectStore adapter policy validation", () => {
     });
     const deletion = await metadata.reserveDelete({
       object_ref: reserved.object_ref,
-      deletion_decision_version: "delete-claim-fence-v1",
+      owner_service: "trigger_processor",
+      owner_object_id: "trigger-process-1",
+      owner_state_version: 1,
+      object_class: "trigger_process_snapshot",
+      scope,
+      scope_fingerprint: objectScopeFingerprintV1(scope),
+      request_fingerprint: "delete-claim-fence-request",
+      deletion_decision_version: 1,
       idempotency_key: "delete-claim-fence",
       now: new Date("2026-07-20T00:02:00.000Z"),
     });
@@ -1318,7 +1478,7 @@ describe("ObjectStore adapter policy validation", () => {
     ).toThrow(/cannot use bucket/);
   });
 
-  it("requires durable metadata for the production Supabase adapter", () => {
+  it("requires the canonical repository and explicit terminal-proof readiness before production construction", () => {
     expect(
       () =>
         new SupabaseStorageAdapter({
@@ -1328,42 +1488,88 @@ describe("ObjectStore adapter policy validation", () => {
           url: "https://storage.test.invalid",
           secretKey: "test-secret",
           fetch: fakeSupabaseFetch(new Map()),
-        }),
-    ).toThrow(/transactional Postgres metadata repository/);
-
-    expect(
-      () =>
-        new SupabaseStorageAdapter({
-          metadataRepository: new InMemoryObjectMetadataRepositoryV1(),
-          accessPolicyVerifier: new TestObjectAccessPolicyVerifierV1(),
-          policies: [policy],
-          url: "https://storage.test.invalid",
-          secretKey: "test-secret",
-          fetch: fakeSupabaseFetch(new Map()),
-          allowVolatileMetadataRepositoryForTests: true,
+          terminalProofReconciler: {
+            kind: "object-store-terminal-proof-reconciler.v1",
+            async reconcileTerminalProofs() {},
+          },
         } as never),
-    ).toThrow(/transactional Postgres metadata repository/);
+    ).toThrow(/0050 postgres\.v1 metadata repository/);
 
-    const selfReportedTransactionalRepository = new Proxy(
-      new InMemoryObjectMetadataRepositoryV1(),
-      {
-        get(target, property, receiver) {
-          if (property === "durability") return "transactional_postgres";
-          return Reflect.get(target, property, receiver);
-        },
-      },
-    ) as ObjectMetadataRepositoryV1;
     expect(
       () =>
-        new SupabaseStorageAdapter({
-          metadataRepository: selfReportedTransactionalRepository,
+        createSupabaseStorageAdapterV1({
+          metadataRepository: {
+            kind: "postgres.v1",
+          } as never,
           accessPolicyVerifier: new TestObjectAccessPolicyVerifierV1(),
           policies: [policy],
           url: "https://storage.test.invalid",
           secretKey: "test-secret",
           fetch: fakeSupabaseFetch(new Map()),
+          terminalProofReconciler: {
+            kind: "object-store-terminal-proof-reconciler.v1",
+            async reconcileTerminalProofs() {},
+          },
         }),
-    ).toThrow(/transactional Postgres metadata repository/);
+    ).toThrow(/0050 postgres\.v1 metadata repository/);
+
+    const metadataRepository =
+      createPostgresObjectMetadataRepositoryV1({
+        pool: {
+          async query() {
+            throw new Error("unused");
+          },
+        } as never,
+        reconcilerPool: {
+          async query() {
+            throw new Error("unused");
+          },
+        } as never,
+        ownerService: "trigger_processor",
+        clock: () => new Date("2026-07-20T00:00:00.000Z"),
+      });
+    const baseOptions = {
+      metadataRepository,
+      accessPolicyVerifier: new TestObjectAccessPolicyVerifierV1(),
+      policies: [policy],
+      url: "https://storage.test.invalid",
+      secretKey: "test-secret",
+      fetch: fakeSupabaseFetch(new Map()),
+    };
+    expect(
+      () => createSupabaseStorageAdapterV1(baseOptions as never),
+    ).toThrow(/explicit terminal-proof reconciler/);
+    const adapter = createSupabaseStorageAdapterV1({
+      ...baseOptions,
+      terminalProofReconciler: {
+        kind: "object-store-terminal-proof-reconciler.v1",
+        async reconcileTerminalProofs() {},
+      },
+    });
+    expect(Object.keys(adapter).sort()).toEqual([
+      "deleteIfEligible",
+      "getStream",
+      "head",
+      "issueReadGrant",
+      "putImmutable",
+      "reconcilePending",
+    ]);
+    expect(Object.isFrozen(adapter)).toBe(true);
+    const localDockerOptions = {
+      ...baseOptions,
+      url: "http://storage-edge-runtime:8080",
+      terminalProofReconciler: {
+        kind: "object-store-terminal-proof-reconciler.v1" as const,
+        async reconcileTerminalProofs() {},
+      },
+    };
+    expect(() => createSupabaseStorageAdapterV1(localDockerOptions)).toThrow(
+      /Supabase Storage credentials are invalid/u,
+    );
+    expect(() => createSupabaseStorageAdapterV1({
+      ...localDockerOptions,
+      allow_insecure_local_docker_transport: true,
+    })).not.toThrow();
   });
 
   it("keeps physical adapters, buckets, and policies out of the root API", async () => {
@@ -1392,6 +1598,8 @@ describe("ObjectStore adapter policy validation", () => {
     const malformedRecord = {
       object_ref: "objv1_malformedoperation" as ObjectRefV1,
       owner_service: "trigger_processor" as const,
+      owner_object_id: "trigger-process-1",
+      owner_state_version: 1,
       object_class: "trigger_process_snapshot",
       scope,
       scope_fingerprint: objectScopeFingerprintV1(scope),
@@ -1471,24 +1679,94 @@ describe("ObjectStore adapter policy validation", () => {
       expect.objectContaining({
         reservation_id: "malformed-operation-reservation",
         claim_token: "malformed-operation-claim",
-        last_error: "unsupported ObjectStore reconciliation operation",
+        last_error: "object_reconciliation_failed",
       }),
     );
     expect(releaseReconciliation).toHaveBeenCalledWith(
       expect.objectContaining({
         reservation_id: "wrong-state-operation-reservation",
         claim_token: "wrong-state-operation-claim",
-        last_error:
-          "ObjectStore reconciliation operation does not match metadata state",
+        last_error: "object_reconciliation_failed",
       }),
     );
     expect(releaseReconciliation).toHaveBeenCalledWith(
       expect.objectContaining({
         reservation_id: "wrong-provenance-operation-reservation",
         claim_token: "wrong-provenance-operation-claim",
-        last_error:
-          "ObjectStore late-upload provenance is invalid for delete reconciliation",
+        last_error: "object_reconciliation_failed",
       }),
+    );
+  });
+
+  it("never persists a secret-bearing backend error in reconciliation metadata", async () => {
+    const secretError =
+      "GET https://user:password@storage.invalid/object Authorization: Bearer token-secret prompt=private";
+    const baseMetadata = new InMemoryObjectMetadataRepositoryV1();
+    const releaseReconciliation = vi.fn(async () => undefined);
+    const record = {
+      object_ref: "objv1_secretbearingerror" as ObjectRefV1,
+      owner_service: "trigger_processor" as const,
+      owner_object_id: "trigger-process-1",
+      owner_state_version: 1,
+      object_class: "trigger_process_snapshot",
+      scope,
+      scope_fingerprint: objectScopeFingerprintV1(scope),
+      idempotency_key: "secret-bearing-error-put",
+      request_fingerprint: "secret-bearing-error-fingerprint",
+      version: "pending",
+      sha256: digest(new Uint8Array()),
+      size_bytes: 0,
+      media_type: "application/json",
+      retention_until: "2026-07-21T00:00:00.000Z",
+      state: "put_pending" as const,
+      legal_hold: false,
+    };
+    const metadata = new Proxy(baseMetadata, {
+      get(target, property) {
+        if (property === "claimReconciliation") {
+          return async () => [{
+            reservation_id: "secret-bearing-error-reservation",
+            claim_token: "secret-bearing-error-claim",
+            claim_generation: 1,
+            operation: "put_finalize" as const,
+            record,
+            attempt: 1,
+            foreground_upload_may_still_arrive: false,
+          }];
+        }
+        if (property === "releaseReconciliation") return releaseReconciliation;
+        const value = Reflect.get(target, property, target) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as ObjectMetadataRepositoryV1;
+    const backend = new InMemoryObjectStorageBackendV1();
+    vi.spyOn(backend, "head").mockRejectedValue(new Error(secretError));
+    const store = new ObjectStoreAdapterCoreV1({
+      backend,
+      metadataRepository: metadata,
+      accessPolicyVerifier: new TestObjectAccessPolicyVerifierV1(),
+      policies: [policy],
+      now: () => new Date("2026-07-20T00:00:00.000Z"),
+    });
+
+    await expect(
+      store.reconcilePending({
+        worker_id: "secret-bearing-error-worker",
+        limit: 1,
+        lease_seconds: 30,
+      }),
+    ).resolves.toEqual({ claimed: 1, completed: 0, retry_scheduled: 1 });
+    expect(releaseReconciliation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reservation_id: "secret-bearing-error-reservation",
+        last_error: "object_reconciliation_failed",
+      }),
+    );
+    expect(JSON.stringify(releaseReconciliation.mock.calls)).not.toContain(
+      secretError,
+    );
+    expect(JSON.stringify(releaseReconciliation.mock.calls)).not.toContain(
+      "token-secret",
     );
   });
 
@@ -1497,6 +1775,8 @@ describe("ObjectStore adapter policy validation", () => {
     const record = {
       object_ref: "objv1_claimiterator" as ObjectRefV1,
       owner_service: "trigger_processor" as const,
+      owner_object_id: "trigger-process-1",
+      owner_state_version: 1,
       object_class: "trigger_process_snapshot",
       scope,
       scope_fingerprint: objectScopeFingerprintV1(scope),
@@ -1564,6 +1844,8 @@ describe("ObjectStore adapter policy validation", () => {
     const record = {
       object_ref: "objv1_oversizedclaimbatch" as ObjectRefV1,
       owner_service: "trigger_processor" as const,
+      owner_object_id: "trigger-process-1",
+      owner_state_version: 1,
       object_class: "trigger_process_snapshot",
       scope,
       scope_fingerprint: objectScopeFingerprintV1(scope),
@@ -1789,6 +2071,8 @@ describe("ObjectStore async-boundary snapshots", () => {
     const grantScope = { ...scope };
     const grantRequest: Record<string, unknown> = {
       owner_service: "trigger_processor",
+      owner_object_id: "trigger-process-1",
+      owner_state_version: 1,
       scope: grantScope,
       capability: "trigger_process.snapshot.resolve",
       object_ref: created.object_ref,
@@ -1818,20 +2102,22 @@ describe("ObjectStore async-boundary snapshots", () => {
     const deleteScope = { ...scope };
     const deleteRequest: Record<string, unknown> = {
       owner_service: "trigger_processor",
+      owner_object_id: "trigger-process-1",
+      owner_state_version: 1,
       scope: deleteScope,
       capability: "trigger_process.snapshot.manage",
       object_ref: created.object_ref,
       access_decision_ref: "delete-snapshot-decision",
       retention_policy_version: "retention-v1",
       redaction_policy_version: "redaction-v1",
-      deletion_decision_version: "delete-decision-original",
+      deletion_decision_version: 1,
       idempotency_key: "delete-original",
     };
     const deletePending = store.deleteIfEligible(deleteRequest as never);
     await gates[1]!.entered;
     deleteScope.bot_id = "mutated-bot";
     deleteRequest.capability = "attacker.object.delete";
-    deleteRequest.deletion_decision_version = "delete-decision-mutated";
+    deleteRequest.deletion_decision_version = 2;
     deleteRequest.idempotency_key = "delete-mutated";
     gates[1]!.release();
     await expect(deletePending).resolves.toMatchObject({
@@ -1839,9 +2125,85 @@ describe("ObjectStore async-boundary snapshots", () => {
       deleted: true,
     });
     expect(await metadata.findByRef(created.object_ref)).toMatchObject({
-      deletion_decision_version: "delete-decision-original",
+      deletion_decision_version: 1,
       deletion_idempotency_key: "delete-original",
     });
+  });
+
+  it("rejects malformed backend grants while keeping identity and expiry local", async () => {
+    const metadata = new InMemoryObjectMetadataRepositoryV1();
+    const backend = new InMemoryObjectStorageBackendV1();
+    const accessPolicy = new TestObjectAccessPolicyVerifierV1();
+    const store = new InMemoryObjectStoreAdapterV1({
+      metadataRepository: metadata,
+      backend,
+      policies: [policy],
+      accessPolicyVerifier: accessPolicy,
+      now: () => new Date("2026-07-20T00:00:00.000Z"),
+    });
+    const harness: Harness = {
+      store,
+      metadata,
+      accessPolicy,
+      setNow() {},
+    };
+    const created = await store.putImmutable(
+      putRequest(new TextEncoder().encode("bounded-read-grant"), {
+        idempotency_key: "bounded-read-grant",
+      }),
+    );
+    let toStringCalls = 0;
+    const accessorGrant = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(accessorGrant, "toString", {
+      enumerable: true,
+      get() {
+        toStringCalls += 1;
+        return () => "attacker-grant";
+      },
+    });
+    const issueGrant = vi.spyOn(backend, "issueReadGrant");
+    const invalidGrants: readonly unknown[] = [
+      undefined,
+      "",
+      "grant with space",
+      "grant\r\nx-injected: true",
+      "grant\u202eattacker",
+      "x".repeat(8 * 1024 + 1),
+      accessorGrant,
+    ];
+
+    for (const invalidGrant of invalidGrants) {
+      issueGrant.mockResolvedValueOnce(invalidGrant as never);
+      await expect(
+        store.issueReadGrant(
+          authorizedRequest(harness, "grant", {
+            owner_service: "trigger_processor",
+            scope,
+            capability: "trigger_process.snapshot.resolve",
+            object_ref: created.object_ref,
+            ttl_seconds: 300,
+          }),
+        ),
+      ).rejects.toSatisfy(expectCode("integrity_mismatch"));
+    }
+    expect(toStringCalls).toBe(0);
+
+    issueGrant.mockResolvedValueOnce("memory-grant://bounded-and-opaque");
+    const validGrant = await store.issueReadGrant(
+      authorizedRequest(harness, "grant", {
+        owner_service: "trigger_processor",
+        scope,
+        capability: "trigger_process.snapshot.resolve",
+        object_ref: created.object_ref,
+        ttl_seconds: 300,
+      }),
+    );
+    expect(validGrant).toEqual({
+      grant: "memory-grant://bounded-and-opaque",
+      object_ref: created.object_ref,
+      expires_at: "2026-07-20T00:05:00.000Z",
+    });
+    expect(Object.isFrozen(validGrant)).toBe(true);
   });
 
   it("snapshots verifier decisions and owner records before later sinks await", async () => {
@@ -1926,6 +2288,8 @@ describe("ObjectStore async-boundary snapshots", () => {
     });
     const pending = store.head({
       owner_service: "trigger_processor",
+      owner_object_id: "trigger-process-1",
+      owner_state_version: 1,
       scope,
       capability: "trigger_process.snapshot.resolve",
       object_ref: created.object_ref,
@@ -1955,6 +2319,8 @@ describe("ObjectStore async-boundary snapshots", () => {
     const record = {
       object_ref: "objv1_claimsnapshot" as ObjectRefV1,
       owner_service: "trigger_processor" as const,
+      owner_object_id: "trigger-process-1",
+      owner_state_version: 1,
       object_class: "trigger_process_snapshot",
       scope: { ...scope },
       scope_fingerprint: objectScopeFingerprintV1(scope),
@@ -2105,6 +2471,8 @@ describe("ObjectStore async-boundary snapshots", () => {
     expect(storedRecord).toBeDefined();
     const readRequest = {
       owner_service: "trigger_processor" as const,
+      owner_object_id: "trigger-process-1",
+      owner_state_version: 1,
       scope,
       capability: "trigger_process.snapshot.resolve",
       object_ref: created.object_ref,
@@ -2367,7 +2735,7 @@ describe("ObjectStore owner-repository result binding", () => {
       scope,
       capability: "trigger_process.snapshot.manage",
       object_ref: created.object_ref,
-      deletion_decision_version: "delete-replay-binding-v1",
+      deletion_decision_version: 1,
       idempotency_key: "delete-replay-binding-1",
     });
     await expect(harness.store.deleteIfEligible(request)).resolves.toMatchObject({
@@ -2410,7 +2778,7 @@ describe("ObjectStore owner-repository result binding", () => {
       scope,
       capability: "trigger_process.snapshot.manage",
       object_ref: created.object_ref,
-      deletion_decision_version: "delete-finalization-binding-v1",
+      deletion_decision_version: 1,
       idempotency_key: "delete-finalization-binding-1",
     });
 
@@ -2647,6 +3015,20 @@ class FailFirstIntegrityCleanupBackend extends InMemoryObjectStorageBackendV1 {
       throw new ObjectStorageBackendErrorV1("unavailable", "injected delete failure");
     }
     return super.delete(...input);
+  }
+}
+
+class CommitThenAlreadyExistsBackend extends InMemoryObjectStorageBackendV1 {
+  #inject = true;
+
+  public override async putIfAbsent(request: PutBackendObjectV1) {
+    const committed = await super.putIfAbsent(request);
+    if (!this.#inject) return committed;
+    this.#inject = false;
+    throw new ObjectStorageBackendErrorV1(
+      "already_exists",
+      "injected commit followed by already-exists response",
+    );
   }
 }
 
@@ -2963,6 +3345,33 @@ class UnknownTerminalLatePublishBackend implements ObjectStorageBackendV1 {
 }
 
 describe("ObjectStore ambiguous finalization recovery", () => {
+  it("reconciles an already-exists response instead of abandoning owner metadata", async () => {
+    const metadata = new InMemoryObjectMetadataRepositoryV1();
+    const store = new ObjectStoreAdapterCoreV1({
+      backend: new CommitThenAlreadyExistsBackend(),
+      metadataRepository: metadata,
+      accessPolicyVerifier: new TestObjectAccessPolicyVerifierV1(),
+      policies: [policy],
+      now: () => new Date("2026-07-20T00:00:00.000Z"),
+    });
+    const body = new TextEncoder().encode("already-exists-after-commit");
+
+    await expect(store.putImmutable(putRequest(body))).rejects.toSatisfy(
+      expectCode("storage_unavailable"),
+    );
+    await expect(
+      store.reconcilePending({
+        worker_id: "already-exists-finalizer",
+        limit: 1,
+        lease_seconds: 30,
+      }),
+    ).resolves.toEqual({ claimed: 1, completed: 1, retry_scheduled: 0 });
+    await expect(store.putImmutable(putRequest(body))).resolves.toMatchObject({
+      replayed: true,
+      sha256: digest(body),
+    });
+  });
+
   it("recovers a durable put reservation created before a reserve response disconnect", async () => {
     const metadata = new CommitReservePutThenThrowRepository();
     const harness = createHarness("memory", metadata);
@@ -3005,7 +3414,7 @@ describe("ObjectStore ambiguous finalization recovery", () => {
       scope,
       capability: "trigger_process.snapshot.manage",
       object_ref: created.object_ref,
-      deletion_decision_version: "reserve-delete-v1",
+      deletion_decision_version: 1,
       idempotency_key: "reserve-delete-1",
     });
     await expect(harness.store.deleteIfEligible(request)).rejects.toSatisfy(
@@ -3046,7 +3455,7 @@ describe("ObjectStore ambiguous finalization recovery", () => {
       scope,
       capability: "trigger_process.snapshot.manage",
       object_ref: created.object_ref,
-      deletion_decision_version: "decision-outage",
+      deletion_decision_version: 1,
       idempotency_key: "delete-outage",
     });
     await expect(harness.store.deleteIfEligible(request)).rejects.toSatisfy(
@@ -3159,7 +3568,7 @@ describe("ObjectStore ambiguous finalization recovery", () => {
       scope,
       capability: "trigger_process.snapshot.manage",
       object_ref: created.object_ref,
-      deletion_decision_version: "unbound-delete-reconciliation-v1",
+      deletion_decision_version: 1,
       idempotency_key: "unbound-delete-reconciliation-1",
     });
     await expect(harness.store.deleteIfEligible(request)).rejects.toSatisfy(
@@ -3229,7 +3638,7 @@ describe("ObjectStore ambiguous finalization recovery", () => {
           scope,
           capability: "trigger_process.snapshot.manage",
           object_ref: created.object_ref,
-          deletion_decision_version: "decision-v1",
+          deletion_decision_version: 1,
           idempotency_key: "delete-finalize-1",
         }),
       ),
@@ -3251,7 +3660,7 @@ describe("ObjectStore ambiguous finalization recovery", () => {
           scope,
           capability: "trigger_process.snapshot.manage",
           object_ref: created.object_ref,
-          deletion_decision_version: "decision-v2",
+          deletion_decision_version: 2,
           idempotency_key: "delete-finalize-2",
         }),
       ),
@@ -3272,7 +3681,7 @@ describe("ObjectStore ambiguous finalization recovery", () => {
           scope,
           capability: "trigger_process.snapshot.manage",
           object_ref: created.object_ref,
-          deletion_decision_version: "decision-v2",
+          deletion_decision_version: 2,
           idempotency_key: "delete-finalize-2",
         }),
       ),
@@ -3649,6 +4058,184 @@ describe("ObjectStore ambiguous finalization recovery", () => {
 });
 
 describe("ObjectStore streaming", () => {
+  class DeferredCopyPutBackend extends InMemoryObjectStorageBackendV1 {
+    public override async putIfAbsent(request: PutBackendObjectV1) {
+      const retained: Uint8Array[] = [];
+      for await (const chunk of request.body) retained.push(chunk);
+      const retainedBody = async function* (): AsyncIterable<Uint8Array> {
+        yield* retained;
+      };
+      return super.putIfAbsent({ ...request, body: retainedBody() });
+    }
+  }
+
+  class MutatingReadAliasBackend extends InMemoryObjectStorageBackendV1 {
+    public mutateReturnedAlias = false;
+
+    public override async get(
+      ...input: Parameters<InMemoryObjectStorageBackendV1["get"]>
+    ): Promise<BackendObjectStreamV1> {
+      const result = await super.get(...input);
+      if (!this.mutateReturnedAlias) return result;
+      const shared = await readAll(result.body);
+      const mutatingBody = async function* (): AsyncIterable<Uint8Array> {
+        yield shared;
+        shared.fill(0);
+      };
+      return { ...result, body: mutatingBody() };
+    }
+  }
+
+  class MalformedReadChunkBackend extends InMemoryObjectStorageBackendV1 {
+    public malformedChunk: (() => unknown) | undefined;
+    public sourceClosed = false;
+
+    public override async get(
+      ...input: Parameters<InMemoryObjectStorageBackendV1["get"]>
+    ): Promise<BackendObjectStreamV1> {
+      const result = await super.get(...input);
+      if (this.malformedChunk === undefined) return result;
+      const malformedChunk = this.malformedChunk;
+      const backend = this;
+      const malformedBody = async function* (): AsyncIterable<Uint8Array> {
+        try {
+          yield malformedChunk() as Uint8Array;
+        } finally {
+          backend.sourceClosed = true;
+        }
+      };
+      return { ...result, body: malformedBody() };
+    }
+  }
+
+  function createStreamingHarness(
+    backend: ObjectStorageBackendV1,
+  ): Harness {
+    const metadata = new InMemoryObjectMetadataRepositoryV1();
+    const accessPolicy = new TestObjectAccessPolicyVerifierV1();
+    const store = new ObjectStoreAdapterCoreV1({
+      metadataRepository: metadata,
+      backend,
+      accessPolicyVerifier: accessPolicy,
+      policies: [policy],
+      now: () => new Date("2026-07-20T00:00:00.000Z"),
+    });
+    return {
+      store,
+      metadata,
+      accessPolicy,
+      setNow() {},
+    };
+  }
+
+  async function readCreatedObject(
+    harness: Harness,
+    objectRef: ObjectRefV1,
+  ): Promise<Uint8Array> {
+    const result = await harness.store.getStream(
+      authorizedRequest(harness, "get", {
+        owner_service: "trigger_processor",
+        scope,
+        capability: "trigger_process.snapshot.resolve",
+        object_ref: objectRef,
+      }),
+    );
+    return readAll(result.body);
+  }
+
+  it("detaches upload chunks before a caller can mutate their source alias", async () => {
+    const harness = createStreamingHarness(new DeferredCopyPutBackend());
+    const expected = new TextEncoder().encode("detached-upload-chunk");
+    const callerAlias = expected.slice();
+    const mutatingSource = async function* (): AsyncIterable<Uint8Array> {
+      yield callerAlias;
+      callerAlias.fill(0);
+    };
+
+    const created = await harness.store.putImmutable(
+      putRequest(expected, {
+        body: mutatingSource(),
+        idempotency_key: "detached-upload-chunk",
+      }),
+    );
+
+    expect(callerAlias).toEqual(new Uint8Array(expected.byteLength));
+    await expect(readCreatedObject(harness, created.object_ref)).resolves.toEqual(
+      expected,
+    );
+  });
+
+  it("delivers a detached read chunk when the backend mutates its source alias", async () => {
+    const backend = new MutatingReadAliasBackend();
+    const harness = createStreamingHarness(backend);
+    const expected = new TextEncoder().encode("detached-read-chunk");
+    const created = await harness.store.putImmutable(
+      putRequest(expected, { idempotency_key: "detached-read-chunk" }),
+    );
+    backend.mutateReturnedAlias = true;
+
+    await expect(readCreatedObject(harness, created.object_ref)).resolves.toEqual(
+      expected,
+    );
+  });
+
+  it("rejects forged, proxied, and shared read chunks and closes the source", async () => {
+    const expected = new TextEncoder().encode("malformed-read-chunk");
+    let accessorCalls = 0;
+    const accessorBackedChunk = (): unknown => {
+      const chunk = Object.create(Uint8Array.prototype) as Record<
+        PropertyKey,
+        unknown
+      >;
+      Object.defineProperty(chunk, "byteLength", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          accessorCalls += 1;
+          return expected.byteLength;
+        },
+      });
+      return chunk;
+    };
+    const factories: ReadonlyArray<() => unknown> = [
+      () => new Uint8Array(0),
+      () => new Proxy(expected.slice(), {}),
+      accessorBackedChunk,
+      () => {
+        const shared = new Uint8Array(
+          new SharedArrayBuffer(expected.byteLength),
+        );
+        shared.set(expected);
+        return shared;
+      },
+    ];
+
+    for (const [index, factory] of factories.entries()) {
+      const backend = new MalformedReadChunkBackend();
+      const harness = createStreamingHarness(backend);
+      const created = await harness.store.putImmutable(
+        putRequest(expected, {
+          idempotency_key: `malformed-read-chunk-${index}`,
+        }),
+      );
+      backend.malformedChunk = factory;
+      const result = await harness.store.getStream(
+        authorizedRequest(harness, "get", {
+          owner_service: "trigger_processor",
+          scope,
+          capability: "trigger_process.snapshot.resolve",
+          object_ref: created.object_ref,
+        }),
+      );
+
+      await expect(readAll(result.body)).rejects.toSatisfy(
+        expectCode("integrity_mismatch"),
+      );
+      expect(backend.sourceClosed).toBe(true);
+    }
+    expect(accessorCalls).toBe(0);
+  });
+
   it("moves a multi-megabyte object in bounded chunks and performs range reads at the backend", async () => {
     const largePolicy = { ...policy, max_size_bytes: 8 * 1024 * 1024 };
     const metadata = new InMemoryObjectMetadataRepositoryV1();

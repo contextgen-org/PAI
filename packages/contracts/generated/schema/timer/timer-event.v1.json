@@ -1,0 +1,3506 @@
+{
+  "$id": "urn:pai:timer:event-envelope:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "event_type",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "timer.event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "timer_trigger_app",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "timer.schedule.created",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "aggregate_id",
+            "schedule_id",
+            "schedule_version",
+            "previous_status",
+            "next_status",
+            "reason_code"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "aggregate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "previous_status": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "const": "active",
+                      "type": "string"
+                    },
+                    {
+                      "const": "paused",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelled",
+                      "type": "string"
+                    },
+                    {
+                      "const": "completed",
+                      "type": "string"
+                    },
+                    {
+                      "const": "expired",
+                      "type": "string"
+                    },
+                    {
+                      "const": "failed",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "next_status": {
+              "anyOf": [
+                {
+                  "const": "active",
+                  "type": "string"
+                },
+                {
+                  "const": "paused",
+                  "type": "string"
+                },
+                {
+                  "const": "cancelled",
+                  "type": "string"
+                },
+                {
+                  "const": "completed",
+                  "type": "string"
+                },
+                {
+                  "const": "expired",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                }
+              ]
+            },
+            "reason_code": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "event_type",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "timer.event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "timer_trigger_app",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "timer.schedule.updated",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "aggregate_id",
+            "schedule_id",
+            "schedule_version",
+            "previous_status",
+            "next_status",
+            "reason_code"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "aggregate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "previous_status": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "const": "active",
+                      "type": "string"
+                    },
+                    {
+                      "const": "paused",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelled",
+                      "type": "string"
+                    },
+                    {
+                      "const": "completed",
+                      "type": "string"
+                    },
+                    {
+                      "const": "expired",
+                      "type": "string"
+                    },
+                    {
+                      "const": "failed",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "next_status": {
+              "anyOf": [
+                {
+                  "const": "active",
+                  "type": "string"
+                },
+                {
+                  "const": "paused",
+                  "type": "string"
+                },
+                {
+                  "const": "cancelled",
+                  "type": "string"
+                },
+                {
+                  "const": "completed",
+                  "type": "string"
+                },
+                {
+                  "const": "expired",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                }
+              ]
+            },
+            "reason_code": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "event_type",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "timer.event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "timer_trigger_app",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "timer.schedule.paused",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "aggregate_id",
+            "schedule_id",
+            "schedule_version",
+            "previous_status",
+            "next_status",
+            "reason_code"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "aggregate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "previous_status": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "const": "active",
+                      "type": "string"
+                    },
+                    {
+                      "const": "paused",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelled",
+                      "type": "string"
+                    },
+                    {
+                      "const": "completed",
+                      "type": "string"
+                    },
+                    {
+                      "const": "expired",
+                      "type": "string"
+                    },
+                    {
+                      "const": "failed",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "next_status": {
+              "anyOf": [
+                {
+                  "const": "active",
+                  "type": "string"
+                },
+                {
+                  "const": "paused",
+                  "type": "string"
+                },
+                {
+                  "const": "cancelled",
+                  "type": "string"
+                },
+                {
+                  "const": "completed",
+                  "type": "string"
+                },
+                {
+                  "const": "expired",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                }
+              ]
+            },
+            "reason_code": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "event_type",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "timer.event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "timer_trigger_app",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "timer.schedule.resumed",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "aggregate_id",
+            "schedule_id",
+            "schedule_version",
+            "previous_status",
+            "next_status",
+            "reason_code"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "aggregate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "previous_status": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "const": "active",
+                      "type": "string"
+                    },
+                    {
+                      "const": "paused",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelled",
+                      "type": "string"
+                    },
+                    {
+                      "const": "completed",
+                      "type": "string"
+                    },
+                    {
+                      "const": "expired",
+                      "type": "string"
+                    },
+                    {
+                      "const": "failed",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "next_status": {
+              "anyOf": [
+                {
+                  "const": "active",
+                  "type": "string"
+                },
+                {
+                  "const": "paused",
+                  "type": "string"
+                },
+                {
+                  "const": "cancelled",
+                  "type": "string"
+                },
+                {
+                  "const": "completed",
+                  "type": "string"
+                },
+                {
+                  "const": "expired",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                }
+              ]
+            },
+            "reason_code": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "event_type",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "timer.event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "timer_trigger_app",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "timer.schedule.cancelled",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "aggregate_id",
+            "schedule_id",
+            "schedule_version",
+            "previous_status",
+            "next_status",
+            "reason_code"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "aggregate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "previous_status": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "const": "active",
+                      "type": "string"
+                    },
+                    {
+                      "const": "paused",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelled",
+                      "type": "string"
+                    },
+                    {
+                      "const": "completed",
+                      "type": "string"
+                    },
+                    {
+                      "const": "expired",
+                      "type": "string"
+                    },
+                    {
+                      "const": "failed",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "next_status": {
+              "anyOf": [
+                {
+                  "const": "active",
+                  "type": "string"
+                },
+                {
+                  "const": "paused",
+                  "type": "string"
+                },
+                {
+                  "const": "cancelled",
+                  "type": "string"
+                },
+                {
+                  "const": "completed",
+                  "type": "string"
+                },
+                {
+                  "const": "expired",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                }
+              ]
+            },
+            "reason_code": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "event_type",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "timer.event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "timer_trigger_app",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "timer.schedule.completed",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "aggregate_id",
+            "schedule_id",
+            "schedule_version",
+            "previous_status",
+            "next_status",
+            "reason_code"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "aggregate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "previous_status": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "const": "active",
+                      "type": "string"
+                    },
+                    {
+                      "const": "paused",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelled",
+                      "type": "string"
+                    },
+                    {
+                      "const": "completed",
+                      "type": "string"
+                    },
+                    {
+                      "const": "expired",
+                      "type": "string"
+                    },
+                    {
+                      "const": "failed",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "next_status": {
+              "anyOf": [
+                {
+                  "const": "active",
+                  "type": "string"
+                },
+                {
+                  "const": "paused",
+                  "type": "string"
+                },
+                {
+                  "const": "cancelled",
+                  "type": "string"
+                },
+                {
+                  "const": "completed",
+                  "type": "string"
+                },
+                {
+                  "const": "expired",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                }
+              ]
+            },
+            "reason_code": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "event_type",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "timer.event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "timer_trigger_app",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "timer.schedule.expired",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "aggregate_id",
+            "schedule_id",
+            "schedule_version",
+            "previous_status",
+            "next_status",
+            "reason_code"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "aggregate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "previous_status": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "const": "active",
+                      "type": "string"
+                    },
+                    {
+                      "const": "paused",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelled",
+                      "type": "string"
+                    },
+                    {
+                      "const": "completed",
+                      "type": "string"
+                    },
+                    {
+                      "const": "expired",
+                      "type": "string"
+                    },
+                    {
+                      "const": "failed",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "next_status": {
+              "anyOf": [
+                {
+                  "const": "active",
+                  "type": "string"
+                },
+                {
+                  "const": "paused",
+                  "type": "string"
+                },
+                {
+                  "const": "cancelled",
+                  "type": "string"
+                },
+                {
+                  "const": "completed",
+                  "type": "string"
+                },
+                {
+                  "const": "expired",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                }
+              ]
+            },
+            "reason_code": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "event_type",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "timer.event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "timer_trigger_app",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "timer.schedule.failed",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "aggregate_id",
+            "schedule_id",
+            "schedule_version",
+            "previous_status",
+            "next_status",
+            "reason_code"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "aggregate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "previous_status": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "const": "active",
+                      "type": "string"
+                    },
+                    {
+                      "const": "paused",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelled",
+                      "type": "string"
+                    },
+                    {
+                      "const": "completed",
+                      "type": "string"
+                    },
+                    {
+                      "const": "expired",
+                      "type": "string"
+                    },
+                    {
+                      "const": "failed",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "next_status": {
+              "anyOf": [
+                {
+                  "const": "active",
+                  "type": "string"
+                },
+                {
+                  "const": "paused",
+                  "type": "string"
+                },
+                {
+                  "const": "cancelled",
+                  "type": "string"
+                },
+                {
+                  "const": "completed",
+                  "type": "string"
+                },
+                {
+                  "const": "expired",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                }
+              ]
+            },
+            "reason_code": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "event_type",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "timer.event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "timer_trigger_app",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "timer.occurrence.due",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "aggregate_id",
+            "schedule_id",
+            "schedule_version",
+            "occurrence_id",
+            "occurrence_version",
+            "scheduled_fire_at",
+            "effective_fire_at",
+            "previous_status",
+            "next_status",
+            "reason_code"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "aggregate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "occurrence_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "occurrence_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "scheduled_fire_at": {
+              "minLength": 20,
+              "maxLength": 30,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+              "type": "string"
+            },
+            "effective_fire_at": {
+              "minLength": 20,
+              "maxLength": 30,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+              "type": "string"
+            },
+            "previous_status": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "const": "pending",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dispatching",
+                      "type": "string"
+                    },
+                    {
+                      "const": "retry_wait",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dispatched",
+                      "type": "string"
+                    },
+                    {
+                      "const": "failed",
+                      "type": "string"
+                    },
+                    {
+                      "const": "skipped",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelled",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "next_status": {
+              "anyOf": [
+                {
+                  "const": "pending",
+                  "type": "string"
+                },
+                {
+                  "const": "dispatching",
+                  "type": "string"
+                },
+                {
+                  "const": "retry_wait",
+                  "type": "string"
+                },
+                {
+                  "const": "dispatched",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                },
+                {
+                  "const": "skipped",
+                  "type": "string"
+                },
+                {
+                  "const": "cancelled",
+                  "type": "string"
+                }
+              ]
+            },
+            "reason_code": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "event_type",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "timer.event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "timer_trigger_app",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "timer.occurrence.dispatched",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "aggregate_id",
+            "schedule_id",
+            "schedule_version",
+            "occurrence_id",
+            "occurrence_version",
+            "scheduled_fire_at",
+            "effective_fire_at",
+            "previous_status",
+            "next_status",
+            "reason_code"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "aggregate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "occurrence_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "occurrence_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "scheduled_fire_at": {
+              "minLength": 20,
+              "maxLength": 30,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+              "type": "string"
+            },
+            "effective_fire_at": {
+              "minLength": 20,
+              "maxLength": 30,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+              "type": "string"
+            },
+            "previous_status": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "const": "pending",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dispatching",
+                      "type": "string"
+                    },
+                    {
+                      "const": "retry_wait",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dispatched",
+                      "type": "string"
+                    },
+                    {
+                      "const": "failed",
+                      "type": "string"
+                    },
+                    {
+                      "const": "skipped",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelled",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "next_status": {
+              "anyOf": [
+                {
+                  "const": "pending",
+                  "type": "string"
+                },
+                {
+                  "const": "dispatching",
+                  "type": "string"
+                },
+                {
+                  "const": "retry_wait",
+                  "type": "string"
+                },
+                {
+                  "const": "dispatched",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                },
+                {
+                  "const": "skipped",
+                  "type": "string"
+                },
+                {
+                  "const": "cancelled",
+                  "type": "string"
+                }
+              ]
+            },
+            "reason_code": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "event_type",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "timer.event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "timer_trigger_app",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "timer.occurrence.skipped",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "aggregate_id",
+            "schedule_id",
+            "schedule_version",
+            "occurrence_id",
+            "occurrence_version",
+            "scheduled_fire_at",
+            "effective_fire_at",
+            "previous_status",
+            "next_status",
+            "reason_code"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "aggregate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "occurrence_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "occurrence_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "scheduled_fire_at": {
+              "minLength": 20,
+              "maxLength": 30,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+              "type": "string"
+            },
+            "effective_fire_at": {
+              "minLength": 20,
+              "maxLength": 30,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+              "type": "string"
+            },
+            "previous_status": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "const": "pending",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dispatching",
+                      "type": "string"
+                    },
+                    {
+                      "const": "retry_wait",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dispatched",
+                      "type": "string"
+                    },
+                    {
+                      "const": "failed",
+                      "type": "string"
+                    },
+                    {
+                      "const": "skipped",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelled",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "next_status": {
+              "anyOf": [
+                {
+                  "const": "pending",
+                  "type": "string"
+                },
+                {
+                  "const": "dispatching",
+                  "type": "string"
+                },
+                {
+                  "const": "retry_wait",
+                  "type": "string"
+                },
+                {
+                  "const": "dispatched",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                },
+                {
+                  "const": "skipped",
+                  "type": "string"
+                },
+                {
+                  "const": "cancelled",
+                  "type": "string"
+                }
+              ]
+            },
+            "reason_code": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "event_type",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "timer.event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "timer_trigger_app",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "timer.occurrence.failed",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "aggregate_id",
+            "schedule_id",
+            "schedule_version",
+            "occurrence_id",
+            "occurrence_version",
+            "scheduled_fire_at",
+            "effective_fire_at",
+            "previous_status",
+            "next_status",
+            "reason_code"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "aggregate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "occurrence_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "occurrence_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "scheduled_fire_at": {
+              "minLength": 20,
+              "maxLength": 30,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+              "type": "string"
+            },
+            "effective_fire_at": {
+              "minLength": 20,
+              "maxLength": 30,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+              "type": "string"
+            },
+            "previous_status": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "const": "pending",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dispatching",
+                      "type": "string"
+                    },
+                    {
+                      "const": "retry_wait",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dispatched",
+                      "type": "string"
+                    },
+                    {
+                      "const": "failed",
+                      "type": "string"
+                    },
+                    {
+                      "const": "skipped",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelled",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "next_status": {
+              "anyOf": [
+                {
+                  "const": "pending",
+                  "type": "string"
+                },
+                {
+                  "const": "dispatching",
+                  "type": "string"
+                },
+                {
+                  "const": "retry_wait",
+                  "type": "string"
+                },
+                {
+                  "const": "dispatched",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                },
+                {
+                  "const": "skipped",
+                  "type": "string"
+                },
+                {
+                  "const": "cancelled",
+                  "type": "string"
+                }
+              ]
+            },
+            "reason_code": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "event_type",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "timer.event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "timer_trigger_app",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "timer.occurrence.cancelled",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "aggregate_id",
+            "schedule_id",
+            "schedule_version",
+            "occurrence_id",
+            "occurrence_version",
+            "scheduled_fire_at",
+            "effective_fire_at",
+            "previous_status",
+            "next_status",
+            "reason_code"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "aggregate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "occurrence_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "occurrence_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "scheduled_fire_at": {
+              "minLength": 20,
+              "maxLength": 30,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+              "type": "string"
+            },
+            "effective_fire_at": {
+              "minLength": 20,
+              "maxLength": 30,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+              "type": "string"
+            },
+            "previous_status": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "const": "pending",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dispatching",
+                      "type": "string"
+                    },
+                    {
+                      "const": "retry_wait",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dispatched",
+                      "type": "string"
+                    },
+                    {
+                      "const": "failed",
+                      "type": "string"
+                    },
+                    {
+                      "const": "skipped",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelled",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "next_status": {
+              "anyOf": [
+                {
+                  "const": "pending",
+                  "type": "string"
+                },
+                {
+                  "const": "dispatching",
+                  "type": "string"
+                },
+                {
+                  "const": "retry_wait",
+                  "type": "string"
+                },
+                {
+                  "const": "dispatched",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                },
+                {
+                  "const": "skipped",
+                  "type": "string"
+                },
+                {
+                  "const": "cancelled",
+                  "type": "string"
+                }
+              ]
+            },
+            "reason_code": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "event_type",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "timer.event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "timer_trigger_app",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "timer.occurrence.snoozed",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "aggregate_id",
+            "schedule_id",
+            "schedule_version",
+            "occurrence_id",
+            "occurrence_version",
+            "scheduled_fire_at",
+            "previous_effective_fire_at",
+            "effective_fire_at",
+            "reason_code"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "aggregate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "schedule_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "occurrence_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "occurrence_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "scheduled_fire_at": {
+              "minLength": 20,
+              "maxLength": 30,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+              "type": "string"
+            },
+            "previous_effective_fire_at": {
+              "minLength": 20,
+              "maxLength": 30,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+              "type": "string"
+            },
+            "effective_fire_at": {
+              "minLength": 20,
+              "maxLength": 30,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+              "type": "string"
+            },
+            "reason_code": {
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "event_type",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "timer.event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "timer_trigger_app",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "timer.catch_up.batch_created",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "aggregate_id",
+            "catch_up_batch_id",
+            "window_start",
+            "window_end",
+            "occurrence_count",
+            "deadline_at",
+            "policy_snapshot"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "aggregate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "catch_up_batch_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "window_start": {
+              "minLength": 20,
+              "maxLength": 30,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+              "type": "string"
+            },
+            "window_end": {
+              "minLength": 20,
+              "maxLength": 30,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+              "type": "string"
+            },
+            "occurrence_count": {
+              "minimum": 1,
+              "maximum": 1000,
+              "type": "integer"
+            },
+            "deadline_at": {
+              "minLength": 20,
+              "maxLength": 30,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+              "type": "string"
+            },
+            "policy_snapshot": {
+              "additionalProperties": false,
+              "$id": "urn:pai:timer:catch-up-policy-snapshot:v1",
+              "type": "object",
+              "required": [
+                "catch_up_timeout_seconds",
+                "max_catch_up_window_seconds",
+                "max_catch_up_occurrences",
+                "catch_up_continue_after_failed",
+                "config_revision"
+              ],
+              "properties": {
+                "catch_up_timeout_seconds": {
+                  "minimum": 1,
+                  "maximum": 3600,
+                  "type": "integer"
+                },
+                "max_catch_up_window_seconds": {
+                  "minimum": 60,
+                  "maximum": 2592000,
+                  "type": "integer"
+                },
+                "max_catch_up_occurrences": {
+                  "minimum": 1,
+                  "maximum": 1000,
+                  "type": "integer"
+                },
+                "catch_up_continue_after_failed": {
+                  "type": "boolean"
+                },
+                "config_revision": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "event_type",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "timer.event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "timer_trigger_app",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        "event_type": {
+          "const": "timer.catch_up.occurrence_summarized",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "aggregate_id",
+            "catch_up_batch_id",
+            "occurrence_id",
+            "summary_ref",
+            "summary_hash",
+            "skip_reason"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "aggregate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "catch_up_batch_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "occurrence_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "summary_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+              "type": "string"
+            },
+            "summary_hash": {
+              "minLength": 71,
+              "maxLength": 71,
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "skip_reason": {
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

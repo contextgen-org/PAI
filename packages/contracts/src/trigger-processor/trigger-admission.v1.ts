@@ -53,6 +53,26 @@ export type AdmitTriggerRequestBodyV1 = TriggerSubmitRequestV1;
 
 const traceIdSchema = Type.String({ minLength: 1 });
 
+export const ACCEPTED_TRIGGER_ADMISSION_REASON_CODES_V1 = [
+  "catch_up_foreground_busy",
+  "timer_catch_up",
+  "timer_due",
+  "timer_due_preempt_active",
+  "explicit_interrupt",
+  "strong_no_active_dispatch",
+  "strong_preempt_active",
+  "strong_fifo_waiting",
+  "weak_no_active_dispatch",
+  "cooldown_merge_candidate",
+  "active_process_running",
+] as const;
+
+export const AcceptedTriggerAdmissionReasonCodeV1Schema = Type.Union(
+  ACCEPTED_TRIGGER_ADMISSION_REASON_CODES_V1.map((reasonCode) =>
+    Type.Literal(reasonCode),
+  ),
+);
+
 export const AdmitTriggerCommandV1Schema = Type.Union(
   [
     Type.Object(
@@ -105,45 +125,158 @@ function admitTriggerResponseV1Schema<
   );
 }
 
-const acceptedDetailsBase = {
-    trigger_id: nonEmptyIdentifier,
-    trigger_status: Type.Literal("accepted"),
-    trigger_process_id: nonEmptyIdentifier,
-    duplicate_replayed: Type.Literal(false),
-} as const;
-
-function acceptedDetailsFor<
+function acceptedAdmissionDetailsFor<
   const TAction extends
     | "dispatch"
-    | "dispatch_or_preempt"
     | "dispatch_catch_up_serial"
+    | "dispatch_or_preempt"
     | "enqueue_strong_fifo"
     | "enqueue_weak"
     | "merge_or_enqueue_weak",
   const TPriority extends "strong" | "weak",
   const TStatus extends "running" | "waiting",
->(action: TAction, priority: TPriority, status: TStatus) {
+  const TWaitReason extends
+    | null
+    | "preempt_commit"
+    | "deferred_strong_queue"
+    | "weak_queue",
+  const TBlocked extends boolean,
+  const TReasonCode extends TSchema,
+>(
+  action: TAction,
+  priority: TPriority,
+  status: TStatus,
+  waitReason: TWaitReason,
+  blocked: TBlocked,
+  reasonCode: TReasonCode,
+  duplicateReplayed: boolean,
+) {
   return Type.Object(
     {
-      ...acceptedDetailsBase,
+      trigger_id: nonEmptyIdentifier,
+      trigger_status: Type.Literal("accepted"),
+      trigger_process_id: nonEmptyIdentifier,
       process_phase: Type.Literal("admission"),
       process_status: Type.Literal(status),
+      wait_reason:
+        waitReason === null ? Type.Null() : Type.Literal(waitReason),
+      blocked_by_process_id: blocked
+        ? nonEmptyIdentifier
+        : Type.Null(),
       priority: Type.Literal(priority),
       action: Type.Literal(action),
+      reason_code: reasonCode,
+      duplicate_replayed: Type.Literal(duplicateReplayed),
     },
     { additionalProperties: false },
   );
 }
 
-const acceptedDetailsSchema = Type.Union([
-  acceptedDetailsFor("dispatch", "strong", "running"),
-  acceptedDetailsFor("dispatch", "weak", "running"),
-  acceptedDetailsFor("dispatch_or_preempt", "strong", "waiting"),
-  acceptedDetailsFor("dispatch_catch_up_serial", "strong", "running"),
-  acceptedDetailsFor("enqueue_strong_fifo", "strong", "waiting"),
-  acceptedDetailsFor("enqueue_weak", "weak", "waiting"),
-  acceptedDetailsFor("merge_or_enqueue_weak", "weak", "waiting"),
-]);
+function mergedAdmissionDetails(duplicateReplayed: boolean) {
+  return Type.Object(
+    {
+      trigger_id: nonEmptyIdentifier,
+      trigger_status: Type.Literal("accepted"),
+      trigger_process_id: nonEmptyIdentifier,
+      process_phase: Type.Literal("closed"),
+      process_status: Type.Literal("completed"),
+      wait_reason: Type.Null(),
+      blocked_by_process_id: Type.Null(),
+      priority: Type.Literal("weak"),
+      action: Type.Literal("merge_or_enqueue_weak"),
+      reason_code: Type.Literal("cooldown_merge_candidate"),
+      canonical_process_id: nonEmptyIdentifier,
+      terminal_reason: Type.Literal("merged"),
+      duplicate_replayed: Type.Literal(duplicateReplayed),
+    },
+    { additionalProperties: false },
+  );
+}
+
+function acceptedDetailsSchemaFor(duplicateReplayed: boolean) {
+  return Type.Union([
+    acceptedAdmissionDetailsFor(
+      "dispatch",
+      "strong",
+      "running",
+      null,
+      false,
+      Type.Union([
+        Type.Literal("timer_due"),
+        Type.Literal("explicit_interrupt"),
+        Type.Literal("strong_no_active_dispatch"),
+      ]),
+      duplicateReplayed,
+    ),
+    acceptedAdmissionDetailsFor(
+      "dispatch",
+      "weak",
+      "running",
+      null,
+      false,
+      Type.Literal("weak_no_active_dispatch"),
+      duplicateReplayed,
+    ),
+    acceptedAdmissionDetailsFor(
+      "dispatch_catch_up_serial",
+      "strong",
+      "running",
+      null,
+      false,
+      Type.Literal("timer_catch_up"),
+      duplicateReplayed,
+    ),
+    acceptedAdmissionDetailsFor(
+      "dispatch_or_preempt",
+      "strong",
+      "waiting",
+      "preempt_commit",
+      true,
+      Type.Union([
+        Type.Literal("timer_due_preempt_active"),
+        Type.Literal("explicit_interrupt"),
+        Type.Literal("strong_preempt_active"),
+      ]),
+      duplicateReplayed,
+    ),
+    acceptedAdmissionDetailsFor(
+      "enqueue_strong_fifo",
+      "strong",
+      "waiting",
+      "deferred_strong_queue",
+      true,
+      Type.Union([
+        Type.Literal("catch_up_foreground_busy"),
+        Type.Literal("strong_fifo_waiting"),
+      ]),
+      duplicateReplayed,
+    ),
+    acceptedAdmissionDetailsFor(
+      "enqueue_weak",
+      "weak",
+      "waiting",
+      "weak_queue",
+      true,
+      Type.Union([
+        Type.Literal("active_process_running"),
+        Type.Literal("strong_fifo_waiting"),
+      ]),
+      duplicateReplayed,
+    ),
+    acceptedAdmissionDetailsFor(
+      "merge_or_enqueue_weak",
+      "weak",
+      "waiting",
+      "weak_queue",
+      true,
+      Type.Literal("cooldown_merge_candidate"),
+      duplicateReplayed,
+    ),
+    mergedAdmissionDetails(duplicateReplayed),
+  ]);
+}
+
+const acceptedDetailsSchema = acceptedDetailsSchemaFor(false);
 const rejectedReasonCodeSchema = Type.Union([
   Type.Literal("bot_disabled"),
   Type.Literal("bot_archived"),
@@ -164,70 +297,10 @@ const rejectedDetailsSchema = Type.Object(
   },
   { additionalProperties: false },
 );
-const duplicateAcceptedDetailsBase = {
-    trigger_id: nonEmptyIdentifier,
-    trigger_status: Type.Literal("accepted"),
-    trigger_process_id: nonEmptyIdentifier,
-    priority: TriggerPriorityV1Schema,
-    action: Type.Literal("duplicate_replay"),
-    duplicate_replayed: Type.Literal(true),
-} as const;
-
-function duplicateAcceptedDetailsFor<
-  const TPhase extends
-    | "admission"
-    | "context"
-    | "intent"
-    | "execution"
-    | "cooldown"
-    | "meta_enqueued"
-    | "closed",
-  const TStatus extends TSchema,
->(phase: TPhase, status: TStatus) {
-  return Type.Object(
-    {
-      ...duplicateAcceptedDetailsBase,
-      process_phase: Type.Literal(phase),
-      process_status: status,
-    },
-    { additionalProperties: false },
-  );
-}
-
-const duplicateAcceptedDetailsSchema = Type.Union([
-  duplicateAcceptedDetailsFor(
-    "admission",
-    Type.Union([Type.Literal("running"), Type.Literal("waiting")]),
-  ),
-  duplicateAcceptedDetailsFor(
-    "context",
-    Type.Union([Type.Literal("running"), Type.Literal("waiting")]),
-  ),
-  duplicateAcceptedDetailsFor(
-    "intent",
-    Type.Union([Type.Literal("running"), Type.Literal("waiting")]),
-  ),
-  duplicateAcceptedDetailsFor(
-    "execution",
-    Type.Union([
-      Type.Literal("running"),
-      Type.Literal("waiting"),
-      Type.Literal("preempt_requested"),
-      Type.Literal("cancelling"),
-    ]),
-  ),
-  duplicateAcceptedDetailsFor("cooldown", Type.Literal("waiting")),
-  duplicateAcceptedDetailsFor("meta_enqueued", Type.Literal("waiting")),
-  duplicateAcceptedDetailsFor(
-    "closed",
-    Type.Union([
-      Type.Literal("completed"),
-      Type.Literal("failed"),
-      Type.Literal("preempted"),
-      Type.Literal("cancelled"),
-    ]),
-  ),
-]);
+// Duplicate admission replays the first committed admission facts. It must not
+// project the process's current lifecycle state or replace the original action
+// with a synthetic "duplicate_replay" action.
+const duplicateAcceptedDetailsSchema = acceptedDetailsSchemaFor(true);
 const duplicateRejectedDetailsSchema = Type.Object(
   {
     trigger_id: nonEmptyIdentifier,
@@ -236,7 +309,7 @@ const duplicateRejectedDetailsSchema = Type.Object(
     process_phase: Type.Null(),
     process_status: Type.Null(),
     priority: TriggerPriorityV1Schema,
-    action: Type.Literal("duplicate_replay"),
+    action: Type.Literal("reject"),
     reason_code: rejectedReasonCodeSchema,
     rejected_event_id: nonEmptyIdentifier,
     duplicate_replayed: Type.Literal(true),
@@ -517,7 +590,7 @@ export const TrustedAdmissionFactsV1Schema = Type.Union(
         active_process: Type.Literal("none"),
         active_process_id: Type.Null(),
         active_process_slot_generation: Type.Null(),
-        active_process_updated_at: Type.Null(),
+        active_process_state_version: Type.Null(),
         foreground_slot_process_id: Type.Null(),
       },
     ),
@@ -529,9 +602,9 @@ export const TrustedAdmissionFactsV1Schema = Type.Union(
           minimum: 0,
           maximum: MAX_SAFE_SLOT_GENERATION_V1,
         }),
-        active_process_updated_at: Type.String({
-          minLength: 1,
-          pattern: canonicalTimestampPattern,
+        active_process_state_version: Type.Integer({
+          minimum: 1,
+          maximum: Number.MAX_SAFE_INTEGER,
         }),
         foreground_slot_process_id: Type.String({ minLength: 1 }),
       },
@@ -544,9 +617,9 @@ export const TrustedAdmissionFactsV1Schema = Type.Union(
           minimum: 0,
           maximum: MAX_SAFE_SLOT_GENERATION_V1,
         }),
-        active_process_updated_at: Type.String({
-          minLength: 1,
-          pattern: canonicalTimestampPattern,
+        active_process_state_version: Type.Integer({
+          minimum: 1,
+          maximum: Number.MAX_SAFE_INTEGER,
         }),
         foreground_slot_process_id: Type.String({ minLength: 1 }),
       },
@@ -558,26 +631,6 @@ export const TrustedAdmissionFactsV1Schema = Type.Union(
 export type TrustedAdmissionFactsV1 = Static<
   typeof TrustedAdmissionFactsV1Schema
 >;
-
-export const ACCEPTED_TRIGGER_ADMISSION_REASON_CODES_V1 = [
-  "catch_up_foreground_busy",
-  "timer_catch_up",
-  "timer_due",
-  "timer_due_preempt_active",
-  "explicit_interrupt",
-  "strong_no_active_dispatch",
-  "strong_preempt_active",
-  "strong_fifo_waiting",
-  "weak_no_active_dispatch",
-  "cooldown_merge_candidate",
-  "active_process_running",
-] as const;
-
-export const AcceptedTriggerAdmissionReasonCodeV1Schema = Type.Union(
-  ACCEPTED_TRIGGER_ADMISSION_REASON_CODES_V1.map((reasonCode) =>
-    Type.Literal(reasonCode),
-  ),
-);
 
 const runningAdmissionStateSchema = Type.Object(
   {
@@ -627,9 +680,9 @@ const admissionCommitPreconditionSchema = Type.Union([
       }),
       phase: Type.Literal("execution"),
       status: Type.Literal("running"),
-      process_updated_at: Type.String({
-        minLength: 1,
-        pattern: canonicalTimestampPattern,
+      process_state_version: Type.Integer({
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
       }),
       strong_fifo_revision: Type.Integer({
         minimum: 0,
@@ -660,9 +713,9 @@ const admissionCommitPreconditionSchema = Type.Union([
       }),
       phase: Type.Literal("cooldown"),
       status: Type.Literal("waiting"),
-      process_updated_at: Type.String({
-        minLength: 1,
-        pattern: canonicalTimestampPattern,
+      process_state_version: Type.Integer({
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
       }),
       strong_fifo_revision: Type.Integer({
         minimum: 0,

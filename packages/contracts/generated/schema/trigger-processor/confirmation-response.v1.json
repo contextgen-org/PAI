@@ -1,0 +1,52 @@
+{
+  "$id": "urn:pai:trigger-processor:confirmation-response:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "decision",
+    "expected_intent_version",
+    "idempotency_key",
+    "response_hash",
+    "trace_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "trigger_confirmation_response.v1",
+      "type": "string"
+    },
+    "decision": {
+      "anyOf": [
+        {
+          "const": "accept",
+          "type": "string"
+        },
+        {
+          "const": "reject",
+          "type": "string"
+        }
+      ]
+    },
+    "expected_intent_version": {
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "idempotency_key": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "response_hash": {
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "trace_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    }
+  }
+}

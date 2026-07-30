@@ -1,0 +1,1435 @@
+{
+  "$id": "urn:pai:knowthat:event-envelope:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "knowthat.fact.created",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "knowthat_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "knowthat",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "fact_id",
+            "semantic_key",
+            "category",
+            "current_status",
+            "source_ref"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "fact_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "semantic_key": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "category": {
+              "anyOf": [
+                {
+                  "const": "user_profile",
+                  "type": "string"
+                },
+                {
+                  "const": "relationship_state",
+                  "type": "string"
+                },
+                {
+                  "const": "world_state",
+                  "type": "string"
+                },
+                {
+                  "const": "self_state",
+                  "type": "string"
+                },
+                {
+                  "const": "project_fact",
+                  "type": "string"
+                },
+                {
+                  "const": "preference",
+                  "type": "string"
+                },
+                {
+                  "const": "rule",
+                  "type": "string"
+                }
+              ]
+            },
+            "previous_status": {
+              "minLength": 1,
+              "maxLength": 64,
+              "type": "string"
+            },
+            "current_status": {
+              "minLength": 1,
+              "maxLength": 64,
+              "type": "string"
+            },
+            "revision_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "source_ref": {
+              "$id": "urn:pai:shared:typed-evidence-ref:v1",
+              "minLength": 3,
+              "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "knowthat.fact.updated",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "knowthat_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "knowthat",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "fact_id",
+            "semantic_key",
+            "category",
+            "current_status",
+            "source_ref"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "fact_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "semantic_key": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "category": {
+              "anyOf": [
+                {
+                  "const": "user_profile",
+                  "type": "string"
+                },
+                {
+                  "const": "relationship_state",
+                  "type": "string"
+                },
+                {
+                  "const": "world_state",
+                  "type": "string"
+                },
+                {
+                  "const": "self_state",
+                  "type": "string"
+                },
+                {
+                  "const": "project_fact",
+                  "type": "string"
+                },
+                {
+                  "const": "preference",
+                  "type": "string"
+                },
+                {
+                  "const": "rule",
+                  "type": "string"
+                }
+              ]
+            },
+            "previous_status": {
+              "minLength": 1,
+              "maxLength": 64,
+              "type": "string"
+            },
+            "current_status": {
+              "minLength": 1,
+              "maxLength": 64,
+              "type": "string"
+            },
+            "revision_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "source_ref": {
+              "$id": "urn:pai:shared:typed-evidence-ref:v1",
+              "minLength": 3,
+              "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "knowthat.candidate.promoted",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "knowthat_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "knowthat",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "candidate_id",
+            "decision",
+            "reason",
+            "evidence_refs"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "candidate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "fact_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "decision": {
+              "anyOf": [
+                {
+                  "const": "promoted",
+                  "type": "string"
+                },
+                {
+                  "const": "rejected",
+                  "type": "string"
+                }
+              ]
+            },
+            "review_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "reason": {
+              "minLength": 1,
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "evidence_refs": {
+              "maxItems": 64,
+              "uniqueItems": true,
+              "type": "array",
+              "items": {
+                "$id": "urn:pai:shared:typed-evidence-ref:v1",
+                "minLength": 3,
+                "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "knowthat.candidate.rejected",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "knowthat_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "knowthat",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "candidate_id",
+            "decision",
+            "reason",
+            "evidence_refs"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "candidate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "fact_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "decision": {
+              "anyOf": [
+                {
+                  "const": "promoted",
+                  "type": "string"
+                },
+                {
+                  "const": "rejected",
+                  "type": "string"
+                }
+              ]
+            },
+            "review_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "reason": {
+              "minLength": 1,
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "evidence_refs": {
+              "maxItems": 64,
+              "uniqueItems": true,
+              "type": "array",
+              "items": {
+                "$id": "urn:pai:shared:typed-evidence-ref:v1",
+                "minLength": 3,
+                "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "knowthat.fact.expired",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "knowthat_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "knowthat",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "fact_id",
+            "semantic_key",
+            "category",
+            "current_status",
+            "source_ref"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "fact_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "semantic_key": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "category": {
+              "anyOf": [
+                {
+                  "const": "user_profile",
+                  "type": "string"
+                },
+                {
+                  "const": "relationship_state",
+                  "type": "string"
+                },
+                {
+                  "const": "world_state",
+                  "type": "string"
+                },
+                {
+                  "const": "self_state",
+                  "type": "string"
+                },
+                {
+                  "const": "project_fact",
+                  "type": "string"
+                },
+                {
+                  "const": "preference",
+                  "type": "string"
+                },
+                {
+                  "const": "rule",
+                  "type": "string"
+                }
+              ]
+            },
+            "previous_status": {
+              "minLength": 1,
+              "maxLength": 64,
+              "type": "string"
+            },
+            "current_status": {
+              "minLength": 1,
+              "maxLength": 64,
+              "type": "string"
+            },
+            "revision_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "source_ref": {
+              "$id": "urn:pai:shared:typed-evidence-ref:v1",
+              "minLength": 3,
+              "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "knowthat.conflict.detected",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "knowthat_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "knowthat",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "conflict_id",
+            "left_fact_id",
+            "right_fact_id",
+            "semantic_key",
+            "conflict_type",
+            "source_priority_snapshot",
+            "confidence_delta",
+            "status",
+            "proposed_resolution"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "conflict_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "left_fact_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "right_fact_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "semantic_key": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "conflict_type": {
+              "anyOf": [
+                {
+                  "const": "value_contradiction",
+                  "type": "string"
+                },
+                {
+                  "const": "source_contradiction",
+                  "type": "string"
+                }
+              ]
+            },
+            "source_priority_snapshot": {
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {
+                  "$id": "T1",
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "$ref": "T1"
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "patternProperties": {
+                        "^(.*)$": {
+                          "$ref": "T1"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "confidence_delta": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "const": "open",
+                  "type": "string"
+                },
+                {
+                  "const": "auto_resolved",
+                  "type": "string"
+                },
+                {
+                  "const": "feedback_requested",
+                  "type": "string"
+                },
+                {
+                  "const": "resolved",
+                  "type": "string"
+                },
+                {
+                  "const": "ignored",
+                  "type": "string"
+                }
+              ]
+            },
+            "proposed_resolution": {
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {
+                  "$id": "T1",
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "$ref": "T1"
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "patternProperties": {
+                        "^(.*)$": {
+                          "$ref": "T1"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "knowthat.linkage_check.requested",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "knowthat_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "knowthat",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "linkage_check_id",
+            "source_service",
+            "source_ref",
+            "source_fact_id",
+            "source_linkage_check_id",
+            "check_type",
+            "operation",
+            "linked_memory_point_ids",
+            "reason",
+            "evidence_refs"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "linkage_check_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "source_service": {
+              "const": "knowthat",
+              "type": "string"
+            },
+            "source_ref": {
+              "$id": "urn:pai:knowthat:linkage-check-ref:v1",
+              "minLength": 24,
+              "maxLength": 1024,
+              "pattern": "^knowthat_linkage_check:[^\\r\\n]+$",
+              "type": "string"
+            },
+            "source_fact_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "source_linkage_check_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "source_memory_point_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "check_type": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "operation": {
+              "anyOf": [
+                {
+                  "const": "downgrade",
+                  "type": "string"
+                },
+                {
+                  "const": "mark_historical",
+                  "type": "string"
+                },
+                {
+                  "const": "append_version",
+                  "type": "string"
+                },
+                {
+                  "const": "feedback_required",
+                  "type": "string"
+                },
+                {
+                  "const": "no_op",
+                  "type": "string"
+                }
+              ]
+            },
+            "linked_memory_point_ids": {
+              "maxItems": 256,
+              "uniqueItems": true,
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "maxLength": 512,
+                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                "type": "string"
+              }
+            },
+            "relationship_edge_changes": {
+              "maxItems": 256,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "patternProperties": {
+                  "^(.*)$": {
+                    "$id": "T1",
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "$ref": "T1"
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "patternProperties": {
+                          "^(.*)$": {
+                            "$ref": "T1"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "historical_payload": {
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {
+                  "$id": "T1",
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "$ref": "T1"
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "patternProperties": {
+                        "^(.*)$": {
+                          "$ref": "T1"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "reason": {
+              "minLength": 1,
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "evidence_refs": {
+              "maxItems": 64,
+              "uniqueItems": true,
+              "type": "array",
+              "items": {
+                "$id": "urn:pai:shared:typed-evidence-ref:v1",
+                "minLength": 3,
+                "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

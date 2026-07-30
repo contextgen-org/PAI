@@ -1,0 +1,125 @@
+{
+  "$id": "urn:pai:knowthat:promotion-suggestion:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "suggestion_id",
+    "source_meta_job_id",
+    "candidate_id",
+    "target_candidate_version",
+    "suggested_action",
+    "reason",
+    "new_evidence_refs",
+    "risk_level",
+    "confidence_delta",
+    "validation_profile",
+    "idempotency_key"
+  ],
+  "properties": {
+    "suggestion_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+      "type": "string"
+    },
+    "source_meta_job_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+      "type": "string"
+    },
+    "candidate_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+      "type": "string"
+    },
+    "target_candidate_version": {
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "suggested_action": {
+      "anyOf": [
+        {
+          "const": "promote",
+          "type": "string"
+        },
+        {
+          "const": "keep_candidate",
+          "type": "string"
+        },
+        {
+          "const": "reject",
+          "type": "string"
+        },
+        {
+          "const": "expire",
+          "type": "string"
+        },
+        {
+          "const": "request_feedback",
+          "type": "string"
+        }
+      ]
+    },
+    "reason": {
+      "minLength": 1,
+      "maxLength": 4096,
+      "type": "string"
+    },
+    "new_evidence_refs": {
+      "maxItems": 64,
+      "uniqueItems": true,
+      "type": "array",
+      "items": {
+        "$id": "urn:pai:shared:typed-evidence-ref:v1",
+        "minLength": 3,
+        "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+        "type": "string"
+      }
+    },
+    "risk_level": {
+      "anyOf": [
+        {
+          "const": "low",
+          "type": "string"
+        },
+        {
+          "const": "medium",
+          "type": "string"
+        },
+        {
+          "const": "high",
+          "type": "string"
+        },
+        {
+          "const": "critical",
+          "type": "string"
+        }
+      ]
+    },
+    "confidence_delta": {
+      "minimum": -1,
+      "maximum": 1,
+      "type": "number"
+    },
+    "validation_profile": {
+      "anyOf": [
+        {
+          "const": "standard",
+          "type": "string"
+        },
+        {
+          "const": "confirmed_low_risk",
+          "type": "string"
+        }
+      ]
+    },
+    "idempotency_key": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    }
+  }
+}

@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { EventRedriverWorkerV1 } from "../src/index.js";
+import {
+  EventRedriverWorkerV1,
+  openProductionEventRedriverCompositionV1,
+} from "../src/index.js";
 
 describe("event redriver polling shell", () => {
   afterEach(() => {
@@ -14,6 +17,35 @@ describe("event redriver polling shell", () => {
           reconciler: undefined,
         } as never),
     ).toThrow("invalid event redriver worker options");
+  });
+
+  it("fails production composition closed before opening dependencies when core transport env is absent", async () => {
+    await expect(
+      openProductionEventRedriverCompositionV1({
+        deployment_environment: "dev",
+        release_channel: "stable",
+        env: {},
+      }),
+    ).rejects.toThrow("PAI_REDIS_URL is required");
+  });
+
+  it("requires owner-specific database URLs for multi-owner redriver runs", async () => {
+    await expect(
+      openProductionEventRedriverCompositionV1({
+        deployment_environment: "dev",
+        release_channel: "stable",
+        env: {
+          PAI_REDIS_URL: "redis://127.0.0.1:6379",
+          PAI_EVENT_STREAM_EPOCH: "epoch-current",
+          PAI_EVENT_STREAM_GENERATION: "1",
+          PAI_DATABASE_URL:
+            "postgresql://shared-role-is-not-accepted-for-multi-owner",
+          PAI_EVENT_REDRIVER_OWNER_SERVICES: "memory,knowthat",
+        },
+      }),
+    ).rejects.toThrow(
+      "PAI_MEMORY_DATABASE_URL is required for memory event redriver",
+    );
   });
 
   it("treats a widened or inconsistent batch summary as a worker failure", async () => {
@@ -366,5 +398,55 @@ describe("event redriver polling shell", () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(aborts).toBe(1);
     await worker.stop();
+  });
+
+  it("releases the in-process bulkhead after an abort-aware timed-out batch settles", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const worker = new EventRedriverWorkerV1({
+      reconciler: {
+        reconcileBatch(signal) {
+          calls += 1;
+          if (calls > 1) {
+            return Promise.resolve({
+              claimed: 0,
+              probed: 0,
+              present: 0,
+              missing: 0,
+              rematerialized: 0,
+              retryable_failures: 0,
+              permanent_failures: 0,
+            });
+          }
+          return new Promise<never>((_resolve, reject) => {
+            signal.addEventListener(
+              "abort",
+              () => reject(signal.reason),
+              { once: true },
+            );
+          });
+        },
+      },
+      batch_timeout_ms: 100,
+    });
+
+    const first = worker.runOnce();
+    const timedOut = expect(first).rejects.toThrow(
+      "event redriver batch timed out",
+    );
+    await vi.advanceTimersByTimeAsync(100);
+    await timedOut;
+    await vi.advanceTimersByTimeAsync(0);
+
+    await expect(worker.runOnce()).resolves.toEqual({
+      claimed: 0,
+      probed: 0,
+      present: 0,
+      missing: 0,
+      rematerialized: 0,
+      retryable_failures: 0,
+      permanent_failures: 0,
+    });
+    expect(calls).toBe(2);
   });
 });

@@ -19,9 +19,25 @@ export type {
   ObjectReconciliationOperationV1,
   ReleaseObjectReconciliationInputV1,
   RenewPutForegroundLeaseInputV1,
-  TransactionalPostgresObjectMetadataRepositoryV1,
 } from "./object-metadata-repository.v1.js";
-export { isTransactionalPostgresObjectMetadataRepositoryV1 } from "./object-metadata-repository.v1.js";
+export * from "./db/metadata-contract.v1.js";
+export * from "./db/permission-manifest.v1.js";
+export {
+  createPostgresObjectMetadataRepositoryV1,
+  isPostgresObjectMetadataRepositoryV1,
+  type CreatePostgresObjectMetadataRepositoryOptionsV1,
+  type ObjectMetadataPostgresPoolV1,
+  type PostgresObjectMetadataRepositoryV1,
+} from "./postgres/create-postgres-object-metadata-repository.v1.js";
+export {
+  createPostgresObjectMetadataReconciliationAdapterV1,
+  createPostgresObjectMetadataRuntimeV1,
+  isPostgresObjectMetadataReconciliationAdapterV1,
+  type CreatePostgresObjectMetadataReconciliationAdapterOptionsV1,
+  type CreatePostgresObjectMetadataRuntimeOptionsV1,
+  type ObjectMetadataReconcileHandlerV1,
+  type PostgresObjectMetadataRuntimeV1,
+} from "./postgres/create-postgres-object-metadata-reconciliation-adapter.v1.js";
 export type {
   ObjectStoreReconciliationPortV1,
   ReconcileObjectStoreRequestV1,
@@ -30,6 +46,9 @@ export type {
 export * from "./object-store-policy.v1.js";
 export {
   SupabaseStorageAdapter,
+  createSupabaseStorageAdapterV1,
+  type ObjectStoreTerminalProofReconcilerV1,
+  type SupabaseStorageAdapterV1,
   type SupabaseStorageAdapterOptionsV1,
 } from "./supabase-storage-adapter.v1.js";
 export {

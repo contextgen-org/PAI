@@ -1,0 +1,151 @@
+{
+  "$id": "urn:pai:meta:skill-candidate-review:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "candidate_id",
+        "expected_status",
+        "expected_review_version",
+        "expected_updated_at",
+        "decision",
+        "reviewer_principal_id",
+        "reason_code",
+        "idempotency_key",
+        "trace_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "meta_skill_candidate_review.v1",
+          "type": "string"
+        },
+        "candidate_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "expected_status": {
+          "const": "proposed",
+          "type": "string"
+        },
+        "expected_review_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "expected_updated_at": {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "const": "accept",
+              "type": "string"
+            },
+            {
+              "const": "reject",
+              "type": "string"
+            },
+            {
+              "const": "supersede",
+              "type": "string"
+            }
+          ]
+        },
+        "reviewer_principal_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "candidate_id",
+        "status",
+        "review_version",
+        "application_id",
+        "delivery_id",
+        "duplicate_replayed"
+      ],
+      "properties": {
+        "candidate_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "const": "accepted",
+              "type": "string"
+            },
+            {
+              "const": "rejected",
+              "type": "string"
+            },
+            {
+              "const": "superseded",
+              "type": "string"
+            }
+          ]
+        },
+        "review_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "application_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "delivery_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duplicate_replayed": {
+          "type": "boolean"
+        }
+      }
+    }
+  ]
+}

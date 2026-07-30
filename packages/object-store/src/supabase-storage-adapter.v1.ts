@@ -1,11 +1,11 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { isProxy } from "node:util/types";
 
 import {
-  isTransactionalPostgresObjectMetadataRepositoryV1,
-  type ObjectMetadataRepositoryV1,
-} from "./object-metadata-repository.v1.js";
+  isPostgresObjectMetadataRepositoryV1,
+  type PostgresObjectMetadataRepositoryV1,
+} from "./postgres/create-postgres-object-metadata-repository.v1.js";
 import type { ObjectAccessPolicyVerifierV1 } from "./object-access-policy.v1.js";
-import { ObjectStoreAdapterCoreV1 } from "./object-store-adapter-core.v1.js";
 import {
   ObjectStorageBackendErrorV1,
   type BackendObjectHeadV1,
@@ -18,6 +18,11 @@ import type {
   ObjectClassPolicyV1,
   ObjectStoreBucketV1,
 } from "./object-store-policy.v1.js";
+import type {
+  ObjectStorePortV1,
+  ObjectStoreReconciliationPortV1,
+} from "./object-store-port.v1.js";
+import { createDurableSupabaseObjectStoreAdapterV1 } from "./supabase-tus-object-store-adapter.v1.js";
 
 interface SupabaseErrorShape {
   readonly message?: unknown;
@@ -214,54 +219,158 @@ export class SupabaseObjectStorageBackendV1 implements ObjectStorageBackendV1 {
 export interface SupabaseStorageAdapterOptionsV1 {
   readonly url: string;
   readonly secretKey: string;
-  readonly metadataRepository: ObjectMetadataRepositoryV1;
+  /** Explicitly admits only the fixed local Compose Storage edge origin. */
+  readonly allow_insecure_local_docker_transport?: boolean;
+  readonly metadataRepository: PostgresObjectMetadataRepositoryV1;
+  readonly terminalProofReconciler: ObjectStoreTerminalProofReconcilerV1;
   readonly accessPolicyVerifier: ObjectAccessPolicyVerifierV1;
   readonly policies: readonly ObjectClassPolicyV1[];
   readonly now?: () => Date;
   readonly fetch?: typeof fetch;
 }
 
-/**
- * Supabase storage adapter shell. Production construction is intentionally
- * fail-closed until this backend has an attempt-specific terminal receipt
- * protocol and a transactional Postgres metadata repository/worker wiring.
- */
-export class SupabaseStorageAdapter extends ObjectStoreAdapterCoreV1 {
-  public constructor(options: SupabaseStorageAdapterOptionsV1) {
-    if (
-      !isTransactionalPostgresObjectMetadataRepositoryV1(
-        options.metadataRepository,
-      )
-    ) {
+export interface ObjectStoreTerminalProofReconcilerV1 {
+  readonly kind: "object-store-terminal-proof-reconciler.v1";
+  /**
+   * Must reconcile a provider-issued, attempt-bound terminal receipt. Schema
+   * migration, function fingerprint, and worker heartbeat checks are readiness
+   * prerequisites only; they are not terminal proof.
+   */
+  reconcileTerminalProofs(): Promise<void>;
+}
+
+export type SupabaseStorageAdapterV1 =
+  & ObjectStorePortV1
+  & ObjectStoreReconciliationPortV1;
+
+function hasTerminalProofReconcilerV1(
+  value: unknown,
+): value is ObjectStoreTerminalProofReconcilerV1 {
+  if (typeof value !== "object" || value === null || isProxy(value)) {
+    return false;
+  }
+  const kind = Object.getOwnPropertyDescriptor(value, "kind");
+  let current: object | null = value;
+  let reconcile: PropertyDescriptor | undefined;
+  while (current !== null && reconcile === undefined) {
+    reconcile = Object.getOwnPropertyDescriptor(
+      current,
+      "reconcileTerminalProofs",
+    );
+    current = Object.getPrototypeOf(current);
+  }
+  return (
+    kind !== undefined &&
+    "value" in kind &&
+    kind.value === "object-store-terminal-proof-reconciler.v1" &&
+    reconcile !== undefined &&
+    "value" in reconcile &&
+    typeof reconcile.value === "function"
+  );
+}
+
+/** Constructs the production TUS + PostgreSQL ObjectStore adapter. */
+export function createSupabaseStorageAdapterV1(
+  options: SupabaseStorageAdapterOptionsV1,
+): SupabaseStorageAdapterV1 {
+  if (typeof options !== "object" || options === null || isProxy(options)) {
+    throw new Error(
+      "createSupabaseStorageAdapterV1 requires own-data production options",
+    );
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(options);
+  for (const key of [
+    "url",
+    "secretKey",
+    "metadataRepository",
+    "accessPolicyVerifier",
+    "policies",
+  ] as const) {
+    const descriptor = descriptors[key];
+    if (descriptor === undefined || !("value" in descriptor)) {
       throw new Error(
-        "SupabaseStorageAdapter requires a transactional Postgres metadata repository",
+        "createSupabaseStorageAdapterV1 requires own-data production options",
       );
     }
-    const storageFetch = options.fetch ?? globalThis.fetch;
-    const redirectRejectingFetch: typeof fetch = (input, init) =>
-      storageFetch(input, { ...init, redirect: "error" });
-    const client = createClient(options.url, options.secretKey, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-      },
-      global: { fetch: redirectRejectingFetch },
-    });
-    super({
-      backend: new SupabaseObjectStorageBackendV1(
-        client,
-        options.url,
-        options.secretKey,
-        redirectRejectingFetch,
-      ),
-      metadataRepository: options.metadataRepository,
-      accessPolicyVerifier: options.accessPolicyVerifier,
-      policies: options.policies,
-      ...(options.now === undefined ? {} : { now: options.now }),
-    });
+  }
+  for (const key of ["now", "fetch", "allow_insecure_local_docker_transport"] as const) {
+    const descriptor = descriptors[key];
+    if (descriptor !== undefined && !("value" in descriptor)) {
+      throw new Error(
+        "createSupabaseStorageAdapterV1 requires own-data production options",
+      );
+    }
+  }
+  const metadataRepositoryDescriptor = descriptors.metadataRepository;
+  const terminalProofReconcilerDescriptor =
+    descriptors.terminalProofReconciler;
+  if (
+    metadataRepositoryDescriptor === undefined ||
+    !("value" in metadataRepositoryDescriptor)
+  ) {
     throw new Error(
-      "SupabaseStorageAdapter production ObjectStore reconciliation is fail-closed until Supabase upload-attempt terminal proof and worker wiring are implemented",
+      "createSupabaseStorageAdapterV1 requires own-data production options",
     );
+  }
+  if (terminalProofReconcilerDescriptor === undefined) {
+    throw new Error(
+      "createSupabaseStorageAdapterV1 requires an explicit terminal-proof reconciler",
+    );
+  }
+  if (!("value" in terminalProofReconcilerDescriptor)) {
+    throw new Error(
+      "createSupabaseStorageAdapterV1 requires own-data production options",
+    );
+  }
+  const metadataRepository = metadataRepositoryDescriptor.value as unknown;
+  const terminalProofReconciler =
+    terminalProofReconcilerDescriptor.value as unknown;
+  const localDockerTransport = descriptors.allow_insecure_local_docker_transport?.value;
+  if (
+    localDockerTransport !== undefined &&
+    typeof localDockerTransport !== "boolean"
+  ) {
+    throw new Error(
+      "createSupabaseStorageAdapterV1 local Docker transport flag must be boolean",
+    );
+  }
+  if (!isPostgresObjectMetadataRepositoryV1(metadataRepository)) {
+    throw new Error(
+      "createSupabaseStorageAdapterV1 requires the 0050 postgres.v1 metadata repository",
+    );
+  }
+  if (metadataRepository.reconcilerReady !== true) {
+    throw new Error(
+      "createSupabaseStorageAdapterV1 requires a separately authenticated PostgreSQL reconciler pool",
+    );
+  }
+  if (!hasTerminalProofReconcilerV1(terminalProofReconciler)) {
+    throw new Error(
+      "createSupabaseStorageAdapterV1 requires an explicit terminal-proof reconciler",
+    );
+  }
+  return createDurableSupabaseObjectStoreAdapterV1({
+    url: descriptors.url!.value as string,
+    secretKey: descriptors.secretKey!.value as string,
+    metadataRepository,
+    terminalProofReadiness: terminalProofReconciler,
+    accessPolicyVerifier: descriptors.accessPolicyVerifier!.value as ObjectAccessPolicyVerifierV1,
+    policies: descriptors.policies!.value as readonly ObjectClassPolicyV1[],
+    ...(descriptors.now === undefined
+      ? {}
+      : { now: descriptors.now.value as () => Date }),
+    ...(descriptors.fetch === undefined
+      ? {}
+      : { fetch: descriptors.fetch.value as typeof fetch }),
+    ...(localDockerTransport === undefined
+      ? {}
+      : { allow_insecure_local_docker_transport: localDockerTransport }),
+  });
+}
+
+/** @deprecated Use createSupabaseStorageAdapterV1. */
+export class SupabaseStorageAdapter {
+  public constructor(options: SupabaseStorageAdapterOptionsV1) {
+    createSupabaseStorageAdapterV1(options);
   }
 }

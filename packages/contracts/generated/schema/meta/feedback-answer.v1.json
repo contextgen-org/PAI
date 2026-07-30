@@ -1,0 +1,182 @@
+{
+  "$id": "urn:pai:meta:feedback-answer:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "feedback_request_id",
+        "trigger_id",
+        "bot_id",
+        "answer_payload",
+        "trace_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "meta_feedback_answer.v1",
+          "type": "string"
+        },
+        "feedback_request_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trigger_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "answer_payload": {
+          "maxProperties": 1000,
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {
+              "$id": "T2",
+              "anyOf": [
+                {
+                  "maxLength": 65536,
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                },
+                {
+                  "maxItems": 10000,
+                  "type": "array",
+                  "items": {
+                    "$ref": "T2"
+                  }
+                },
+                {
+                  "maxProperties": 1000,
+                  "type": "object",
+                  "patternProperties": {
+                    "^(.*)$": {
+                      "$ref": "T2"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "feedback_request_id",
+            "status",
+            "answered_by_trigger_id",
+            "duplicate_replayed"
+          ],
+          "properties": {
+            "feedback_request_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "status": {
+              "const": "answered",
+              "type": "string"
+            },
+            "answered_by_trigger_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "duplicate_replayed": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "feedback_request_id",
+            "status",
+            "code",
+            "answered_by_trigger_id",
+            "duplicate_replayed"
+          ],
+          "properties": {
+            "feedback_request_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "const": "answered",
+                  "type": "string"
+                },
+                {
+                  "const": "cancelled",
+                  "type": "string"
+                },
+                {
+                  "const": "expired",
+                  "type": "string"
+                },
+                {
+                  "const": "superseded",
+                  "type": "string"
+                }
+              ]
+            },
+            "code": {
+              "anyOf": [
+                {
+                  "const": "idempotency_conflict",
+                  "type": "string"
+                },
+                {
+                  "const": "feedback_request_closed",
+                  "type": "string"
+                }
+              ]
+            },
+            "answered_by_trigger_id": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "duplicate_replayed": {
+              "const": false,
+              "type": "boolean"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

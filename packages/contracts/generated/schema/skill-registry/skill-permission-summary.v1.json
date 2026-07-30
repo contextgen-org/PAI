@@ -1,0 +1,253 @@
+{
+  "$id": "urn:pai:skill-registry:permission-summary:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "summary_ref",
+    "workspace_id",
+    "bot_id",
+    "deployment_environment",
+    "release_channel",
+    "owner_agent_id",
+    "catalog_revision_id",
+    "catalog_version",
+    "catalog_as_of",
+    "security_revocation_epoch",
+    "entries",
+    "summary_hash"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "skill_permission_summary.v1",
+      "type": "string"
+    },
+    "summary_ref": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "workspace_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "bot_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "deployment_environment": {
+      "$id": "urn:pai:shared:deployment-environment:v1",
+      "anyOf": [
+        {
+          "const": "local",
+          "type": "string"
+        },
+        {
+          "const": "dev",
+          "type": "string"
+        },
+        {
+          "const": "staging",
+          "type": "string"
+        },
+        {
+          "const": "prod",
+          "type": "string"
+        }
+      ]
+    },
+    "release_channel": {
+      "$id": "urn:pai:shared:release-channel:v1",
+      "anyOf": [
+        {
+          "const": "stable",
+          "type": "string"
+        },
+        {
+          "const": "canary",
+          "type": "string"
+        }
+      ]
+    },
+    "owner_agent_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "catalog_revision_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "catalog_version": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "catalog_as_of": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "security_revocation_epoch": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "entries": {
+      "maxItems": 100000,
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "skill_id",
+              "skill_key",
+              "activation_revision_id",
+              "version_id",
+              "decision_source",
+              "permission_revision_id",
+              "revision_no",
+              "decision",
+              "scope_hash",
+              "owner_agent_condition",
+              "capability_refs"
+            ],
+            "properties": {
+              "skill_id": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "skill_key": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "activation_revision_id": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "version_id": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "decision_source": {
+                "const": "revision",
+                "type": "string"
+              },
+              "permission_revision_id": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "revision_no": {
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "decision": {
+                "anyOf": [
+                  {
+                    "const": "grant",
+                    "type": "string"
+                  },
+                  {
+                    "const": "deny",
+                    "type": "string"
+                  }
+                ]
+              },
+              "scope_hash": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "owner_agent_condition": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "capability_refs": {
+                "maxItems": 1024,
+                "type": "array",
+                "items": {
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "skill_id",
+              "skill_key",
+              "activation_revision_id",
+              "version_id",
+              "decision_source",
+              "decision",
+              "capability_refs"
+            ],
+            "properties": {
+              "skill_id": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "skill_key": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "activation_revision_id": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "version_id": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "decision_source": {
+                "const": "default_deny",
+                "type": "string"
+              },
+              "decision": {
+                "const": "deny",
+                "type": "string"
+              },
+              "capability_refs": {
+                "maxItems": 0,
+                "type": "array",
+                "items": {
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "summary_hash": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    }
+  }
+}

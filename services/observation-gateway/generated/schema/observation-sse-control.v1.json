@@ -1,0 +1,130 @@
+{
+  "$id": "observation.sse.control",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "code",
+    "trace_id",
+    "details"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0",
+      "type": "string"
+    },
+    "code": {
+      "anyOf": [
+        {
+          "const": "observation.snapshot",
+          "type": "string"
+        },
+        {
+          "const": "observation.degraded",
+          "type": "string"
+        }
+      ]
+    },
+    "trace_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "details": {
+      "maxProperties": 64,
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            {
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "maxLength": 1024,
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            {
+              "maxProperties": 64,
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "maxLength": 1024,
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    {
+                      "maxItems": 64,
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "maxLength": 1024,
+                            "type": "string"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,7 +1,8 @@
 import { Pool } from "pg";
 import { afterAll, describe, expect, it } from "vitest";
 
-const databaseUrl = process.env.PAI_TEST_DATABASE_URL;
+const databaseUrl =
+  process.env.PAI_PERSISTENCE_TEST_DATABASE_URL ?? process.env.PAI_TEST_DATABASE_URL;
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;
 
 describePostgres("PostgreSQL immutable DLQ resolution constraints", () => {

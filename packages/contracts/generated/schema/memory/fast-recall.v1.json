@@ -1,0 +1,288 @@
+{
+  "$id": "urn:pai:memory:fast-recall:v1",
+  "anyOf": [
+    {
+      "$id": "urn:pai:memory:fast-recall-request:v1",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "bot_id",
+        "query",
+        "query_purpose"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "memory.fast_recall.v1",
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "query": {
+          "minLength": 1,
+          "maxUtf8Bytes": 16384,
+          "type": "string"
+        },
+        "query_purpose": {
+          "anyOf": [
+            {
+              "const": "context_injection",
+              "type": "string"
+            },
+            {
+              "const": "user_search",
+              "type": "string"
+            },
+            {
+              "const": "agent_planning",
+              "type": "string"
+            }
+          ]
+        },
+        "topic_family_key": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "subject_key": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "priority_dimensions": {
+          "maxItems": 6,
+          "uniqueItems": true,
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "const": "recent",
+                "type": "string"
+              },
+              {
+                "const": "keyword",
+                "type": "string"
+              },
+              {
+                "const": "scene",
+                "type": "string"
+              },
+              {
+                "const": "emotion",
+                "type": "string"
+              },
+              {
+                "const": "summary_vector",
+                "type": "string"
+              },
+              {
+                "const": "importance",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "include_downgraded": {
+          "type": "boolean"
+        },
+        "limit": {
+          "minimum": 1,
+          "maximum": 50,
+          "default": 8,
+          "type": "integer"
+        },
+        "snapshot_token": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "cursor": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "$id": "urn:pai:memory:fast-recall-response:v1",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "snapshot_token",
+        "query_revision",
+        "ranking_profile_version",
+        "items",
+        "is_partial"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "memory.fast_recall.v1",
+          "type": "string"
+        },
+        "snapshot_token": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "query_revision": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "ranking_profile_version": {
+          "const": "memory.fast_recall.ranking.v1",
+          "type": "string"
+        },
+        "items": {
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "memory_point_id",
+              "series_id",
+              "topic_family_key",
+              "topic_key",
+              "content_summary",
+              "occurred_at",
+              "status",
+              "score_breakdown",
+              "redaction_status"
+            ],
+            "properties": {
+              "memory_point_id": {
+                "minLength": 1,
+                "maxUtf8Bytes": 256,
+                "type": "string"
+              },
+              "series_id": {
+                "minLength": 1,
+                "maxUtf8Bytes": 256,
+                "type": "string"
+              },
+              "topic_family_key": {
+                "minLength": 1,
+                "maxUtf8Bytes": 256,
+                "type": "string"
+              },
+              "topic_key": {
+                "minLength": 1,
+                "maxUtf8Bytes": 256,
+                "type": "string"
+              },
+              "content_summary": {
+                "minLength": 1,
+                "maxUtf8Bytes": 16384,
+                "type": "string"
+              },
+              "occurred_at": {
+                "format": "date-time",
+                "maxUtf8Bytes": 64,
+                "type": "string"
+              },
+              "status": {
+                "anyOf": [
+                  {
+                    "const": "active",
+                    "type": "string"
+                  },
+                  {
+                    "const": "downgraded",
+                    "type": "string"
+                  }
+                ]
+              },
+              "score_breakdown": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "vector",
+                  "keyword",
+                  "importance",
+                  "recency",
+                  "tag_boost",
+                  "status_decay",
+                  "final_score"
+                ],
+                "properties": {
+                  "vector": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  },
+                  "keyword": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  },
+                  "importance": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  },
+                  "recency": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  },
+                  "tag_boost": {
+                    "minimum": 0,
+                    "maximum": 0.05,
+                    "type": "number"
+                  },
+                  "status_decay": {
+                    "anyOf": [
+                      {
+                        "const": 0.5,
+                        "type": "number"
+                      },
+                      {
+                        "const": 1,
+                        "type": "number"
+                      }
+                    ]
+                  },
+                  "final_score": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  }
+                }
+              },
+              "redaction_status": {
+                "anyOf": [
+                  {
+                    "const": "redacted",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_required",
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "next_cursor": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "is_partial": {
+          "type": "boolean"
+        },
+        "partial_reason": {
+          "minLength": 1,
+          "maxUtf8Bytes": 1024,
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

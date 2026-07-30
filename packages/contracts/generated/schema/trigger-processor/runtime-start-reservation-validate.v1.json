@@ -1,0 +1,604 @@
+{
+  "$id": "urn:pai:trigger-processor:runtime-start-reservation-validate:v1",
+  "anyOf": [
+    {
+      "$id": "urn:pai:trigger-processor:runtime-start-reservation-validate-request:v1",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "schema_version",
+            "runtime_run_id",
+            "request_hash",
+            "trace_id",
+            "start_fence_token",
+            "validation_stage"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "runtime_start_reservation_validate_request.v1",
+              "type": "string"
+            },
+            "runtime_run_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "request_hash": {
+              "minLength": 71,
+              "maxLength": 71,
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "start_fence_token": {
+              "minLength": 1,
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "validation_stage": {
+              "const": "request_received",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "schema_version",
+            "runtime_run_id",
+            "request_hash",
+            "trace_id",
+            "start_fence_token",
+            "validation_stage"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "runtime_start_reservation_validate_request.v1",
+              "type": "string"
+            },
+            "runtime_run_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "request_hash": {
+              "minLength": 71,
+              "maxLength": 71,
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "start_fence_token": {
+              "minLength": 1,
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "validation_stage": {
+              "const": "preflight_completed",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "schema_version",
+            "runtime_run_id",
+            "request_hash",
+            "trace_id",
+            "start_fence_token_hash",
+            "validation_stage"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "runtime_start_reservation_validate_request.v1",
+              "type": "string"
+            },
+            "runtime_run_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "request_hash": {
+              "minLength": 71,
+              "maxLength": 71,
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "start_fence_token_hash": {
+              "minLength": 71,
+              "maxLength": 71,
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "validation_stage": {
+              "const": "before_running",
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "additionalProperties": false,
+      "$id": "urn:pai:trigger-processor:runtime-start-reservation-validate-response:v1",
+      "type": "object",
+      "required": [
+        "schema_version",
+        "validation_result",
+        "reservation_status",
+        "validated_fence_generation",
+        "validation_stage",
+        "duplicate_replayed",
+        "trace_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "runtime_start_reservation_validate_response.v1",
+          "type": "string"
+        },
+        "validation_result": {
+          "const": "valid",
+          "type": "string"
+        },
+        "reservation_status": {
+          "anyOf": [
+            {
+              "const": "reserved",
+              "type": "string"
+            },
+            {
+              "const": "dispatching",
+              "type": "string"
+            },
+            {
+              "const": "queued",
+              "type": "string"
+            }
+          ]
+        },
+        "validated_fence_generation": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "validation_stage": {
+          "anyOf": [
+            {
+              "const": "request_received",
+              "type": "string"
+            },
+            {
+              "const": "preflight_completed",
+              "type": "string"
+            },
+            {
+              "const": "before_running",
+              "type": "string"
+            }
+          ]
+        },
+        "duplicate_replayed": {
+          "const": false,
+          "type": "boolean"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "$id": "urn:pai:trigger-processor:runtime-start-reservation-validate-error:v1",
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "schema_version",
+            "message",
+            "trace_id",
+            "code",
+            "retryable",
+            "details"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "runtime_start_reservation_validate_error.v1",
+              "type": "string"
+            },
+            "message": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "code": {
+              "anyOf": [
+                {
+                  "const": "authorization_scope_mismatch",
+                  "type": "string"
+                },
+                {
+                  "const": "stale_start_fence",
+                  "type": "string"
+                },
+                {
+                  "const": "start_cancelled",
+                  "type": "string"
+                },
+                {
+                  "const": "reservation_terminal",
+                  "type": "string"
+                },
+                {
+                  "const": "idempotency_conflict",
+                  "type": "string"
+                }
+              ]
+            },
+            "retryable": {
+              "const": false,
+              "type": "boolean"
+            },
+            "details": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "trigger_process_id",
+                "start_attempt_no",
+                "validation_stage"
+              ],
+              "properties": {
+                "trigger_process_id": {
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                "start_attempt_no": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "validation_stage": {
+                  "anyOf": [
+                    {
+                      "const": "request_received",
+                      "type": "string"
+                    },
+                    {
+                      "const": "preflight_completed",
+                      "type": "string"
+                    },
+                    {
+                      "const": "before_running",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "schema_version",
+            "message",
+            "trace_id",
+            "code",
+            "retryable",
+            "details"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "runtime_start_reservation_validate_error.v1",
+              "type": "string"
+            },
+            "message": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "code": {
+              "const": "schema_validation_failed",
+              "type": "string"
+            },
+            "retryable": {
+              "const": false,
+              "type": "boolean"
+            },
+            "details": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "trigger_process_id",
+                "start_attempt_no",
+                "validation_stage",
+                "field_path",
+                "reason"
+              ],
+              "properties": {
+                "trigger_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "start_attempt_no": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "validation_stage": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "const": "request_received",
+                          "type": "string"
+                        },
+                        {
+                          "const": "preflight_completed",
+                          "type": "string"
+                        },
+                        {
+                          "const": "before_running",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "field_path": {
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "const": "malformed_path",
+                      "type": "string"
+                    },
+                    {
+                      "const": "malformed_request",
+                      "type": "string"
+                    },
+                    {
+                      "const": "canonical_boundary_violation",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "schema_version",
+            "message",
+            "trace_id",
+            "code",
+            "retryable",
+            "details"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "runtime_start_reservation_validate_error.v1",
+              "type": "string"
+            },
+            "message": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "code": {
+              "const": "storage_unavailable",
+              "type": "string"
+            },
+            "retryable": {
+              "const": true,
+              "type": "boolean"
+            },
+            "details": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "trigger_process_id",
+                "start_attempt_no",
+                "validation_stage",
+                "diagnostic_ref"
+              ],
+              "properties": {
+                "trigger_process_id": {
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                "start_attempt_no": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "validation_stage": {
+                  "anyOf": [
+                    {
+                      "const": "request_received",
+                      "type": "string"
+                    },
+                    {
+                      "const": "preflight_completed",
+                      "type": "string"
+                    },
+                    {
+                      "const": "before_running",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "diagnostic_ref": {
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "schema_version",
+            "message",
+            "trace_id",
+            "code",
+            "retryable",
+            "details"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "runtime_start_reservation_validate_error.v1",
+              "type": "string"
+            },
+            "message": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "code": {
+              "const": "internal_error",
+              "type": "string"
+            },
+            "retryable": {
+              "const": false,
+              "type": "boolean"
+            },
+            "details": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "trigger_process_id",
+                "start_attempt_no",
+                "validation_stage",
+                "diagnostic_ref"
+              ],
+              "properties": {
+                "trigger_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "start_attempt_no": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "validation_stage": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "const": "request_received",
+                          "type": "string"
+                        },
+                        {
+                          "const": "preflight_completed",
+                          "type": "string"
+                        },
+                        {
+                          "const": "before_running",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "diagnostic_ref": {
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

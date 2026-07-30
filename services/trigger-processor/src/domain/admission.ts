@@ -2,6 +2,7 @@ import type {
   TriggerPriorityV1,
 } from "@pai/contracts";
 import {
+  canonicalJsonV1,
   TriggerAdmissionDecisionV1Schema,
   type TriggerAdmissionDecisionV1,
   TrustedAdmissionFactsV1Schema,
@@ -12,8 +13,8 @@ import { Value } from "@sinclair/typebox/value";
 export type { TrustedAdmissionFactsV1 } from "@pai/contracts";
 
 export class InvalidTrustedAdmissionFactsError extends Error {
-  public constructor(message: string) {
-    super(message);
+  public constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "InvalidTrustedAdmissionFactsError";
   }
 }
@@ -25,7 +26,7 @@ export class StaleTriggerAdmissionDecisionError extends Error {
   }
 }
 
-/** Invoked by admit_trigger_v1 while holding the owner transaction lock. */
+/** Invoked by create_trigger_admission_v1 while holding the owner transaction lock. */
 export function assertTriggerAdmissionCommitPreconditionV1(
   decision: Extract<TriggerAdmissionDecisionV1, { trigger_status: "accepted" }>,
   currentSlot: { readonly process_id: string | null; readonly generation: number },
@@ -33,7 +34,7 @@ export function assertTriggerAdmissionCommitPreconditionV1(
     readonly process_id: string;
     readonly phase: "execution" | "cooldown";
     readonly status: "running" | "waiting";
-    readonly updated_at: string;
+    readonly state_version: number;
   } | null,
   currentStrongFifo: {
     readonly revision: number;
@@ -42,6 +43,17 @@ export function assertTriggerAdmissionCommitPreconditionV1(
     readonly preempt_commit_process_id: string | null;
   },
 ): void {
+  try {
+    canonicalJsonV1(decision);
+    canonicalJsonV1(currentSlot);
+    canonicalJsonV1(currentProcess);
+    canonicalJsonV1(currentStrongFifo);
+  } catch (error) {
+    throw new InvalidTrustedAdmissionFactsError(
+      "admission commit inputs violate the canonical JSON boundary",
+      { cause: error },
+    );
+  }
   const expected = decision.admission_precondition;
   const queueMatches =
     expected.strong_fifo_revision === currentStrongFifo.revision &&
@@ -63,7 +75,7 @@ export function assertTriggerAdmissionCommitPreconditionV1(
         currentProcess.process_id === expected.process_id &&
         currentProcess.phase === expected.phase &&
         currentProcess.status === expected.status &&
-        currentProcess.updated_at === expected.process_updated_at);
+        currentProcess.state_version === expected.process_state_version);
   if (!matches) {
     throw new StaleTriggerAdmissionDecisionError();
   }
@@ -79,14 +91,14 @@ function assertConsistentForegroundState(
     !hasActiveProcess &&
     (facts.active_process_id !== null ||
       facts.active_process_slot_generation !== null ||
-      facts.active_process_updated_at !== null ||
+      facts.active_process_state_version !== null ||
       facts.foreground_slot_process_id !== null);
   const invalidOccupiedShape =
     hasActiveProcess &&
     (typeof facts.active_process_id !== "string" ||
-      typeof facts.active_process_updated_at !== "string" ||
       typeof facts.foreground_slot_process_id !== "string" ||
-      !Number.isSafeInteger(facts.active_process_slot_generation));
+      !Number.isSafeInteger(facts.active_process_slot_generation) ||
+      !Number.isSafeInteger(facts.active_process_state_version));
   const queueHeadShapeMatches =
     (facts.strong_fifo_head_process_id === null) ===
     (facts.strong_fifo_head_admission_time === null);
@@ -100,6 +112,13 @@ function assertConsistentForegroundState(
     !Number.isSafeInteger(facts.strong_fifo_revision) ||
     facts.strong_fifo_revision < 0 ||
     !queueHeadShapeMatches ||
+    (facts.strong_fifo_head_admission_time !== null &&
+      (!canonicalDateTimePattern.test(
+        facts.strong_fifo_head_admission_time,
+      ) ||
+        !Number.isFinite(
+          Date.parse(facts.strong_fifo_head_admission_time),
+        ))) ||
     !validPreemptHead ||
     invalidIdleShape ||
     invalidOccupiedShape ||
@@ -108,9 +127,7 @@ function assertConsistentForegroundState(
       (facts.active_process_slot_generation < 0 ||
         facts.active_process_slot_generation !== facts.foreground_slot_generation ||
         facts.active_process_id.trim().length === 0 ||
-        facts.active_process_updated_at.trim().length === 0 ||
-        !canonicalDateTimePattern.test(facts.active_process_updated_at) ||
-        !Number.isFinite(Date.parse(facts.active_process_updated_at))))
+        facts.active_process_state_version < 1))
   ) {
     throw new InvalidTrustedAdmissionFactsError(
       "foreground slot, process state, and Strong FIFO head must come from one consistent admission snapshot",
@@ -184,7 +201,7 @@ function decideTriggerAdmissionUncheckedV1(
             slot_generation: facts.foreground_slot_generation,
             phase: "execution",
             status: "running",
-            process_updated_at: facts.active_process_updated_at,
+            process_state_version: facts.active_process_state_version,
             strong_fifo_revision: facts.strong_fifo_revision,
             strong_fifo_head_process_id: facts.strong_fifo_head_process_id,
             strong_fifo_head_admission_time:
@@ -198,7 +215,7 @@ function decideTriggerAdmissionUncheckedV1(
             slot_generation: facts.foreground_slot_generation,
             phase: "cooldown",
             status: "waiting",
-            process_updated_at: facts.active_process_updated_at,
+            process_state_version: facts.active_process_state_version,
             strong_fifo_revision: facts.strong_fifo_revision,
             strong_fifo_head_process_id: facts.strong_fifo_head_process_id,
             strong_fifo_head_admission_time:
@@ -363,12 +380,28 @@ function decideTriggerAdmissionUncheckedV1(
 export function decideTriggerAdmissionV1(
   facts: TrustedAdmissionFactsV1,
 ): TriggerAdmissionDecisionV1 {
+  try {
+    canonicalJsonV1(facts);
+  } catch (error) {
+    throw new InvalidTrustedAdmissionFactsError(
+      "admission facts violate the canonical JSON boundary",
+      { cause: error },
+    );
+  }
   if (!Value.Check(TrustedAdmissionFactsV1Schema, facts)) {
     throw new InvalidTrustedAdmissionFactsError(
       "admission facts violate TrustedAdmissionFactsV1",
     );
   }
   const decision = decideTriggerAdmissionUncheckedV1(facts);
+  try {
+    canonicalJsonV1(decision);
+  } catch (error) {
+    throw new InvalidTrustedAdmissionFactsError(
+      "admission facts produced a non-canonical decision",
+      { cause: error },
+    );
+  }
   if (!Value.Check(TriggerAdmissionDecisionV1Schema, decision)) {
     throw new InvalidTrustedAdmissionFactsError(
       "admission facts produced a decision outside TriggerAdmissionDecisionV1",

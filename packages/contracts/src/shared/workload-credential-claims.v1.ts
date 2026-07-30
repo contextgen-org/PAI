@@ -5,15 +5,25 @@ import { DelegatedPrincipalContextV1Schema } from "./delegated-principal-context
 import { DeploymentEnvironmentV1Schema } from "./deployment-environment.v1.js";
 import { ReleaseChannelV1Schema } from "./release-channel.v1.js";
 import { ServiceIdV1Schema } from "./service-id.v1.js";
+import { assertCanonicalJsonBoundaryV1 } from "./canonical-json.v1.js";
 
 const claimsProperties = {
   iss: Type.Literal("pai-workload"),
   sub: Type.Ref(ServiceIdV1Schema),
   aud: Type.Ref(ServiceIdV1Schema),
   jti: Type.String({ minLength: 1 }),
-  iat: Type.Integer({ minimum: 0 }),
-  nbf: Type.Integer({ minimum: 0 }),
-  exp: Type.Integer({ minimum: 0 }),
+  iat: Type.Integer({
+    minimum: 0,
+    maximum: Number.MAX_SAFE_INTEGER,
+  }),
+  nbf: Type.Integer({
+    minimum: 0,
+    maximum: Number.MAX_SAFE_INTEGER,
+  }),
+  exp: Type.Integer({
+    minimum: 0,
+    maximum: Number.MAX_SAFE_INTEGER,
+  }),
   capability: Type.Array(Type.String({ minLength: 1 }), {
     minItems: 1,
     uniqueItems: true,
@@ -116,6 +126,25 @@ const scopeFields = [
 export function validateWorkloadCredentialClaimsV1(
   value: unknown,
 ): ContractValidationResult<WorkloadCredentialClaimsV1> {
+  try {
+    assertCanonicalJsonBoundaryV1(value, {
+      max_bytes: 16_384,
+      max_depth: 64,
+      max_nodes: 4_096,
+      max_container_entries: 4_096,
+    });
+  } catch {
+    return {
+      ok: false,
+      issues: [
+        {
+          code: "schema_validation_failed",
+          fieldPath: "/",
+          message: "credential claims are outside the bounded canonical JSON contract",
+        },
+      ],
+    };
+  }
   if (!validateShape(value)) {
     return { ok: false, issues: shapeIssues(validateShape.errors ?? []) };
   }

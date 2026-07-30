@@ -4,5 +4,8 @@
     "noEmit": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["test/**/*.types.ts"]
+  "include": [
+    "test/**/*.types.ts",
+    "test/postgres-deployment.contract.ts"
+  ]
 }

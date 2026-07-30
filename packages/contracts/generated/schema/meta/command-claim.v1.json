@@ -1,0 +1,1751 @@
+{
+  "$id": "urn:pai:meta:command-claim:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "worker_id",
+        "limit",
+        "lease_seconds",
+        "trace_id"
+      ],
+      "properties": {
+        "worker_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "limit": {
+          "minimum": 1,
+          "maximum": 200,
+          "type": "integer"
+        },
+        "lease_seconds": {
+          "minimum": 1,
+          "maximum": 3600,
+          "type": "integer"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "maxItems": 200,
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "command_id",
+              "meta_job_id",
+              "scope",
+              "payload_hash",
+              "idempotency_key",
+              "status",
+              "attempt_count",
+              "lease_generation",
+              "claimed_by",
+              "lease_expires_at",
+              "next_retry_at",
+              "settlement_id",
+              "settlement_hash",
+              "result_ref",
+              "last_error",
+              "trace_id",
+              "created_at",
+              "updated_at",
+              "kind",
+              "target_service",
+              "payload"
+            ],
+            "properties": {
+              "command_id": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "meta_job_id": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "scope": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "workspace_id",
+                  "bot_id",
+                  "owner_agent_id",
+                  "deployment_environment",
+                  "release_channel"
+                ],
+                "properties": {
+                  "workspace_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "bot_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "owner_agent_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "deployment_environment": {
+                    "anyOf": [
+                      {
+                        "const": "local",
+                        "type": "string"
+                      },
+                      {
+                        "const": "dev",
+                        "type": "string"
+                      },
+                      {
+                        "const": "staging",
+                        "type": "string"
+                      },
+                      {
+                        "const": "prod",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "release_channel": {
+                    "anyOf": [
+                      {
+                        "const": "stable",
+                        "type": "string"
+                      },
+                      {
+                        "const": "canary",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              },
+              "payload_hash": {
+                "minLength": 71,
+                "maxLength": 71,
+                "pattern": "^sha256:[a-f0-9]{64}$",
+                "type": "string"
+              },
+              "idempotency_key": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "status": {
+                "anyOf": [
+                  {
+                    "const": "pending",
+                    "type": "string"
+                  },
+                  {
+                    "const": "claimed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "retry_wait",
+                    "type": "string"
+                  },
+                  {
+                    "const": "succeeded",
+                    "type": "string"
+                  },
+                  {
+                    "const": "failed",
+                    "type": "string"
+                  }
+                ]
+              },
+              "attempt_count": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "lease_generation": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "claimed_by": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lease_expires_at": {
+                "anyOf": [
+                  {
+                    "minLength": 20,
+                    "maxLength": 30,
+                    "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "next_retry_at": {
+                "anyOf": [
+                  {
+                    "minLength": 20,
+                    "maxLength": 30,
+                    "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "settlement_id": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "settlement_hash": {
+                "anyOf": [
+                  {
+                    "minLength": 71,
+                    "maxLength": 71,
+                    "pattern": "^sha256:[a-f0-9]{64}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "result_ref": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "last_error": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "trace_id": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "created_at": {
+                "minLength": 20,
+                "maxLength": 30,
+                "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+                "type": "string"
+              },
+              "updated_at": {
+                "minLength": 20,
+                "maxLength": 30,
+                "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+                "type": "string"
+              },
+              "kind": {
+                "const": "skill_candidate_application",
+                "type": "string"
+              },
+              "target_service": {
+                "const": "skill_registry",
+                "type": "string"
+              },
+              "payload": {
+                "$id": "urn:pai:skill-registry:candidate-application-request:v1",
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "schema_version",
+                  "application_id",
+                  "candidate_id",
+                  "review_version",
+                  "candidate_type",
+                  "skill_key",
+                  "workspace_id",
+                  "bot_id",
+                  "deployment_environment",
+                  "release_channel",
+                  "owner_agent_id",
+                  "baseline_catalog_version",
+                  "proposal_ref",
+                  "proposal_hash",
+                  "evidence_refs",
+                  "reviewer_principal_id",
+                  "idempotency_key",
+                  "trace_id"
+                ],
+                "properties": {
+                  "schema_version": {
+                    "const": "skill_candidate_application.v1",
+                    "type": "string"
+                  },
+                  "application_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "candidate_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "review_version": {
+                    "minimum": 1,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "candidate_type": {
+                    "anyOf": [
+                      {
+                        "const": "new_skill",
+                        "type": "string"
+                      },
+                      {
+                        "const": "skill_update",
+                        "type": "string"
+                      },
+                      {
+                        "const": "deprecation",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "skill_key": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "workspace_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "bot_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "deployment_environment": {
+                    "$id": "urn:pai:shared:deployment-environment:v1",
+                    "anyOf": [
+                      {
+                        "const": "local",
+                        "type": "string"
+                      },
+                      {
+                        "const": "dev",
+                        "type": "string"
+                      },
+                      {
+                        "const": "staging",
+                        "type": "string"
+                      },
+                      {
+                        "const": "prod",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "release_channel": {
+                    "$id": "urn:pai:shared:release-channel:v1",
+                    "anyOf": [
+                      {
+                        "const": "stable",
+                        "type": "string"
+                      },
+                      {
+                        "const": "canary",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "owner_agent_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "baseline_catalog_version": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "proposal_ref": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "proposal_hash": {
+                    "pattern": "^sha256:[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  "evidence_refs": {
+                    "minItems": 1,
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "ref",
+                        "hash"
+                      ],
+                      "properties": {
+                        "ref": {
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "type": "string"
+                        },
+                        "hash": {
+                          "pattern": "^sha256:[0-9a-f]{64}$",
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "reviewer_principal_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "trace_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "command_id",
+              "meta_job_id",
+              "scope",
+              "payload_hash",
+              "idempotency_key",
+              "status",
+              "attempt_count",
+              "lease_generation",
+              "claimed_by",
+              "lease_expires_at",
+              "next_retry_at",
+              "settlement_id",
+              "settlement_hash",
+              "result_ref",
+              "last_error",
+              "trace_id",
+              "created_at",
+              "updated_at",
+              "kind",
+              "source_job_lease_generation",
+              "target_service",
+              "payload"
+            ],
+            "properties": {
+              "command_id": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "meta_job_id": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "scope": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "workspace_id",
+                  "bot_id",
+                  "owner_agent_id",
+                  "deployment_environment",
+                  "release_channel"
+                ],
+                "properties": {
+                  "workspace_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "bot_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "owner_agent_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "deployment_environment": {
+                    "anyOf": [
+                      {
+                        "const": "local",
+                        "type": "string"
+                      },
+                      {
+                        "const": "dev",
+                        "type": "string"
+                      },
+                      {
+                        "const": "staging",
+                        "type": "string"
+                      },
+                      {
+                        "const": "prod",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "release_channel": {
+                    "anyOf": [
+                      {
+                        "const": "stable",
+                        "type": "string"
+                      },
+                      {
+                        "const": "canary",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              },
+              "payload_hash": {
+                "minLength": 71,
+                "maxLength": 71,
+                "pattern": "^sha256:[a-f0-9]{64}$",
+                "type": "string"
+              },
+              "idempotency_key": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "status": {
+                "anyOf": [
+                  {
+                    "const": "pending",
+                    "type": "string"
+                  },
+                  {
+                    "const": "claimed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "retry_wait",
+                    "type": "string"
+                  },
+                  {
+                    "const": "succeeded",
+                    "type": "string"
+                  },
+                  {
+                    "const": "failed",
+                    "type": "string"
+                  }
+                ]
+              },
+              "attempt_count": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "lease_generation": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "claimed_by": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lease_expires_at": {
+                "anyOf": [
+                  {
+                    "minLength": 20,
+                    "maxLength": 30,
+                    "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "next_retry_at": {
+                "anyOf": [
+                  {
+                    "minLength": 20,
+                    "maxLength": 30,
+                    "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "settlement_id": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "settlement_hash": {
+                "anyOf": [
+                  {
+                    "minLength": 71,
+                    "maxLength": 71,
+                    "pattern": "^sha256:[a-f0-9]{64}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "result_ref": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "last_error": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "trace_id": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "created_at": {
+                "minLength": 20,
+                "maxLength": 30,
+                "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+                "type": "string"
+              },
+              "updated_at": {
+                "minLength": 20,
+                "maxLength": 30,
+                "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+                "type": "string"
+              },
+              "kind": {
+                "const": "compensation",
+                "type": "string"
+              },
+              "source_job_lease_generation": {
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "target_service": {
+                "anyOf": [
+                  {
+                    "const": "memory",
+                    "type": "string"
+                  },
+                  {
+                    "const": "knowthat",
+                    "type": "string"
+                  }
+                ]
+              },
+              "payload": {
+                "$id": "urn:pai:meta:compensation-command-payload:v1",
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "schema_version",
+                      "item_id",
+                      "reason_code",
+                      "retryable",
+                      "dispatch_mode",
+                      "failed_item",
+                      "owner_request_hash",
+                      "target_service",
+                      "owner_request"
+                    ],
+                    "properties": {
+                      "schema_version": {
+                        "const": "meta_compensation_request.v1",
+                        "type": "string"
+                      },
+                      "item_id": {
+                        "minLength": 1,
+                        "maxLength": 512,
+                        "type": "string"
+                      },
+                      "reason_code": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                        "type": "string"
+                      },
+                      "retryable": {
+                        "const": true,
+                        "type": "boolean"
+                      },
+                      "dispatch_mode": {
+                        "anyOf": [
+                          {
+                            "const": "original_request_replay",
+                            "type": "string"
+                          },
+                          {
+                            "const": "single_item_retry",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "failed_item": {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "client_item_id",
+                          "item_hash",
+                          "source_owner_request_hash",
+                          "source_idempotency_key"
+                        ],
+                        "properties": {
+                          "client_item_id": {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          "item_hash": {
+                            "minLength": 71,
+                            "maxLength": 71,
+                            "pattern": "^sha256:[a-f0-9]{64}$",
+                            "type": "string"
+                          },
+                          "source_owner_request_hash": {
+                            "minLength": 71,
+                            "maxLength": 71,
+                            "pattern": "^sha256:[a-f0-9]{64}$",
+                            "type": "string"
+                          },
+                          "source_idempotency_key": {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "owner_request_hash": {
+                        "minLength": 71,
+                        "maxLength": 71,
+                        "pattern": "^sha256:[a-f0-9]{64}$",
+                        "type": "string"
+                      },
+                      "target_service": {
+                        "const": "memory",
+                        "type": "string"
+                      },
+                      "owner_request": {
+                        "additionalProperties": false,
+                        "maxCanonicalJsonBytes": 2097152,
+                        "type": "object",
+                        "required": [
+                          "schema_version",
+                          "bot_id",
+                          "trigger_process_id",
+                          "source_meta_job_id",
+                          "idempotency_key",
+                          "items"
+                        ],
+                        "properties": {
+                          "schema_version": {
+                            "const": "memory.write_batch.v1",
+                            "type": "string"
+                          },
+                          "bot_id": {
+                            "minLength": 1,
+                            "maxUtf8Bytes": 256,
+                            "type": "string"
+                          },
+                          "trigger_process_id": {
+                            "minLength": 1,
+                            "maxUtf8Bytes": 256,
+                            "type": "string"
+                          },
+                          "source_meta_job_id": {
+                            "minLength": 1,
+                            "maxUtf8Bytes": 256,
+                            "type": "string"
+                          },
+                          "idempotency_key": {
+                            "minLength": 1,
+                            "maxUtf8Bytes": 128,
+                            "type": "string"
+                          },
+                          "compatibility_mode": {
+                            "const": "legacy_subject_order",
+                            "type": "string"
+                          },
+                          "items": {
+                            "minItems": 1,
+                            "maxItems": 100,
+                            "uniqueByCanonicalIdentity": "client_item_id",
+                            "type": "array",
+                            "items": {
+                              "additionalProperties": false,
+                              "maxCanonicalJsonBytes": 65536,
+                              "type": "object",
+                              "required": [
+                                "client_item_id",
+                                "content_summary",
+                                "subject_refs",
+                                "human_agent_relation",
+                                "keyword_tags",
+                                "scene_tags",
+                                "emotion_tags",
+                                "source_info",
+                                "confidence_score",
+                                "occurred_at"
+                              ],
+                              "properties": {
+                                "client_item_id": {
+                                  "minLength": 1,
+                                  "maxUtf8Bytes": 256,
+                                  "type": "string"
+                                },
+                                "source_item_id": {
+                                  "minLength": 1,
+                                  "maxUtf8Bytes": 256,
+                                  "type": "string"
+                                },
+                                "content_summary": {
+                                  "minLength": 1,
+                                  "maxUtf8Bytes": 16384,
+                                  "type": "string"
+                                },
+                                "subject_refs": {
+                                  "minItems": 1,
+                                  "maxItems": 32,
+                                  "uniqueByCanonicalIdentity": true,
+                                  "exactlyOnePrimary": "required_when_multiple",
+                                  "type": "array",
+                                  "items": {
+                                    "additionalProperties": false,
+                                    "atLeastOneOf": [
+                                      "canonical_id",
+                                      "label"
+                                    ],
+                                    "type": "object",
+                                    "required": [
+                                      "subject_type"
+                                    ],
+                                    "properties": {
+                                      "subject_type": {
+                                        "anyOf": [
+                                          {
+                                            "const": "user",
+                                            "type": "string"
+                                          },
+                                          {
+                                            "const": "agent",
+                                            "type": "string"
+                                          },
+                                          {
+                                            "const": "organization",
+                                            "type": "string"
+                                          },
+                                          {
+                                            "const": "project",
+                                            "type": "string"
+                                          },
+                                          {
+                                            "const": "system",
+                                            "type": "string"
+                                          },
+                                          {
+                                            "const": "other",
+                                            "type": "string"
+                                          }
+                                        ]
+                                      },
+                                      "canonical_id": {
+                                        "minLength": 1,
+                                        "maxUtf8Bytes": 256,
+                                        "type": "string"
+                                      },
+                                      "label": {
+                                        "minLength": 1,
+                                        "maxUtf8Bytes": 256,
+                                        "type": "string"
+                                      },
+                                      "primary": {
+                                        "type": "boolean"
+                                      }
+                                    }
+                                  }
+                                },
+                                "topic_hint": {
+                                  "minLength": 1,
+                                  "maxUtf8Bytes": 256,
+                                  "type": "string"
+                                },
+                                "aspect_hint": {
+                                  "minLength": 1,
+                                  "maxUtf8Bytes": 256,
+                                  "type": "string"
+                                },
+                                "scope_hint": {
+                                  "minLength": 1,
+                                  "maxUtf8Bytes": 256,
+                                  "type": "string"
+                                },
+                                "human_agent_relation": {
+                                  "maxItems": 64,
+                                  "uniqueByCanonicalIdentity": true,
+                                  "type": "array",
+                                  "items": {
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": [
+                                      "relation_type",
+                                      "target",
+                                      "direction",
+                                      "confidence_score"
+                                    ],
+                                    "properties": {
+                                      "relation_type": {
+                                        "minLength": 1,
+                                        "maxUtf8Bytes": 256,
+                                        "type": "string"
+                                      },
+                                      "target": {
+                                        "additionalProperties": false,
+                                        "atLeastOneOf": [
+                                          "canonical_id",
+                                          "label"
+                                        ],
+                                        "type": "object",
+                                        "required": [
+                                          "subject_type"
+                                        ],
+                                        "properties": {
+                                          "subject_type": {
+                                            "anyOf": [
+                                              {
+                                                "const": "user",
+                                                "type": "string"
+                                              },
+                                              {
+                                                "const": "agent",
+                                                "type": "string"
+                                              },
+                                              {
+                                                "const": "organization",
+                                                "type": "string"
+                                              },
+                                              {
+                                                "const": "project",
+                                                "type": "string"
+                                              },
+                                              {
+                                                "const": "system",
+                                                "type": "string"
+                                              },
+                                              {
+                                                "const": "other",
+                                                "type": "string"
+                                              }
+                                            ]
+                                          },
+                                          "canonical_id": {
+                                            "minLength": 1,
+                                            "maxUtf8Bytes": 256,
+                                            "type": "string"
+                                          },
+                                          "label": {
+                                            "minLength": 1,
+                                            "maxUtf8Bytes": 256,
+                                            "type": "string"
+                                          },
+                                          "primary": {
+                                            "type": "boolean"
+                                          }
+                                        }
+                                      },
+                                      "direction": {
+                                        "anyOf": [
+                                          {
+                                            "const": "outbound",
+                                            "type": "string"
+                                          },
+                                          {
+                                            "const": "inbound",
+                                            "type": "string"
+                                          },
+                                          {
+                                            "const": "bidirectional",
+                                            "type": "string"
+                                          }
+                                        ]
+                                      },
+                                      "confidence_score": {
+                                        "minimum": 0,
+                                        "maximum": 1,
+                                        "type": "number"
+                                      },
+                                      "evidence_refs": {
+                                        "maxItems": 64,
+                                        "uniqueByCanonicalIdentity": true,
+                                        "type": "array",
+                                        "items": {
+                                          "minLength": 3,
+                                          "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+                                          "type": "string"
+                                        }
+                                      }
+                                    }
+                                  }
+                                },
+                                "keyword_tags": {
+                                  "maxItems": 64,
+                                  "uniqueByCanonicalIdentity": true,
+                                  "type": "array",
+                                  "items": {
+                                    "minLength": 1,
+                                    "maxUtf8Bytes": 256,
+                                    "type": "string"
+                                  }
+                                },
+                                "scene_tags": {
+                                  "maxItems": 16,
+                                  "uniqueByCanonicalIdentity": true,
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "const": "work_planning",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "const": "architecture_review",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "const": "implementation",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "const": "debugging",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "const": "decision_making",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "const": "follow_up",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "const": "personal_preference",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "const": "relationship",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "const": "other",
+                                        "type": "string"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "emotion_tags": {
+                                  "maxItems": 16,
+                                  "uniqueByCanonicalIdentity": true,
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "const": "neutral",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "const": "satisfied",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "const": "confused",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "const": "frustrated",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "const": "urgent",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "const": "uncertain",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "const": "concerned",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "const": "positive",
+                                        "type": "string"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "source_info": {
+                                  "additionalProperties": false,
+                                  "type": "object",
+                                  "required": [
+                                    "source_type",
+                                    "source_ref",
+                                    "actor_type"
+                                  ],
+                                  "properties": {
+                                    "source_type": {
+                                      "anyOf": [
+                                        {
+                                          "const": "trigger_snapshot",
+                                          "type": "string"
+                                        },
+                                        {
+                                          "const": "user_explicit",
+                                          "type": "string"
+                                        },
+                                        {
+                                          "const": "agent_observation",
+                                          "type": "string"
+                                        },
+                                        {
+                                          "const": "tool_result",
+                                          "type": "string"
+                                        },
+                                        {
+                                          "const": "system_event",
+                                          "type": "string"
+                                        },
+                                        {
+                                          "const": "import",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    },
+                                    "source_ref": {
+                                      "minLength": 3,
+                                      "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+                                      "type": "string"
+                                    },
+                                    "source_refs": {
+                                      "maxItems": 64,
+                                      "uniqueByCanonicalIdentity": true,
+                                      "type": "array",
+                                      "items": {
+                                        "minLength": 3,
+                                        "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "actor_type": {
+                                      "anyOf": [
+                                        {
+                                          "const": "user",
+                                          "type": "string"
+                                        },
+                                        {
+                                          "const": "agent",
+                                          "type": "string"
+                                        },
+                                        {
+                                          "const": "system",
+                                          "type": "string"
+                                        },
+                                        {
+                                          "const": "tool",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    },
+                                    "actor_id": {
+                                      "minLength": 1,
+                                      "maxUtf8Bytes": 256,
+                                      "type": "string"
+                                    },
+                                    "evidence_refs": {
+                                      "maxItems": 64,
+                                      "uniqueByCanonicalIdentity": true,
+                                      "type": "array",
+                                      "items": {
+                                        "minLength": 3,
+                                        "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "trace_id": {
+                                      "minLength": 1,
+                                      "maxUtf8Bytes": 256,
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "confidence_score": {
+                                  "minimum": 0,
+                                  "maximum": 1,
+                                  "type": "number"
+                                },
+                                "occurred_at": {
+                                  "format": "date-time",
+                                  "maxUtf8Bytes": 64,
+                                  "type": "string"
+                                },
+                                "evidence_valid_until": {
+                                  "anyOf": [
+                                    {
+                                      "format": "date-time",
+                                      "maxUtf8Bytes": 64,
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "schema_version",
+                      "item_id",
+                      "reason_code",
+                      "retryable",
+                      "dispatch_mode",
+                      "failed_item",
+                      "owner_request_hash",
+                      "target_service",
+                      "owner_request"
+                    ],
+                    "properties": {
+                      "schema_version": {
+                        "const": "meta_compensation_request.v1",
+                        "type": "string"
+                      },
+                      "item_id": {
+                        "minLength": 1,
+                        "maxLength": 512,
+                        "type": "string"
+                      },
+                      "reason_code": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                        "type": "string"
+                      },
+                      "retryable": {
+                        "const": true,
+                        "type": "boolean"
+                      },
+                      "dispatch_mode": {
+                        "anyOf": [
+                          {
+                            "const": "original_request_replay",
+                            "type": "string"
+                          },
+                          {
+                            "const": "single_item_retry",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "failed_item": {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "client_item_id",
+                          "item_hash",
+                          "source_owner_request_hash",
+                          "source_idempotency_key"
+                        ],
+                        "properties": {
+                          "client_item_id": {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          "item_hash": {
+                            "minLength": 71,
+                            "maxLength": 71,
+                            "pattern": "^sha256:[a-f0-9]{64}$",
+                            "type": "string"
+                          },
+                          "source_owner_request_hash": {
+                            "minLength": 71,
+                            "maxLength": 71,
+                            "pattern": "^sha256:[a-f0-9]{64}$",
+                            "type": "string"
+                          },
+                          "source_idempotency_key": {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "owner_request_hash": {
+                        "minLength": 71,
+                        "maxLength": 71,
+                        "pattern": "^sha256:[a-f0-9]{64}$",
+                        "type": "string"
+                      },
+                      "target_service": {
+                        "const": "knowthat",
+                        "type": "string"
+                      },
+                      "owner_request": {
+                        "additionalProperties": false,
+                        "maxCanonicalJsonBytes": 2097152,
+                        "type": "object",
+                        "required": [
+                          "schema_version",
+                          "workspace_id",
+                          "bot_id",
+                          "owner_agent_id",
+                          "deployment_environment",
+                          "release_channel",
+                          "trigger_process_id",
+                          "source_meta_job_id",
+                          "idempotency_key",
+                          "trace_id",
+                          "items"
+                        ],
+                        "properties": {
+                          "schema_version": {
+                            "const": "knowthat.write_batch.v1",
+                            "type": "string"
+                          },
+                          "workspace_id": {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string"
+                          },
+                          "bot_id": {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string"
+                          },
+                          "owner_agent_id": {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string"
+                          },
+                          "deployment_environment": {
+                            "anyOf": [
+                              {
+                                "const": "local",
+                                "type": "string"
+                              },
+                              {
+                                "const": "dev",
+                                "type": "string"
+                              },
+                              {
+                                "const": "staging",
+                                "type": "string"
+                              },
+                              {
+                                "const": "prod",
+                                "type": "string"
+                              }
+                            ]
+                          },
+                          "release_channel": {
+                            "anyOf": [
+                              {
+                                "const": "stable",
+                                "type": "string"
+                              },
+                              {
+                                "const": "canary",
+                                "type": "string"
+                              }
+                            ]
+                          },
+                          "trigger_process_id": {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string"
+                          },
+                          "source_meta_job_id": {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string"
+                          },
+                          "idempotency_key": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "type": "string"
+                          },
+                          "trace_id": {
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string"
+                          },
+                          "items": {
+                            "minItems": 1,
+                            "maxItems": 100,
+                            "uniqueByCanonicalIdentity": "client_item_id",
+                            "type": "array",
+                            "items": {
+                              "additionalProperties": false,
+                              "maxCanonicalJsonBytes": 65536,
+                              "type": "object",
+                              "required": [
+                                "client_item_id",
+                                "text",
+                                "subject",
+                                "predicate",
+                                "object",
+                                "category",
+                                "proposed_status",
+                                "direct_active_hint",
+                                "risk_level",
+                                "explicitness",
+                                "confidence",
+                                "source",
+                                "source_ref",
+                                "evidence_refs",
+                                "evidence_pending"
+                              ],
+                              "properties": {
+                                "client_item_id": {
+                                  "minLength": 1,
+                                  "maxLength": 512,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string"
+                                },
+                                "text": {
+                                  "minLength": 1,
+                                  "maxLength": 16384,
+                                  "type": "string"
+                                },
+                                "subject": {
+                                  "minLength": 1,
+                                  "maxLength": 4096,
+                                  "type": "string"
+                                },
+                                "predicate": {
+                                  "minLength": 1,
+                                  "maxLength": 4096,
+                                  "type": "string"
+                                },
+                                "object": {
+                                  "minLength": 1,
+                                  "maxLength": 4096,
+                                  "type": "string"
+                                },
+                                "category": {
+                                  "anyOf": [
+                                    {
+                                      "const": "user_profile",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "relationship_state",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "world_state",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "self_state",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "project_fact",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "preference",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "rule",
+                                      "type": "string"
+                                    }
+                                  ]
+                                },
+                                "semantic_key_candidate": {
+                                  "minLength": 1,
+                                  "maxLength": 4096,
+                                  "type": "string"
+                                },
+                                "proposed_status": {
+                                  "anyOf": [
+                                    {
+                                      "const": "candidate",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "active",
+                                      "type": "string"
+                                    }
+                                  ]
+                                },
+                                "direct_active_hint": {
+                                  "type": "boolean"
+                                },
+                                "direct_active_reason": {
+                                  "anyOf": [
+                                    {
+                                      "const": "user_explicit",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "low_risk",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "multi_source",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "system_event",
+                                      "type": "string"
+                                    }
+                                  ]
+                                },
+                                "risk_level": {
+                                  "anyOf": [
+                                    {
+                                      "const": "low",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "medium",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "high",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "critical",
+                                      "type": "string"
+                                    }
+                                  ]
+                                },
+                                "explicitness": {
+                                  "anyOf": [
+                                    {
+                                      "const": "explicit_statement",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "strong_implication",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "weak_implication",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "inferred",
+                                      "type": "string"
+                                    }
+                                  ]
+                                },
+                                "confidence": {
+                                  "minimum": 0,
+                                  "maximum": 1,
+                                  "type": "number"
+                                },
+                                "source": {
+                                  "anyOf": [
+                                    {
+                                      "const": "explicit_feedback",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "super_user_explicit",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "approved_artifact",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "system_event_tool_result",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "user_explicit",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "developer_note",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "agent_observation",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "meta_inference",
+                                      "type": "string"
+                                    }
+                                  ]
+                                },
+                                "source_ref": {
+                                  "minLength": 3,
+                                  "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+                                  "type": "string"
+                                },
+                                "evidence_refs": {
+                                  "minItems": 1,
+                                  "maxItems": 64,
+                                  "uniqueItems": true,
+                                  "type": "array",
+                                  "items": {
+                                    "minLength": 3,
+                                    "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+                                    "type": "string"
+                                  }
+                                },
+                                "valid_from": {
+                                  "minLength": 20,
+                                  "maxLength": 35,
+                                  "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                                  "type": "string"
+                                },
+                                "valid_until": {
+                                  "minLength": 20,
+                                  "maxLength": 35,
+                                  "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                                  "type": "string"
+                                },
+                                "evidence_pending": {
+                                  "type": "boolean"
+                                },
+                                "evidence_pending_reason": {
+                                  "minLength": 1,
+                                  "maxLength": 4096,
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

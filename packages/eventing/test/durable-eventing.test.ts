@@ -1,10 +1,12 @@
 import type {
   DurableEventEnvelopeV1,
+  DurableInboxIdentityV1,
   ServiceIdV1,
 } from "@pai/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
+  canonicalDurableEventEnvelopePayloadHashV1,
   canonicalDurableEventEnvelopeSemanticHashV1,
   canonicalPayloadHashV1,
   durableEventScopeFingerprintV1,
@@ -12,9 +14,11 @@ import {
   createDurableEventConsumerWorkerV1,
   createDurableOutboxDispatcherV1,
   createDurableSentOutboxRedriverV1,
+  createPostgresOwnerOutboxStoreV1,
   DurableInboxApplyErrorV1,
   EventTransportErrorV1,
   EventTransportPreflightErrorV1,
+  immutableBoundedJsonSnapshotV1,
   OutboxClaimContractErrorV1,
   type ClaimedOutboxRecordV1,
   type DurableEventTransportPortV1,
@@ -69,17 +73,52 @@ function event(
   };
 }
 
-function pendingRuntimeEvent(
+describe("Shared canonical eventing boundary", () => {
+  it("accepts an acyclic alias and de-aliases its immutable snapshot", () => {
+    const shared = { value: "same" };
+    const snapshot = immutableBoundedJsonSnapshotV1({
+      left: shared,
+      right: shared,
+    }) as Readonly<{
+      left: Readonly<{ value: string }>;
+      right: Readonly<{ value: string }>;
+    }>;
+
+    expect(snapshot).toEqual({
+      left: { value: "same" },
+      right: { value: "same" },
+    });
+    expect(snapshot.left).not.toBe(snapshot.right);
+    expect(Object.isFrozen(snapshot.left)).toBe(true);
+  });
+
+  it("preflights semantic envelope hashes before reading Proxy properties", () => {
+    let trapCalls = 0;
+    const proxied = new Proxy(event(), {
+      get(target, property, receiver) {
+        trapCalls += 1;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    expect(() =>
+      canonicalDurableEventEnvelopeSemanticHashV1(proxied),
+    ).toThrow(/proxy/u);
+    expect(trapCalls).toBe(0);
+  });
+});
+
+function pendingMemoryEvent(
   overrides: Partial<DurableEventEnvelopeV1> = {},
 ): DurableEventEnvelopeV1 {
   return {
-    event_id: "evt_runtime_pending_001",
-    event_type: "runtime.run.completed",
-    schema_version: "runtime_domain_event.v1",
-    producer: "action_runtime",
+    event_id: "evt_memory_pending_001",
+    event_type: "memory.point.created",
+    schema_version: "memory_event.v1",
+    producer: "memory",
     occurred_at: "2026-07-21T05:00:00.000Z",
-    idempotency_key: "run_001:completed",
-    trace_id: "trace_runtime_pending_001",
+    idempotency_key: "memory_001:created",
+    trace_id: "trace_memory_pending_001",
     payload: {
       scope_kind: "bot",
       workspace_id: "workspace_001",
@@ -87,8 +126,7 @@ function pendingRuntimeEvent(
       owner_agent_id: "owner_agent_001",
       deployment_environment: "dev",
       release_channel: "stable",
-      runtime_run_id: "run_001",
-      outcome: "completed",
+      memory_point_id: "memory_001",
     },
     ...overrides,
   };
@@ -121,6 +159,153 @@ function triggerEvent(
       request_hash: "hash_001",
     },
     ...overrides,
+  };
+}
+
+function actionRuntimeEvent(
+  payloadOverrides: Partial<Record<string, unknown>> = {},
+): DurableEventEnvelopeV1 {
+  return {
+    event_id: "runtime_event_001",
+    event_type: "runtime.run.started",
+    schema_version: "runtime_event.v1",
+    producer: "action_runtime",
+    occurred_at: "2026-07-21T05:00:00.000Z",
+    idempotency_key: "run_001:runtime.run.started:1",
+    trace_id: "trace_runtime_001",
+    payload: {
+      trigger_process_id: "process_001",
+      runtime_run_id: "run_001",
+      workspace_id: "workspace_001",
+      bot_id: "bot_001",
+      owner_agent_id: "owner_agent_001",
+      deployment_environment: "dev",
+      release_channel: "stable",
+      start_attempt_no: 1,
+      start_fence_generation: 1,
+      sequence_no: 1,
+      status: "running",
+      previous_status: "queued",
+      next_status: "running",
+      model: "claude-sonnet-4-20250514",
+      reason: null,
+      duration_ms: null,
+      reason_code: null,
+      error_summary: null,
+      terminal_artifact_ref: null,
+      ...payloadOverrides,
+    },
+  };
+}
+
+function scopedSkillCatalogEvent(): DurableEventEnvelopeV1 {
+  return {
+    event_id: "skill_catalog_event_001",
+    event_type: "skill.catalog.changed",
+    schema_version: "skill_registry_event.v1",
+    producer: "skill_registry",
+    occurred_at: "2026-07-21T05:00:00.000Z",
+    idempotency_key: "catalog_revision_001:changed",
+    trace_id: "trace_skill_catalog_001",
+    payload: {
+      scope_kind: "scoped",
+      workspace_id: "workspace_001",
+      bot_id: "bot_001",
+      deployment_environment: "dev",
+      release_channel: "stable",
+      actor_principal_id: "principal_001",
+      reason_code: "activation_changed",
+      catalog_revision_id: "catalog_revision_001",
+      catalog_version: "catalog_001",
+      catalog_as_of: "2026-07-21T05:00:00.000Z",
+      changed_skill_keys: [],
+      security_revocation_epoch: 1,
+    },
+  };
+}
+
+function globalSkillPublishedEvent(): DurableEventEnvelopeV1 {
+  const digest = `sha256:${"1".repeat(64)}`;
+  return {
+    event_id: "skill_published_event_001",
+    event_type: "skill.version.published",
+    schema_version: "skill_registry_event.v1",
+    producer: "skill_registry",
+    occurred_at: "2026-07-21T05:00:00.000Z",
+    idempotency_key: "skill_version_001:published:1",
+    trace_id: "trace_skill_published_001",
+    payload: {
+      scope_kind: "global",
+      actor_principal_id: "principal_001",
+      reason_code: "published",
+      skill_id: "skill_001",
+      skill_key: "source-reader",
+      version_id: "skill_version_001",
+      version: "1.0.0",
+      lifecycle_version: 1,
+      package_digest: digest,
+      manifest_digest: digest,
+      published_at: "2026-07-21T05:00:00.000Z",
+    },
+  };
+}
+
+function memoryPointCreatedEvent(): DurableEventEnvelopeV1 {
+  return {
+    event_id: "memory_event_001",
+    event_type: "memory.point.created",
+    schema_version: "memory.event.v1",
+    producer: "memory",
+    occurred_at: "2026-07-21T05:00:00.000Z",
+    idempotency_key: "point:point_001:v1",
+    trace_id: "trace_memory_001",
+    payload: {
+      workspace_id: "workspace_001",
+      bot_id: "bot_001",
+      owner_agent_id: "owner_agent_001",
+      deployment_environment: "dev",
+      release_channel: "stable",
+      aggregate_id: "point_001",
+      aggregate_version: 1,
+      aggregate_type: "memory_point",
+      memory_point_id: "point_001",
+      series_id: "series_001",
+      topic_key: "topic_001",
+      state_version: 1,
+      source_trigger_process_id: "process_001",
+      write_batch_id: "batch_001",
+      redaction_status: "not_required",
+    },
+  };
+}
+
+function provenanceSkillCandidateEvent(): DurableEventEnvelopeV1 {
+  return {
+    event_id: "skill_candidate_event_001",
+    event_type: "skill.candidate.application.updated",
+    schema_version: "skill_registry_event.v1",
+    producer: "skill_registry",
+    occurred_at: "2026-07-21T05:00:00.000Z",
+    idempotency_key: "skill_candidate_application_001:received:1",
+    trace_id: "trace_skill_candidate_001",
+    payload: {
+      scope_kind: "provenance",
+      workspace_id: "workspace_001",
+      bot_id: "bot_001",
+      owner_agent_id: "owner_agent_001",
+      deployment_environment: "dev",
+      release_channel: "stable",
+      actor_principal_id: "principal_001",
+      reason_code: "received",
+      application_id: "skill_candidate_application_001",
+      candidate_id: "skill_candidate_001",
+      review_version: 1,
+      candidate_type: "new_skill",
+      skill_key: "new-source-reader",
+      status: "received",
+      response_ref: "response_001",
+      response_hash: `sha256:${"2".repeat(64)}`,
+    },
   };
 }
 
@@ -301,7 +486,39 @@ function dispatcher(
 }
 
 describe("durable outbox dispatcher V1", () => {
-  it("rejects a pending owner before claim or acknowledgement side effects", () => {
+  it("requires the PostgreSQL owner writer to confirm its fenced ACK", async () => {
+    const store = createPostgresOwnerOutboxStoreV1(
+      {
+        owner_service: "trigger_processor",
+        outbox_tables: ["trigger_processor.trigger_outbox"],
+        async claim() {
+          return [];
+        },
+        async acknowledge() {
+          return { acknowledged: false } as never;
+        },
+      },
+      "trigger_processor.trigger_outbox",
+    );
+
+    await expect(
+      store.acknowledge({
+        outbox_id: "outbox-1",
+        claim_token: "claim-1",
+        outcome: "sent",
+        next_retry_at: null,
+        error: null,
+        transport_ref: "stream:1-0",
+        transport_epoch: "epoch-1",
+        transport_generation: 1,
+        current_transport_epoch: "epoch-1",
+        current_transport_generation: 1,
+        now: "2026-07-24T01:00:00.000Z",
+      }),
+    ).rejects.toThrow(/fenced compare-and-set/u);
+  });
+
+  it("rejects a service without an owner event contract before side effects", () => {
     let claims = 0;
     let acknowledgements = 0;
     const store: DurableOutboxStorePortV1 = {
@@ -319,13 +536,52 @@ describe("durable outbox dispatcher V1", () => {
         store,
         { async publish() { throw new Error("must not publish"); } },
         { now: new Date("2026-07-21T05:00:01.000Z") },
-        "action_runtime",
+        "observation_gateway",
       ),
     ).toThrow(/no active owner durable event wire contract/u);
     expect({ claims, acknowledgements }).toEqual({
       claims: 0,
       acknowledgements: 0,
     });
+  });
+
+  it("rejects an unknown retry jitter mode before store or transport side effects", () => {
+    let claims = 0;
+    let publishes = 0;
+    const store: DurableOutboxStorePortV1 = {
+      async claim() {
+        claims += 1;
+        return [];
+      },
+      async acknowledge() {
+        throw new Error("must not acknowledge");
+      },
+    };
+
+    expect(() =>
+      createDurableOutboxDispatcherV1(
+        store,
+        {
+          async publish() {
+            publishes += 1;
+            throw new Error("must not publish");
+          },
+        },
+        {
+          owner_service: "trigger_processor",
+          worker_id: "worker_invalid_jitter",
+          batch_size: 1,
+          lease_seconds: 5,
+          max_attempts: 3,
+          retry_base_delay_ms: 250,
+          retry_max_delay_ms: 15_000,
+          retry_jitter: "half" as never,
+          current_transport_epoch: "epoch_1",
+          current_transport_generation: 1,
+        },
+      ),
+    ).toThrow(/invalid durable outbox dispatcher configuration/u);
+    expect({ claims, publishes }).toEqual({ claims: 0, publishes: 0 });
   });
 
   it("recovers an event committed before any dispatcher process existed", async () => {
@@ -558,6 +814,46 @@ describe("durable outbox dispatcher V1", () => {
     expect(store.records[0]?.status).toBe("sent");
   });
 
+  it("does not start a late ACK when publish settles after batch abort", async () => {
+    const store = new DurableStoreFake([event()]);
+    let publishEntered!: () => void;
+    let releasePublish!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      publishEntered = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      releasePublish = resolve;
+    });
+    let observedSignal: AbortSignal | undefined;
+    const transport: DurableEventTransportPortV1 = {
+      async publish(_request, signal) {
+        observedSignal = signal;
+        publishEntered();
+        await blocked;
+        return {
+          transport_ref: "redis_stream:late-1-0",
+          transport_epoch: "epoch_1",
+          transport_generation: 1,
+        };
+      },
+    };
+    const controller = new AbortController();
+    const run = dispatcher(
+      store,
+      transport,
+      { now: new Date("2026-07-21T05:00:01.000Z") },
+    ).dispatchBatch(controller.signal);
+    await entered;
+
+    controller.abort(new Error("dispatch deadline exceeded"));
+    releasePublish();
+
+    await expect(run).rejects.toThrow("dispatch deadline exceeded");
+    expect(observedSignal).toBe(controller.signal);
+    expect(store.acknowledgements).toHaveLength(0);
+    expect(store.records[0]?.status).toBe("dispatching");
+  });
+
   it("does not acknowledge success on transient transport failure", async () => {
     const store = new DurableStoreFake([event()]);
     const clock = { now: new Date("2026-07-21T05:00:01.000Z") };
@@ -688,8 +984,8 @@ describe("durable outbox dispatcher V1", () => {
     expect(store.records[0]?.status).toBe("failed");
   });
 
-  it("fails a declared-but-pending owner before constructing a dispatcher", () => {
-    const store = new DurableStoreFake([pendingRuntimeEvent()]);
+  it("fails an invalid active-owner payload before transport side effects", async () => {
+    const store = new DurableStoreFake([pendingMemoryEvent()]);
     let publishes = 0;
     const transport: DurableEventTransportPortV1 = {
       async publish() {
@@ -703,12 +999,12 @@ describe("durable outbox dispatcher V1", () => {
     };
     const clock = { now: new Date("2026-07-21T05:00:01.000Z") };
 
-    expect(() =>
-      dispatcher(store, transport, clock, "action_runtime"),
-    ).toThrow(/no active owner durable event wire contract/u);
+    await expect(
+      dispatcher(store, transport, clock, "memory").dispatchBatch(),
+    ).resolves.toMatchObject({ claimed: 1, failed: 1 });
     expect(publishes).toBe(0);
-    expect(store.acknowledgements).toHaveLength(0);
-    expect(store.records[0]?.status).toBe("pending");
+    expect(store.acknowledgements).toHaveLength(1);
+    expect(store.records[0]?.status).toBe("failed");
   });
 
   it("fails a durable event whose target is outside the route matrix", async () => {
@@ -805,7 +1101,7 @@ describe("durable outbox dispatcher V1", () => {
 });
 
 describe("durable sent outbox redrive V1", () => {
-  it("rejects a pending owner before claiming or rewriting sent rows", () => {
+  it("rejects a service without an owner event contract before redrive side effects", () => {
     let claims = 0;
     let acknowledgements = 0;
 
@@ -822,7 +1118,7 @@ describe("durable sent outbox redrive V1", () => {
         },
         { async publish() { throw new Error("must not publish"); } },
         {
-          owner_service: "timer_trigger_app",
+          owner_service: "observation_gateway",
           worker_id: "redrive_worker",
           batch_size: 10,
           lease_seconds: 30,
@@ -945,15 +1241,37 @@ describe("durable sent outbox redrive V1", () => {
         row.transport_generation = request.current_transport_generation;
         row.active_transport_generation = request.current_transport_generation;
       },
+      async acknowledgeSentRedrivePermanentFailure() {
+        throw new Error("valid retained row must not be quarantined");
+      },
     };
     let redisStream = [envelope];
-    const seen = new Set<string>();
+    const seen = new Map<string, DurableInboxIdentityV1>();
     const consumer = createDurableInboxConsumerV1(
       {
         async apply(request) {
-          const key = `${request.source}:${request.scope_fingerprint}:${request.idempotency_key}:${request.semantic_hash}`;
-          if (seen.has(key)) return { status: "replayed" };
-          seen.add(key);
+          const key = `${request.source}:${request.event_id}`;
+          const existing = seen.get(key);
+          if (existing !== undefined) {
+            return existing.idempotency_key === request.idempotency_key &&
+              existing.payload_hash === request.payload_hash &&
+              existing.semantic_hash === request.semantic_hash &&
+              existing.scope_fingerprint === request.scope_fingerprint
+              ? { status: "replayed" }
+              : {
+                  status: "isolated",
+                  isolation_code: "durable_inbox_identity_conflict",
+                  isolation_ref: `memory-dlq:${key}`,
+                };
+          }
+          seen.set(key, {
+            source: request.source,
+            event_id: request.event_id,
+            idempotency_key: request.idempotency_key,
+            payload_hash: request.payload_hash,
+            semantic_hash: request.semantic_hash,
+            scope_fingerprint: request.scope_fingerprint,
+          });
           return { status: "processed" };
         },
       },
@@ -1030,6 +1348,9 @@ describe("durable sent outbox redrive V1", () => {
         row.transport_ref = request.transport_ref;
         row.transport_generation = request.current_transport_generation;
         row.active_transport_generation = request.current_transport_generation;
+      },
+      async acknowledgeSentRedrivePermanentFailure() {
+        throw new Error("valid retained row must not be quarantined");
       },
     };
     const redriver = createDurableSentOutboxRedriverV1(
@@ -1294,6 +1615,68 @@ describe("durable sent outbox redrive V1", () => {
     });
     expect(quarantineAttempts).toBe(2);
   });
+
+  it("persists only a closed code when a preflight error contains secrets", async () => {
+    const envelope = event({ event_id: "evt_redrive_secret_error_001" });
+    const secretError =
+      "POST https://user:password@redis.invalid Authorization: Bearer redis-token prompt=private";
+    let durableFailure:
+      | Readonly<{ failure_code: string; failure_message: string }>
+      | undefined;
+    const redriver = createDurableSentOutboxRedriverV1(
+      {
+        async claimSentForRedrive() {
+          return [{
+            outbox_id: "outbox_redrive_secret_error_001",
+            claim_token: "redrive_worker:secret-error",
+            attempt_count: 1,
+            target: "trigger_processor.admission_audit",
+            envelope,
+            payload_hash: canonicalPayloadHashV1(envelope.payload),
+            sent_at: "2026-07-21T05:00:00.000Z",
+            transport_ref: "redis_stream:old-1-0",
+            transport_epoch: "epoch_old",
+            transport_generation: 1,
+            active_transport_generation: 2,
+          }];
+        },
+        async acknowledgeSentRedrive() {
+          throw new Error("preflight rejection must not be acknowledged as sent");
+        },
+        async acknowledgeSentRedrivePermanentFailure(request) {
+          durableFailure = request;
+          return { acknowledged: true, status: "quarantined" };
+        },
+      },
+      {
+        async publish() {
+          throw new EventTransportPreflightErrorV1(
+            "transport_rejected",
+            secretError,
+          );
+        },
+      },
+      {
+        owner_service: "trigger_processor",
+        worker_id: "redrive_worker",
+        batch_size: 1,
+        lease_seconds: 30,
+        current_transport_epoch: "epoch_current",
+        current_transport_generation: 2,
+      },
+    );
+
+    await expect(redriver.redriveBatch()).resolves.toMatchObject({
+      permanent_failures: 1,
+      retryable_failures: 0,
+    });
+    expect(durableFailure).toMatchObject({
+      failure_code: "transport_rejected",
+      failure_message: "transport_rejected",
+    });
+    expect(JSON.stringify(durableFailure)).not.toContain("redis-token");
+    expect(JSON.stringify(durableFailure)).not.toContain("private");
+  });
 });
 
 describe("durable inbox consumer V1", () => {
@@ -1313,6 +1696,115 @@ describe("durable inbox consumer V1", () => {
       status: "processed",
     });
     expect(observedScope).toBe(durableEventScopeFingerprintV1(envelope));
+  });
+
+  it("consumes Action Runtime owner events with the exact bot scope fingerprint", async () => {
+    let observedScope: string | undefined;
+    const consumer = createDurableInboxConsumerV1(
+      {
+        async apply(request) {
+          observedScope = request.scope_fingerprint;
+          return { status: "processed" };
+        },
+      },
+      { consumer_service: "trigger_processor" },
+    );
+    const envelope = actionRuntimeEvent();
+    await expect(consumer.consume(envelope)).resolves.toEqual({
+      status: "processed",
+    });
+    expect(observedScope).toBe(durableEventScopeFingerprintV1(envelope));
+    const missingScope = actionRuntimeEvent();
+    delete (missingScope.payload as Record<string, unknown>).workspace_id;
+    await expect(
+      consumer.consume(missingScope),
+    ).rejects.toThrow(/payload/u);
+  });
+
+  it("consumes both scoped and global Skill Registry owner events", async () => {
+    const observedScopes: string[] = [];
+    const consumer = createDurableInboxConsumerV1(
+      {
+        async apply(request) {
+          observedScopes.push(request.scope_fingerprint);
+          return { status: "processed" };
+        },
+      },
+      { consumer_service: "action_runtime" },
+    );
+    const scoped = scopedSkillCatalogEvent();
+    const global = globalSkillPublishedEvent();
+    await expect(consumer.consume(scoped)).resolves.toEqual({
+      status: "processed",
+    });
+    await expect(consumer.consume(global)).resolves.toEqual({
+      status: "processed",
+    });
+    expect(observedScopes).toEqual([
+      durableEventScopeFingerprintV1(scoped),
+      durableEventScopeFingerprintV1(global),
+    ]);
+    expect(observedScopes[0]).not.toBe(observedScopes[1]);
+  });
+
+  it("consumes provenance-scoped Skill candidate events", async () => {
+    let observedScope: string | undefined;
+    const consumer = createDurableInboxConsumerV1(
+      {
+        async apply(request) {
+          observedScope = request.scope_fingerprint;
+          return { status: "processed" };
+        },
+      },
+      { consumer_service: "meta_cognition" },
+    );
+    const envelope = provenanceSkillCandidateEvent();
+    await expect(consumer.consume(envelope)).resolves.toEqual({
+      status: "processed",
+    });
+    expect(observedScope).toBe(durableEventScopeFingerprintV1(envelope));
+  });
+
+  it("uses the complete five-part bot scope for Memory events", async () => {
+    let observedScope: string | undefined;
+    const consumer = createDurableInboxConsumerV1(
+      {
+        async apply(request) {
+          observedScope = request.scope_fingerprint;
+          return { status: "processed" };
+        },
+      },
+      { consumer_service: "meta_cognition" },
+    );
+    const envelope = memoryPointCreatedEvent();
+    await expect(consumer.consume(envelope)).resolves.toEqual({
+      status: "processed",
+    });
+    expect(observedScope).toBe(durableEventScopeFingerprintV1(envelope));
+  });
+
+  it("rejects legacy bot-only Memory events before inbox apply", async () => {
+    let applied = false;
+    const consumer = createDurableInboxConsumerV1(
+      {
+        async apply() {
+          applied = true;
+          return { status: "processed" };
+        },
+      },
+      { consumer_service: "meta_cognition" },
+    );
+    const legacy = memoryPointCreatedEvent();
+    const payload = legacy.payload as Record<string, unknown>;
+    delete payload.workspace_id;
+    delete payload.owner_agent_id;
+    delete payload.deployment_environment;
+    delete payload.release_channel;
+
+    await expect(consumer.consume(legacy)).rejects.toThrow(
+      /invalid durable event envelope/u,
+    );
+    expect(applied).toBe(false);
   });
 
   it("snapshots consumer routing and the envelope before the inbox await", async () => {
@@ -1342,15 +1834,27 @@ describe("durable inbox consumer V1", () => {
     expect(observedReason).toBe("admission_accepted");
   });
 
-  it("processes one scoped identity once and rejects same-key semantic drift", async () => {
-    const seen = new Map<string, string>();
+  it("uses source plus event_id as identity and isolates any replay fingerprint drift", async () => {
+    type ReplayFingerprints = Readonly<{
+      idempotency_key: string;
+      payload_hash: string;
+      semantic_hash: string;
+      scope_fingerprint: string;
+    }>;
+    const seen = new Map<string, ReplayFingerprints>();
     const inbox: TransactionalInboxApplyPortV1 = {
       async apply(request) {
-        const key = `${request.source}:${request.scope_fingerprint}:${request.idempotency_key}`;
+        const key = `${request.source}:${request.event_id}`;
         const existing = seen.get(key);
+        const fingerprints = {
+          idempotency_key: request.idempotency_key,
+          payload_hash: request.payload_hash,
+          semantic_hash: request.semantic_hash,
+          scope_fingerprint: request.scope_fingerprint,
+        };
         if (existing === undefined) {
           expect(request.payload_hash).toBe(
-            canonicalPayloadHashV1(request.envelope.payload),
+            canonicalDurableEventEnvelopePayloadHashV1(request.envelope),
           );
           expect(request.semantic_hash).toBe(
             canonicalDurableEventEnvelopeSemanticHashV1(request.envelope),
@@ -1358,11 +1862,20 @@ describe("durable inbox consumer V1", () => {
           expect(request.scope_fingerprint).toBe(
             durableEventScopeFingerprintV1(request.envelope),
           );
-          seen.set(key, request.semantic_hash);
+          seen.set(key, fingerprints);
           return { status: "processed" };
         }
-        if (existing !== request.semantic_hash) {
-          throw new Error("inbox idempotency semantic hash conflict");
+        if (
+          Object.entries(fingerprints).some(
+            ([field, value]) =>
+              existing[field as keyof ReplayFingerprints] !== value,
+          )
+        ) {
+          return {
+            status: "isolated",
+            isolation_code: "durable_inbox_identity_conflict",
+            isolation_ref: `inbox-conflict:${key}`,
+          };
         }
         return { status: "replayed" };
       },
@@ -1372,21 +1885,60 @@ describe("durable inbox consumer V1", () => {
     });
     await expect(consumer.consume(event())).resolves.toEqual({ status: "processed" });
     await expect(consumer.consume(event())).resolves.toEqual({ status: "replayed" });
-    const semanticConflictKey = "semantic_conflict_001";
+    const traceBound = event({ event_id: "evt_trace_bound_001" });
+    await expect(consumer.consume(traceBound)).resolves.toEqual({
+      status: "processed",
+    });
+    await expect(
+      consumer.consume({ ...traceBound, trace_id: "trace_drifted_001" }),
+    ).resolves.toMatchObject({
+      status: "isolated",
+      isolation_code: "durable_inbox_identity_conflict",
+    });
+    const timeBound = event({ event_id: "evt_time_bound_001" });
+    await expect(consumer.consume(timeBound)).resolves.toEqual({
+      status: "processed",
+    });
+    await expect(
+      consumer.consume({
+        ...timeBound,
+        occurred_at: "2026-07-21T05:00:01.000Z",
+      }),
+    ).resolves.toMatchObject({
+      status: "isolated",
+      isolation_code: "durable_inbox_identity_conflict",
+    });
+    expect(
+      canonicalDurableEventEnvelopeSemanticHashV1(traceBound),
+    ).toBe(
+      canonicalDurableEventEnvelopeSemanticHashV1({
+        ...traceBound,
+        trace_id: "trace_drifted_001",
+      }),
+    );
+    expect(
+      canonicalDurableEventEnvelopePayloadHashV1(traceBound),
+    ).not.toBe(
+      canonicalDurableEventEnvelopePayloadHashV1({
+        ...traceBound,
+        trace_id: "trace_drifted_001",
+      }),
+    );
+    const reusedBusinessKey = "reused_business_key_001";
     await expect(
       consumer.consume(
         event({
-          event_id: "evt_rejected_semantic_001",
-          idempotency_key: semanticConflictKey,
+          event_id: "evt_distinct_delivery_001",
+          idempotency_key: reusedBusinessKey,
         }),
       ),
     ).resolves.toEqual({ status: "processed" });
     await expect(
       consumer.consume(
         event({
-          event_id: "evt_cooldown_semantic_002",
+          event_id: "evt_distinct_delivery_002",
           event_type: "cooldown.expired",
-          idempotency_key: semanticConflictKey,
+          idempotency_key: reusedBusinessKey,
           payload: {
             ...triggerPayloadBase(),
             trigger_process_id: "process_001",
@@ -1395,14 +1947,52 @@ describe("durable inbox consumer V1", () => {
           },
         }),
       ),
-    ).rejects.toThrow(/semantic hash conflict/);
+    ).resolves.toEqual({ status: "processed" });
+    await expect(
+      consumer.consume(event({ idempotency_key: "drifted-business-key" })),
+    ).resolves.toMatchObject({
+      status: "isolated",
+      isolation_code: "durable_inbox_identity_conflict",
+    });
+  });
+
+  it("rejects semantically impossible Trigger Processor events before inbox apply", async () => {
+    let applied = false;
+    const consumer = createDurableInboxConsumerV1(
+      {
+        async apply() {
+          applied = true;
+          return { status: "processed" };
+        },
+      },
+      { consumer_service: "trigger_processor" },
+    );
+
+    await expect(
+      consumer.consume(
+        event({
+          event_id: "evt_trigger_cooldown_impossible",
+          event_type: "cooldown.expired",
+          idempotency_key: "process_001:cooldown_impossible",
+          payload: {
+            ...triggerPayloadBase({}),
+            reason_code: "cooldown_expired",
+            source_ref: "trigger_event:cooldown_001",
+            trigger_process_id: "process_001",
+            cooldown_until: "2026-07-22T05:00:00.000Z",
+            expired_at: "2026-07-22T04:59:59.999Z",
+          },
+        }),
+      ),
+    ).rejects.toThrow(/semantic binding/u);
+    expect(applied).toBe(false);
   });
 
   it("does not collapse different bot scopes that reuse producer idempotency keys", async () => {
     const seen = new Set<string>();
     const inbox: TransactionalInboxApplyPortV1 = {
       async apply(request) {
-        const key = `${request.source}:${request.scope_fingerprint}:${request.idempotency_key}`;
+        const key = `${request.source}:${request.event_id}`;
         if (seen.has(key)) return { status: "replayed" };
         seen.add(key);
         return { status: "processed" };
@@ -1415,6 +2005,7 @@ describe("durable inbox consumer V1", () => {
     await expect(
       consumer.consume(
         event({
+          event_id: "evt_rejected_002",
           payload: {
             ...triggerPayloadBase({
               bot_id: "bot_002",
@@ -1430,7 +2021,7 @@ describe("durable inbox consumer V1", () => {
     expect(seen.size).toBe(2);
   });
 
-  it("rejects a declared-but-pending producer branch before owner side effects", async () => {
+  it("rejects an incomplete active-owner payload before owner side effects", async () => {
     let applies = 0;
     const consumer = createDurableInboxConsumerV1({
       async apply() {
@@ -1439,8 +2030,8 @@ describe("durable inbox consumer V1", () => {
       },
     }, { consumer_service: "trigger_processor" });
     await expect(
-      consumer.consume(pendingRuntimeEvent()),
-    ).rejects.toThrow(/producer owner union/u);
+      consumer.consume(pendingMemoryEvent()),
+    ).rejects.toThrow(/schema_version|payload/u);
     expect(applies).toBe(0);
   });
 
@@ -1727,6 +2318,63 @@ describe("durable event consumer worker V1", () => {
     expect(delivery.acknowledged).toEqual(["1-0"]);
   });
 
+  it("captures deleted-delivery reconciliation authority before asynchronous reclaim", async () => {
+    const reconciliation = deletedDeliveryReconciliationFake();
+    const worker = createDurableEventConsumerWorkerV1(
+      {
+        async readNew() {
+          return [];
+        },
+        async reclaimPending() {
+          return {
+            next_start_id: "0-0",
+            deliveries: [],
+            deleted_ids: ["1-0"],
+          };
+        },
+        async acknowledge() {
+          throw new Error("must not acknowledge a deleted delivery");
+        },
+        transportRefForDeliveryId(deliveryId) {
+          return `redis_stream:pai:test:events:${deliveryId}`;
+        },
+      },
+      {
+        async apply() {
+          throw new Error("must not apply a deleted delivery");
+        },
+      },
+      {
+        consumer_service: "trigger_processor",
+        dead_letter: deadLetterFake().port,
+        deleted_delivery_reconciliation: reconciliation,
+      },
+    );
+
+    Object.assign(reconciliation.recorder, {
+      async verifyPeriodicFullAuditActive() {
+        throw new Error("mutated audit authority must not run");
+      },
+      async recordDeletedTransportRefs() {
+        throw new Error("mutated recorder authority must not run");
+      },
+    });
+
+    await expect(
+      worker.reclaimAndConsumeBatch({
+        min_idle_ms: 30_000,
+        count: 1,
+        start_id: "0-0",
+        max_pages: 1,
+      }),
+    ).resolves.toMatchObject({
+      received: 0,
+      failed: 0,
+      deleted: 1,
+      next_start_id: "0-0",
+    });
+  });
+
   it("durably dead-letters one malformed delivery without blocking its valid sibling", async () => {
     const delivery = new DeliveryFake([
       {
@@ -1805,6 +2453,51 @@ describe("durable event consumer worker V1", () => {
     expect(order).toEqual(["dlq", "xack"]);
   });
 
+  it("XACKs an identity conflict only after the inbox returns a durable isolation receipt", async () => {
+    const delivery = new DeliveryFake([
+      {
+        kind: "event",
+        delivery_id: "1-0",
+        delivery_ref: "stream:test#1-0",
+        envelope: event({ event_id: "evt_isolated_001" }),
+      },
+    ]);
+    let consumerDlqCalls = 0;
+    const worker = createDurableEventConsumerWorkerV1(
+      delivery,
+      {
+        async apply() {
+          return {
+            status: "isolated",
+            isolation_code: "durable_inbox_identity_conflict",
+            isolation_ref: "trigger_processor.eventing_dlq/inbox-conflict-1",
+          };
+        },
+      },
+      {
+        consumer_service: "trigger_processor",
+        dead_letter: {
+          async recordPermanentFailure() {
+            consumerDlqCalls += 1;
+            return { status: "recorded" };
+          },
+        },
+      },
+    );
+
+    await expect(worker.consumeNewBatch({ count: 10, block_ms: 0 })).resolves
+      .toMatchObject({
+        received: 1,
+        processed: 0,
+        replayed: 0,
+        failed: 0,
+        dead_lettered: 1,
+        acknowledged: 1,
+      });
+    expect(consumerDlqCalls).toBe(0);
+    expect(delivery.acknowledged).toEqual(["1-0"]);
+  });
+
   it("does not XACK when the durable consumer DLQ transaction fails", async () => {
     const delivery = new DeliveryFake([
       {
@@ -1859,8 +2552,60 @@ describe("durable event consumer worker V1", () => {
 
     await expect(worker.consumeNewBatch({ count: 10, block_ms: 0 })).resolves
       .toMatchObject({ failed: 1, dead_lettered: 0, acknowledged: 0 });
-    expect(recordedMessage).toHaveLength(512);
+    expect(recordedMessage).toBe("invalid_envelope");
     expect(delivery.acknowledged).toEqual([]);
+  });
+
+  it("redacts secret-bearing invalid fields again at the durable DLQ boundary", async () => {
+    const secretPayload =
+      "{\"authorization\":\"Bearer stream-token\",\"prompt\":\"private prompt\"}";
+    const delivery = new DeliveryFake([{
+      kind: "invalid",
+      delivery_id: "1-0",
+      delivery_ref: "stream:test#1-0",
+      error_code: "invalid_envelope",
+      error_message:
+        "https://user:password@redis.invalid Bearer stream-token private prompt",
+      raw_fields: ["payload", secretPayload],
+    }]);
+    let recorded:
+      | Parameters<DurableEventConsumerDeadLetterPortV1["recordPermanentFailure"]>[0]
+      | undefined;
+    const worker = createDurableEventConsumerWorkerV1(
+      delivery,
+      { async apply() { return { status: "processed" }; } },
+      {
+        consumer_service: "trigger_processor",
+        dead_letter: {
+          async recordPermanentFailure(request) {
+            recorded = request;
+            return { status: "recorded" };
+          },
+        },
+      },
+    );
+
+    await expect(worker.consumeNewBatch({ count: 10, block_ms: 0 })).resolves
+      .toMatchObject({ dead_lettered: 1, acknowledged: 1 });
+    expect(recorded).toMatchObject({
+      failure_code: "invalid_envelope",
+      failure_message: "invalid_envelope",
+      raw_fields: [
+        expect.objectContaining({
+          kind: "string",
+          role: "field_name",
+          field_name: "payload",
+        }),
+        expect.objectContaining({
+          kind: "string",
+          role: "field_value",
+          field_name: null,
+        }),
+      ],
+    });
+    expect(JSON.stringify(recorded)).not.toContain("stream-token");
+    expect(JSON.stringify(recorded)).not.toContain("private prompt");
+    expect(JSON.stringify(recorded)).not.toContain("user:password");
   });
 
   it("rejects accessor-backed inbox and DLQ acknowledgements before XACK", async () => {

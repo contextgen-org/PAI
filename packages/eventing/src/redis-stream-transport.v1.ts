@@ -29,6 +29,10 @@ import {
   type DurableEventReclaimBatchV1,
   type DurableEventTransportPortV1,
 } from "./durable-eventing.v1.js";
+import {
+  closedDurableFailureMessageV1,
+  summarizeDurableRawFieldsV1,
+} from "./durable-failure-sanitization.v1.js";
 import type {
   DurableEventTransportReferenceProbePortV1,
 } from "./redis-stream-reconciliation.v1.js";
@@ -36,10 +40,6 @@ import type {
 const redisSegmentPattern = /^[a-z][a-z0-9_]{0,63}$/;
 const redisStreamIdPattern = /^\d+-\d+$/u;
 export const REDIS_STREAM_MESSAGE_MAX_BYTES_V1 = 1_048_576;
-const MAX_INVALID_RAW_FIELD_CAPTURE_ELEMENTS = 64;
-const MAX_INVALID_RAW_FIELD_CAPTURE_UTF8_BYTES = 16_384;
-const MAX_INVALID_RAW_FIELD_CAPTURE_SERIALIZED_BYTES = 16_384;
-const MAX_INVALID_DELIVERY_ERROR_MESSAGE_LENGTH = 512;
 const redisEnvelopeFields = new Set([
   "event_id",
   "event_type",
@@ -83,7 +83,10 @@ export class RedisDependencyErrorV1 extends Error {
   }
 }
 
-function assertRedisUrl(rawUrl: string | undefined): asserts rawUrl is string {
+function assertRedisUrl(
+  rawUrl: string | undefined,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): asserts rawUrl is string {
   if (rawUrl === undefined || rawUrl.trim().length === 0) {
     throw new RedisRuntimeConfigErrorV1("PAI_REDIS_URL is required");
   }
@@ -96,14 +99,20 @@ function assertRedisUrl(rawUrl: string | undefined): asserts rawUrl is string {
   const isLoopback = ["localhost", "127.0.0.1", "[::1]"].includes(
     url.hostname,
   );
+  const isTrustedLocalDockerRedis =
+    env.PAI_DEPLOYMENT_ENVIRONMENT === "local" &&
+    env.PAI_LOCAL_DOCKER_TRANSPORT === "true" &&
+    url.protocol === "redis:" &&
+    url.hostname === "redis" &&
+    url.port === "6379";
   if (
     (url.protocol !== "redis:" && url.protocol !== "rediss:") ||
-    (url.protocol === "redis:" && !isLoopback) ||
+    (url.protocol === "redis:" && !isLoopback && !isTrustedLocalDockerRedis) ||
     url.hostname.length === 0 ||
     url.hash.length > 0
   ) {
     throw new RedisRuntimeConfigErrorV1(
-      "PAI_REDIS_URL must use rediss except for loopback redis and cannot contain a fragment",
+      "PAI_REDIS_URL must use rediss except for loopback or explicitly configured local Docker redis and cannot contain a fragment",
     );
   }
 }
@@ -128,7 +137,7 @@ export function loadRedisRuntimeConfigV1(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): RedisRuntimeConfigV1 {
   const rawUrl = env.PAI_REDIS_URL;
-  assertRedisUrl(rawUrl);
+  assertRedisUrl(rawUrl, env);
   const config = {
     url: rawUrl,
     connect_timeout_ms: parseIntegerSetting(
@@ -314,6 +323,7 @@ export function namespacedRedisKeyV1(
 export function buildRedisStreamMessageV1(
   envelope: DurableEventEnvelopeV1,
 ): Readonly<Record<keyof DurableEventEnvelopeV1, string>> {
+  canonicalJsonV1(envelope);
   assertDurableEventEnvelopeV1(envelope);
   return Object.freeze({
     event_id: envelope.event_id,
@@ -334,6 +344,9 @@ export interface RedisStreamConsumerGroupPortV1
 
 export interface RedisCommandClientPortV1 {
   sendCommand(args: readonly string[]): Promise<unknown>;
+  withAbortSignal?(
+    signal: AbortSignal,
+  ): RedisCommandClientPortV1;
 }
 
 export interface RedisAofPublishClientPortV1 extends RedisCommandClientPortV1 {
@@ -413,12 +426,14 @@ export async function xAddWithLocalAofFenceV1(
     message: Readonly<Record<string, string>>;
     aof_ack_timeout_ms: number;
     connection_generation: () => number;
+    signal?: AbortSignal;
   }>,
 ): Promise<string> {
   const stream = request.stream;
   const message = immutableRedisStringRecordSnapshotV1(request.message);
   const aofAckTimeoutMs = request.aof_ack_timeout_ms;
   const connectionGeneration = request.connection_generation;
+  const signal = request.signal;
   if (
     typeof stream !== "string" ||
     stream.trim().length === 0 ||
@@ -433,6 +448,7 @@ export async function xAddWithLocalAofFenceV1(
       "Redis durable publish request is outside the V1 bounds",
     );
   }
+  signal?.throwIfAborted();
   assertRedisStreamMessageSizeV1(message);
   const generation = connectionGeneration();
   if (!Number.isSafeInteger(generation) || generation < 1) {
@@ -443,6 +459,7 @@ export async function xAddWithLocalAofFenceV1(
     );
   }
   const streamId = await client.xAdd(stream, "*", message);
+  signal?.throwIfAborted();
   if (
     !redisStreamIdPattern.test(streamId) ||
     connectionGeneration() !== generation
@@ -459,6 +476,7 @@ export async function xAddWithLocalAofFenceV1(
     "0",
     String(aofAckTimeoutMs),
   ]);
+  signal?.throwIfAborted();
   if (connectionGeneration() !== generation) {
     throw new EventTransportErrorV1(
       "transport_timeout",
@@ -583,8 +601,9 @@ function envelopeMatchesRedisNamespaceV1(
   const payload = envelope.payload as Readonly<Record<string, unknown>>;
   return (
     envelope.producer === namespace.owner_service &&
-    payload.deployment_environment === namespace.deployment_environment &&
-    payload.release_channel === namespace.release_channel
+    (payload.scope_kind === "global" ||
+      (payload.deployment_environment === namespace.deployment_environment &&
+        payload.release_channel === namespace.release_channel))
   );
 }
 
@@ -593,64 +612,14 @@ function invalidRedisDelivery(
   deliverySource: string,
   rawFields: unknown,
   errorCode: DurableEventInvalidDeliveryV1["error_code"],
-  message: string,
 ): DurableEventInvalidDeliveryV1 {
-  const capturedFields: string[] = [];
-  let capturedUtf8Bytes = 0;
-  if (Array.isArray(rawFields)) {
-    let omittedFields = 0;
-    for (let index = 0; index < rawFields.length; index += 1) {
-      const rawField = rawFields[index];
-      const capturedField =
-        typeof rawField === "string"
-          ? rawField
-          : "[non-string field omitted]";
-      const fieldBytes = Buffer.byteLength(capturedField, "utf8");
-      const candidate = [...capturedFields, capturedField];
-      if (
-        candidate.length >= MAX_INVALID_RAW_FIELD_CAPTURE_ELEMENTS ||
-        capturedUtf8Bytes + fieldBytes >
-          MAX_INVALID_RAW_FIELD_CAPTURE_UTF8_BYTES ||
-        Buffer.byteLength(canonicalJsonV1(candidate), "utf8") >
-          MAX_INVALID_RAW_FIELD_CAPTURE_SERIALIZED_BYTES
-      ) {
-        omittedFields = rawFields.length - index;
-        break;
-      }
-      capturedFields.push(capturedField);
-      capturedUtf8Bytes += fieldBytes;
-    }
-    if (omittedFields > 0) {
-      const marker = `[${omittedFields} raw fields omitted]`;
-      const markerBytes = Buffer.byteLength(marker, "utf8");
-      while (
-        capturedFields.length > 0 &&
-        (capturedFields.length + 1 > MAX_INVALID_RAW_FIELD_CAPTURE_ELEMENTS ||
-          capturedUtf8Bytes + markerBytes >
-            MAX_INVALID_RAW_FIELD_CAPTURE_UTF8_BYTES ||
-          Buffer.byteLength(
-            canonicalJsonV1([...capturedFields, marker]),
-            "utf8",
-          ) > MAX_INVALID_RAW_FIELD_CAPTURE_SERIALIZED_BYTES)
-      ) {
-        const removed = capturedFields.pop();
-        if (removed !== undefined) {
-          capturedUtf8Bytes -= Buffer.byteLength(removed, "utf8");
-        }
-      }
-      capturedFields.push(marker);
-    }
-  }
   return Object.freeze({
     kind: "invalid" as const,
     delivery_id: deliveryId,
     delivery_ref: `${deliverySource}#${deliveryId}`,
     error_code: errorCode,
-    error_message: (message.trim().length === 0 ? errorCode : message).slice(
-      0,
-      MAX_INVALID_DELIVERY_ERROR_MESSAGE_LENGTH,
-    ),
-    raw_fields: Object.freeze(capturedFields),
+    error_message: closedDurableFailureMessageV1(errorCode),
+    raw_fields: summarizeDurableRawFieldsV1(rawFields),
   });
 }
 
@@ -708,7 +677,6 @@ function redisMessageToDelivery(
       deliverySource,
       rawFields,
       "malformed_stream_fields",
-      "Redis Stream message fields are malformed",
     );
   }
   let messageBytes = 0;
@@ -721,7 +689,6 @@ function redisMessageToDelivery(
           deliverySource,
           rawFields,
           "malformed_stream_fields",
-          "Redis Stream message exceeds the bounded delivery size",
         );
       }
     }
@@ -741,7 +708,6 @@ function redisMessageToDelivery(
         deliverySource,
         rawFields,
         "malformed_stream_fields",
-        "Redis Stream message must contain each canonical string field exactly once",
       );
     }
     fields.set(key, value);
@@ -753,7 +719,6 @@ function redisMessageToDelivery(
       deliverySource,
       rawFields,
       "malformed_stream_fields",
-      "Redis Stream message is missing payload",
     );
   }
   let parsedPayload: unknown;
@@ -765,7 +730,6 @@ function redisMessageToDelivery(
       deliverySource,
       rawFields,
       "invalid_json",
-      "Redis Stream payload is not valid JSON",
     );
   }
   const envelope = {
@@ -780,13 +744,12 @@ function redisMessageToDelivery(
   };
   try {
     assertOwnerDurableEventEnvelopeV1(envelope);
-  } catch (error) {
+  } catch {
     return invalidRedisDelivery(
       deliveryId,
       deliverySource,
       rawFields,
       "invalid_envelope",
-      error instanceof Error ? error.message : "Redis envelope is invalid",
     );
   }
   if (!envelopeMatchesRedisNamespaceV1(envelope, namespace)) {
@@ -795,7 +758,6 @@ function redisMessageToDelivery(
       deliverySource,
       rawFields,
       "namespace_mismatch",
-      "Redis envelope scope does not match its verified namespace",
     );
   }
   return Object.freeze({
@@ -989,6 +951,37 @@ export function createRedisStreamConsumerGroupPortV1(
         if (!String(error).includes("BUSYGROUP")) throw error;
       }
     },
+    async readOwnPending(request: Readonly<{ count: number }>) {
+      assertPositiveBoundedInteger(
+        request.count,
+        "Redis pending XREADGROUP count",
+        DURABLE_EVENT_DELIVERY_BATCH_MAX_V1,
+      );
+      const response = await client.sendCommand([
+        "XREADGROUP",
+        "GROUP",
+        consumerOptions.group,
+        consumerOptions.consumer,
+        "COUNT",
+        String(request.count),
+        "STREAMS",
+        consumerOptions.stream,
+        "0",
+      ]);
+      const deliveries = parseXReadGroupResponse(
+        response,
+        consumerOptions.namespace,
+        consumerOptions.stream,
+      );
+      if (deliveries.length > request.count) {
+        throw new EventTransportErrorV1(
+          "transport_rejected",
+          false,
+          "Redis pending XREADGROUP exceeded the requested page",
+        );
+      }
+      return deliveries;
+    },
     async readNew(request: Readonly<{ count: number; block_ms: number }>) {
       const readRequest = Object.freeze({
         count: request.count,
@@ -1131,7 +1124,9 @@ export function createRedisStreamReferenceProbeV1(
         expected_envelope: DurableEventEnvelopeV1;
         expected_payload_hash: string;
       }>,
+      signal?: AbortSignal,
     ) {
+      signal?.throwIfAborted();
       const probeRequest = Object.freeze({
         target: request.target,
         transport_ref: request.transport_ref,
@@ -1190,7 +1185,11 @@ export function createRedisStreamReferenceProbeV1(
       );
       let response: unknown;
       try {
-        response = await client.sendCommand([
+        const commandClient =
+          signal === undefined || client.withAbortSignal === undefined
+            ? client
+            : client.withAbortSignal(signal);
+        response = await commandClient.sendCommand([
           "XRANGE",
           reference.stream,
           reference.stream_id,
@@ -1198,7 +1197,9 @@ export function createRedisStreamReferenceProbeV1(
           "COUNT",
           "1",
         ]);
+        signal?.throwIfAborted();
       } catch (error) {
+        signal?.throwIfAborted();
         throw new EventTransportErrorV1(
           "transport_unavailable",
           true,
@@ -1299,6 +1300,11 @@ export interface VerifiedRedisStreamCompositionV1 {
     effective_config_fingerprint: string;
   }>;
   readonly dependencyState: () => RedisDependencyStateV1;
+  readonly createConsumerGroup: (options: Readonly<{
+    target: string;
+    group: string;
+    consumer: string;
+  }>) => RedisStreamConsumerGroupPortV1;
   readonly checkReadiness: (signal?: AbortSignal) => Promise<void>;
   readonly close: () => Promise<void>;
 }
@@ -1365,6 +1371,7 @@ function assertNotAborted(signal: AbortSignal | undefined): void {
 
 async function verifyRedisBaselineV1(
   client: RedisClientType,
+  aofAckTimeoutMs: number,
 ): Promise<VerifiedRedisStreamCompositionV1["baseline"]> {
   let serverInfo: string;
   let config: Record<string, string>;
@@ -1392,7 +1399,17 @@ async function verifyRedisBaselineV1(
   );
   let aofCapability: unknown;
   try {
-    aofCapability = await client.sendCommand(["WAITAOF", "1", "0", "100"]);
+    // `appendfsync everysec` is the required production baseline. A fixed
+    // 100 ms probe can therefore fail after an otherwise healthy connection
+    // has issued a write. Use the same bounded persistence deadline as the
+    // publish fence so readiness measures capability instead of scheduler
+    // timing.
+    aofCapability = await client.sendCommand([
+      "WAITAOF",
+      "1",
+      "0",
+      String(aofAckTimeoutMs),
+    ]);
   } catch {
     throw new RedisDependencyErrorV1(
       "baseline_mismatch",
@@ -1519,7 +1536,7 @@ export async function openVerifiedRedisStreamCompositionV1(options: Readonly<{
         );
       }),
     ]);
-    const baseline = await verifyRedisBaselineV1(client);
+    const baseline = await verifyRedisBaselineV1(client, aofAckTimeoutMs);
     const referenceProbe = createRedisStreamReferenceProbeV1(client, {
       namespace,
       routes,
@@ -1531,7 +1548,8 @@ export async function openVerifiedRedisStreamCompositionV1(options: Readonly<{
         payload_hash: string;
         current_transport_epoch: string;
         current_transport_generation: number;
-      }>) {
+      }>, signal?: AbortSignal) {
+        signal?.throwIfAborted();
         const publishRequest = Object.freeze({
           target: request.target,
           envelope: request.envelope,
@@ -1607,12 +1625,16 @@ export async function openVerifiedRedisStreamCompositionV1(options: Readonly<{
           );
         }
         try {
-          const streamId = await xAddWithLocalAofFenceV1(client, {
+          const publishClient =
+            signal === undefined ? client : client.withAbortSignal(signal);
+          const streamId = await xAddWithLocalAofFenceV1(publishClient, {
             stream,
             message: buildRedisStreamMessageV1(publishRequest.envelope),
             aof_ack_timeout_ms: aofAckTimeoutMs,
             connection_generation: () => connectionGeneration,
+            ...(signal === undefined ? {} : { signal }),
           });
+          signal?.throwIfAborted();
           dependencyMonitor.recordSuccess();
           return {
             transport_ref: redisTransportReferenceV1(stream, streamId),
@@ -1620,6 +1642,7 @@ export async function openVerifiedRedisStreamCompositionV1(options: Readonly<{
             transport_generation: namespace.stream_generation,
           };
         } catch (error) {
+          signal?.throwIfAborted();
           dependencyMonitor.recordFailure();
           if (error instanceof EventTransportErrorV1) throw error;
           throw new EventTransportErrorV1(
@@ -1637,12 +1660,28 @@ export async function openVerifiedRedisStreamCompositionV1(options: Readonly<{
       referenceProbe,
       baseline,
       dependencyState: dependencyMonitor.snapshot,
+      createConsumerGroup(
+        consumerOptions: Parameters<
+          VerifiedRedisStreamCompositionV1["createConsumerGroup"]
+        >[0],
+      ) {
+        const stream = physicalRoutes.get(consumerOptions.target);
+        if (stream === undefined) {
+          throw new Error("Redis consumer target has no registered physical stream");
+        }
+        return createRedisStreamConsumerGroupPortV1(client, {
+          stream,
+          group: consumerOptions.group,
+          consumer: consumerOptions.consumer,
+          namespace,
+        });
+      },
       async checkReadiness(signal?: AbortSignal): Promise<void> {
         assertNotAborted(signal);
         try {
-          const pong = await (signal === undefined
-            ? client.ping()
-            : client.withAbortSignal(signal).ping());
+          const readinessClient =
+            signal === undefined ? client : client.withAbortSignal(signal);
+          const pong = await readinessClient.ping();
           assertNotAborted(signal);
           if (pong !== "PONG") {
             throw new RedisDependencyErrorV1(
@@ -1651,14 +1690,34 @@ export async function openVerifiedRedisStreamCompositionV1(options: Readonly<{
               "Redis readiness PING failed",
             );
           }
+          // A live socket is not a durable Redis readiness attestation. The
+          // effective AOF/eviction/version baseline can drift at runtime, so
+          // re-inspect it on every readiness probe and bind it to the exact
+          // startup fingerprint before advertising traffic readiness.
+          const readyBaseline = await verifyRedisBaselineV1(
+            readinessClient,
+            aofAckTimeoutMs,
+          );
+          assertNotAborted(signal);
+          if (
+            readyBaseline.effective_config_fingerprint !==
+              baseline.effective_config_fingerprint
+          ) {
+            throw new RedisDependencyErrorV1(
+              "baseline_mismatch",
+              false,
+              "Redis effective configuration drifted after startup",
+            );
+          }
           dependencyMonitor.recordSuccess();
         } catch (error) {
           dependencyMonitor.recordFailure();
           if (error instanceof RedisDependencyErrorV1) throw error;
+          assertNotAborted(signal);
           throw new RedisDependencyErrorV1(
             "readiness_failed",
             true,
-            "Redis readiness PING failed",
+            "Redis readiness attestation failed",
           );
         }
       },

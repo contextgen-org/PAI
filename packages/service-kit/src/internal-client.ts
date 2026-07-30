@@ -1,7 +1,10 @@
 import {
   ResponseEnvelopeV1Schema,
+  assertCanonicalJsonBoundaryV1,
+  canonicalJsonV1,
   type ResponseEnvelopeV1,
 } from "@pai/contracts";
+import { isProxy } from "node:util/types";
 import {
   context,
   isSpanContextValid,
@@ -23,6 +26,18 @@ const DEFAULT_MAX_RETRIES = 2;
 const MAX_RETRIES = 5;
 const DEFAULT_MAX_RESPONSE_BYTES = 1_048_576;
 const MAX_RESPONSE_BYTES = 16 * 1_048_576;
+const LOCAL_DOCKER_INTERNAL_ORIGINS_V1 = new Set([
+  "action-runtime:3002",
+  "skill-registry:3007",
+  "memory:3004",
+  "knowthat:3005",
+  "trigger-processor:3001",
+  "timer-trigger-app:3006",
+  "meta-cognition:3003",
+  "observation-gateway:3008",
+  "storage-edge-runtime:8080",
+  "jwks:8080",
+]);
 const MANAGED_REQUEST_HEADERS = new Set([
   "accept",
   "authorization",
@@ -63,6 +78,23 @@ const MANAGED_REQUEST_HEADERS = new Set([
   "x-trace-id",
   "apikey",
 ]);
+
+/**
+ * The production transport remains HTTPS-only.  Local Compose has no TLS
+ * sidecar, so it may opt into a closed list of Docker-internal origins.  The
+ * deployment environment check makes this impossible in staging and prod.
+ */
+export function isTrustedLocalDockerHttpOriginV1(
+  url: URL,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return (
+    env.PAI_DEPLOYMENT_ENVIRONMENT === "local" &&
+    env.PAI_LOCAL_DOCKER_TRANSPORT === "true" &&
+    url.protocol === "http:" &&
+    LOCAL_DOCKER_INTERNAL_ORIGINS_V1.has(`${url.hostname}:${url.port}`)
+  );
+}
 const MANAGED_REQUEST_HEADER_PREFIXES = [
   "cf-",
   "proxy-",
@@ -89,6 +121,8 @@ export interface InternalJsonRequestOptions {
   readonly maxResponseBytes?: number;
   readonly fetchImpl?: typeof fetch;
   readonly sleep?: (milliseconds: number) => Promise<void>;
+  /** Cancels the active request and any retry delay. */
+  readonly signal?: AbortSignal;
 }
 
 export interface InternalJsonResponse<T> {
@@ -118,6 +152,7 @@ const internalRequestOptionKeys = [
   "method",
   "retryDelayMs",
   "sleep",
+  "signal",
   "timeoutMs",
   "traceId",
   "url",
@@ -128,7 +163,12 @@ function ownEnumerableDataValues(
   value: unknown,
   message: string,
 ): Readonly<Record<string, unknown>> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    isProxy(value)
+  ) {
     throw new Error(message);
   }
   let prototype: object | null;
@@ -201,7 +241,8 @@ function snapshotInternalRequestOptions(
     (data.maxResponseBytes !== undefined &&
       typeof data.maxResponseBytes !== "number") ||
     (data.fetchImpl !== undefined && typeof data.fetchImpl !== "function") ||
-    (data.sleep !== undefined && typeof data.sleep !== "function")
+    (data.sleep !== undefined && typeof data.sleep !== "function") ||
+    (data.signal !== undefined && !(data.signal instanceof AbortSignal))
   ) {
     throw new Error("invalid internal request options");
   }
@@ -235,8 +276,8 @@ function isResponseEnvelope(value: unknown): value is ResponseEnvelopeV1 {
 }
 
 class InvalidUpstreamResponseError extends Error {
-  public constructor(message: string) {
-    super(message);
+  public constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "InvalidUpstreamResponseError";
   }
 }
@@ -284,20 +325,38 @@ async function parseJson(
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
+  let parsed: unknown;
   try {
     const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    return JSON.parse(text) as unknown;
+    parsed = JSON.parse(text) as unknown;
   } catch (error) {
     throw new InvalidUpstreamResponseError(
       error instanceof TypeError
         ? "upstream response is not valid UTF-8"
-        : "upstream response is not valid JSON",
+      : "upstream response is not valid JSON",
     );
   }
+  try {
+    assertCanonicalJsonBoundaryV1(parsed, {
+      max_bytes: maxResponseBytes,
+      max_depth: 128,
+      max_nodes: 1_000_000,
+      max_container_entries: 100_000,
+    });
+  } catch (error) {
+    throw new InvalidUpstreamResponseError(
+      "upstream response is outside the bounded canonical JSON contract",
+      { cause: error },
+    );
+  }
+  return parsed;
 }
+
+type WorkloadRoutePolicyV1 = "internal_only" | "versioned_api_only";
 
 function validatePolicy(
   options: InternalJsonRequestOptions,
+  routePolicy: WorkloadRoutePolicyV1,
 ): Readonly<{ maxRetries: number; maxResponseBytes: number; url: URL }> {
   if (
     !Number.isInteger(options.timeoutMs) ||
@@ -337,17 +396,22 @@ function validatePolicy(
   );
   if (
     (url.protocol !== "http:" && url.protocol !== "https:") ||
-    (url.protocol === "http:" && !isLoopback) ||
+    (url.protocol === "http:" &&
+      !isLoopback &&
+      !isTrustedLocalDockerHttpOriginV1(url)) ||
     url.username.length > 0 ||
     url.password.length > 0 ||
     url.hash.length > 0
   ) {
     throw new Error(
-      "internal request URL must use HTTPS except for loopback and cannot contain userinfo or a fragment",
+      "internal request URL must use HTTPS except for loopback or explicitly configured local Docker services and cannot contain userinfo or a fragment",
     );
   }
   const pathname = url.pathname;
-  if (pathname === "/internal" || pathname.startsWith("/internal/")) {
+  const isInternalRoute =
+    pathname === "/internal" || pathname.startsWith("/internal/");
+  const isVersionedApiRoute = pathname.startsWith("/v1/");
+  if (routePolicy === "internal_only" && isInternalRoute) {
     if (
       options.workloadCredential === undefined ||
       !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(
@@ -356,8 +420,25 @@ function validatePolicy(
     ) {
       throw new Error("a compact workloadCredential is required for internal requests");
     }
-  } else if (options.workloadCredential !== undefined) {
+  } else if (
+    routePolicy === "internal_only" &&
+    options.workloadCredential !== undefined
+  ) {
     throw new Error("workloadCredential may only be sent to /internal/** routes");
+  } else if (routePolicy === "versioned_api_only") {
+    if (!isVersionedApiRoute) {
+      throw new Error("workload API credentials may only be sent to /v1/** routes");
+    }
+    if (
+      options.workloadCredential === undefined ||
+      !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(
+        options.workloadCredential,
+      )
+    ) {
+      throw new Error(
+        "a compact workloadCredential is required for workload API requests",
+      );
+    }
   }
   const maxResponseBytes =
     options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
@@ -390,8 +471,9 @@ function shouldRetry(
 
 async function executeInternalJsonRequest<T>(
   options: InternalJsonRequestOptions,
+  routePolicy: WorkloadRoutePolicyV1,
 ): Promise<InternalJsonResponse<T>> {
-  const policy = validatePolicy(options);
+  const policy = validatePolicy(options, routePolicy);
   const { maxRetries, maxResponseBytes } = policy;
   const traceId = options.traceId ?? createTraceId();
   assertSafeTraceId(traceId);
@@ -406,16 +488,69 @@ async function executeInternalJsonRequest<T>(
   const workloadCredential = options.workloadCredential;
   const hasJsonBody = options.json !== undefined;
   const requestBody = hasJsonBody
-    ? JSON.stringify(options.json)
+    ? canonicalJsonV1(options.json)
     : undefined;
   if (hasJsonBody && requestBody === undefined) {
     throw new Error("json must serialize to a request body");
   }
   const additionalHeaders = options.headers ?? {};
 
+  const throwIfExternallyAborted = (): void => {
+    if (options.signal?.aborted !== true) return;
+    throw new InternalClientError({
+      code: "upstream_aborted",
+      message: "internal request was aborted by its caller",
+      retryable: false,
+      traceId,
+      cause: options.signal.reason,
+    });
+  };
+
+  const waitForRetry = async (milliseconds: number): Promise<void> => {
+    throwIfExternallyAborted();
+    const externalSignal = options.signal;
+    if (externalSignal === undefined) {
+      await sleep(milliseconds);
+      return;
+    }
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: unknown): void => {
+        if (settled) return;
+        settled = true;
+        externalSignal.removeEventListener("abort", onAbort);
+        if (error === undefined) resolve();
+        else reject(error);
+      };
+      const onAbort = (): void =>
+        finish(
+          new InternalClientError({
+            code: "upstream_aborted",
+            message: "internal request was aborted by its caller",
+            retryable: false,
+            traceId,
+            cause: externalSignal.reason,
+          }),
+        );
+      externalSignal.addEventListener("abort", onAbort, { once: true });
+      sleep(milliseconds).then(() => finish(), finish);
+      if (externalSignal.aborted) onAbort();
+    });
+  };
+
   for (let attempt = 1; attempt <= maxRetries + 1; attempt += 1) {
+    throwIfExternallyAborted();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let timedOut = false;
+    const onExternalAbort = (): void =>
+      controller.abort(options.signal?.reason);
+    options.signal?.addEventListener("abort", onExternalAbort, {
+      once: true,
+    });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort(new Error("internal_request_timeout"));
+    }, timeoutMs);
     timer.unref();
     let clientError: InternalClientError;
 
@@ -498,29 +633,38 @@ async function executeInternalJsonRequest<T>(
               cause: error,
             })
           : new InternalClientError({
-              code: controller.signal.aborted
-                ? "upstream_timeout"
-                : "upstream_unavailable",
-              message: controller.signal.aborted
-                ? "upstream request timed out"
-                : "upstream request failed",
-              retryable: true,
+              code:
+                options.signal?.aborted === true
+                  ? "upstream_aborted"
+                  : timedOut
+                    ? "upstream_timeout"
+                    : "upstream_unavailable",
+              message:
+                options.signal?.aborted === true
+                  ? "internal request was aborted by its caller"
+                  : timedOut
+                    ? "upstream request timed out"
+                    : "upstream request failed",
+              retryable: options.signal?.aborted !== true,
               traceId,
               cause: error,
             });
     } finally {
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onExternalAbort);
     }
 
     if (!shouldRetry(clientError, attempt, maxRetries)) throw clientError;
-    await sleep(retryDelayMs * attempt);
+    await waitForRetry(retryDelayMs * attempt);
   }
 
   throw new Error("unreachable retry state");
 }
 
-export async function requestInternalJson<T>(
+async function requestJsonWithPolicyV1<T>(
   options: InternalJsonRequestOptions,
+  routePolicy: WorkloadRoutePolicyV1,
+  spanName: string,
 ): Promise<InternalJsonResponse<T>> {
   // The exported boundary snapshots every caller-owned option before tracing
   // or policy code reads it. Accessors are rejected without being invoked, and
@@ -544,7 +688,7 @@ export async function requestInternalJson<T>(
   const parentContext =
     activeTraceId === undefined ? contextForTraceId(traceId) : activeContext;
   return internalClientTracer.startActiveSpan(
-    "pai.internal.request",
+    spanName,
     {
       kind: SpanKind.CLIENT,
       attributes: { "http.request.method": requestOptions.method ?? "GET" },
@@ -552,10 +696,13 @@ export async function requestInternalJson<T>(
     parentContext,
     async (span) => {
       try {
-        const response = await executeInternalJsonRequest<T>(Object.freeze({
-          ...requestOptions,
-          traceId,
-        }));
+        const response = await executeInternalJsonRequest<T>(
+          Object.freeze({
+            ...requestOptions,
+            traceId,
+          }),
+          routePolicy,
+        );
         span.setAttribute("http.response.status_code", response.status);
         return response;
       } catch (error: unknown) {
@@ -571,5 +718,30 @@ export async function requestInternalJson<T>(
         span.end();
       }
     },
+  );
+}
+
+export async function requestInternalJson<T>(
+  options: InternalJsonRequestOptions,
+): Promise<InternalJsonResponse<T>> {
+  return requestJsonWithPolicyV1<T>(
+    options,
+    "internal_only",
+    "pai.internal.request",
+  );
+}
+
+/**
+ * Calls an authenticated mixed-ingress `/v1/**` route with a short-lived
+ * workload JWT. Keeping this boundary separate from `requestInternalJson`
+ * prevents credentials from being silently moved between route classes.
+ */
+export async function requestWorkloadJson<T>(
+  options: InternalJsonRequestOptions,
+): Promise<InternalJsonResponse<T>> {
+  return requestJsonWithPolicyV1<T>(
+    options,
+    "versioned_api_only",
+    "pai.workload_api.request",
   );
 }

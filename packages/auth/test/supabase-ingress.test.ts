@@ -45,7 +45,6 @@ async function sign(
     .setIssuer("https://project.supabase.co/auth/v1")
     .setAudience("authenticated")
     .setIssuedAt(now)
-    .setNotBefore(now - 1)
     .setExpirationTime(now + 60)
     .sign(privateKey);
 }
@@ -260,7 +259,7 @@ describe("Supabase ingress verifier", () => {
     });
   });
 
-  it.each(["sub", "iat", "nbf", "exp"] as const)(
+  it.each(["sub", "iat", "exp"] as const)(
     "rejects a signed credential with missing %s",
     async (missingClaim) => {
       const { key, verifier } = await fixture();
@@ -268,7 +267,6 @@ describe("Supabase ingress verifier", () => {
       const claims: Record<string, string | number> = {
         sub: "user-1",
         iat: now,
-        nbf: now - 1,
         exp: now + 60,
       };
       delete claims[missingClaim];

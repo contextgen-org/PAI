@@ -11,6 +11,22 @@
     "./composition": {
       "types": "./src/composition.ts",
       "default": "./dist/composition.js"
+    },
+    "./db/metadata-contract.v1": {
+      "types": "./src/db/metadata-contract.v1.ts",
+      "default": "./dist/db/metadata-contract.v1.js"
+    },
+    "./db/permission-manifest.v1": {
+      "types": "./src/db/permission-manifest.v1.ts",
+      "default": "./dist/db/permission-manifest.v1.js"
+    },
+    "./postgres/create-postgres-object-metadata-repository.v1": {
+      "types": "./src/postgres/create-postgres-object-metadata-repository.v1.ts",
+      "default": "./dist/postgres/create-postgres-object-metadata-repository.v1.js"
+    },
+    "./postgres/create-postgres-object-metadata-reconciliation-adapter.v1": {
+      "types": "./src/postgres/create-postgres-object-metadata-reconciliation-adapter.v1.ts",
+      "default": "./dist/postgres/create-postgres-object-metadata-reconciliation-adapter.v1.js"
     }
   },
   "files": ["dist"],
@@ -21,10 +37,13 @@
   },
   "dependencies": {
     "@pai/contracts": "workspace:*",
-    "@supabase/supabase-js": "catalog:"
+    "@sinclair/typebox": "catalog:",
+    "@supabase/supabase-js": "catalog:",
+    "pg": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "@types/pg": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

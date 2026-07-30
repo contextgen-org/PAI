@@ -3,8 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
-  "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc -p tsconfig.json --noEmit" },
-  "dependencies": { "@pai/contracts": "workspace:*", "@pai/persistence": "workspace:*", "@pai/service-kit": "workspace:*" },
-  "devDependencies": { "typescript": "catalog:" }
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./db/permission-manifest.v1": {
+      "types": "./src/db/permission-manifest.v1.ts",
+      "default": "./dist/db/permission-manifest.v1.js"
+    }
+  },
+  "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc -p tsconfig.json --noEmit", "test": "pnpm run build && node --test --test-concurrency=1 test/*.test.mjs" },
+  "dependencies": { "@pai/auth": "workspace:*", "@pai/contracts": "workspace:*", "@pai/eventing": "workspace:*", "@pai/persistence": "workspace:*", "@pai/service-kit": "workspace:*", "@sinclair/typebox": "catalog:" },
+  "devDependencies": { "pg": "catalog:", "typescript": "catalog:" }
 }

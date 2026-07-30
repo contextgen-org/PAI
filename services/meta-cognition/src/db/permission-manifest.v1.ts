@@ -1,13 +1,61 @@
+import {
+  META_COGNITION_DATABASE_COLUMNS_V1,
+  META_COGNITION_DATABASE_INDEXES_V1,
+  META_COGNITION_DATABASE_CHECKS_V1,
+  META_COGNITION_DATABASE_FUNCTIONS_V1,
+  META_COGNITION_DATABASE_TRIGGERS_V1,
+  META_COGNITION_DATABASE_UNIQUE_CONSTRAINTS_V1,
+  META_COGNITION_FOREIGN_KEYS_V1,
+} from "./catalog-snapshot.generated.v1.js";
+import { META_COGNITION_WRITER_ARTIFACTS_V1 } from "./writer-artifacts.generated.v1.js";
 import { OWNER_DURABLE_EVENT_TYPES_V1 } from "@pai/contracts";
 import {
   defineOwnerRepositoryContractV1,
+  ownerDlqResolutionContractV1,
+  ownerEventingReconciliationContractV1,
   ownerEventingTransportEpochActivationSignatureV1,
   ownerEventingTransportEpochTablePermissionV1,
-  ownerForeignKeysV1,
   ownerFunctionSignatureV1,
   type OwnerRepositoryPortV1,
   type OwnerUnitOfWorkPortV1,
 } from "@pai/persistence";
+
+const META_COGNITION_DLQ_RESOLUTION_V1 = ownerDlqResolutionContractV1(
+  "meta_cognition",
+  "meta_event_dlq",
+);
+const META_EVENT_RECONCILIATION_V1 =
+  ownerEventingReconciliationContractV1(
+    "meta_cognition",
+    "meta_event_outbox",
+  );
+
+// The catalog snapshot predates the event-reconciliation writer promotion and
+// therefore still lists these SECURITY DEFINER writers among private helper
+// functions. A helper is intentionally verified through `database_functions`,
+// whereas an app-callable writer is verified through the pinned writer
+// signature/artifact path; never let one function occupy both trust paths.
+const META_COGNITION_PRIVATE_DATABASE_FUNCTIONS_V1 =
+  META_COGNITION_DATABASE_FUNCTIONS_V1.filter(
+    ({ function_name }) =>
+      !new Set<string>(META_EVENT_RECONCILIATION_V1.mutable_writers).has(
+        function_name,
+      ),
+  );
+
+const META_FEEDBACK_SERVICE_COMMAND_LOCK_V1 = Object.freeze({
+  key_prefix: "meta_cognition:feedback_service_command:",
+  identity_arguments: ["p_source_service", "p_command_id"],
+  separator: ":" as const,
+  order: 1,
+});
+
+const META_FEEDBACK_OPEN_SCOPE_LOCK_V1 = Object.freeze({
+  key_prefix: "meta_cognition:feedback_open_scope:",
+  identity_arguments: ["p_bot_id", "p_dedupe_scope_ref", "p_question_key"],
+  separator: ":" as const,
+  order: 2,
+});
 
 export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
   defineOwnerRepositoryContractV1({
@@ -24,6 +72,7 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
     tables: [
       "meta_jobs",
       "meta_job_leases",
+      "meta_provider_output_checkpoints",
       "trigger_process_events",
       "experience_records",
       "meta_results",
@@ -34,6 +83,7 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       "meta_event_outbox",
       "meta_event_inbox",
       "meta_event_dlq",
+      META_COGNITION_DLQ_RESOLUTION_V1.resolution_table,
       "meta_job_audit_logs",
       "meta_command_outbox",
       "meta_memory_split_plans",
@@ -43,7 +93,7 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
     table_permissions: [
     {
       table_name: "meta_jobs",
-      select_columns: ["id","trigger_process_id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","snapshot_ref","snapshot_version","snapshot_hash","snapshot_retention_until","cooldown_until","boundary_system_event_ref","learnable_snapshot_ready","enqueue_reason","idempotency_key","trace_id","request_schema_version","request_hash","input_revision","status","attempt_count","next_retry_at","error","created_at","updated_at"],
+      select_columns: ["id","trigger_process_id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","snapshot_ref","snapshot_version","snapshot_hash","snapshot_retention_until","cooldown_until","boundary_system_event_ref","learnable_snapshot_ready","enqueue_reason","idempotency_key","trace_id","request_schema_version","request_hash","input_revision","status","lease_previous_status","attempt_count","next_retry_at","error","created_at","updated_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -56,6 +106,14 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       update_columns: [],
       delete_allowed: false,
       writer_kind: "lease_fence",
+    },
+    {
+      table_name: "meta_provider_output_checkpoints",
+      select_columns: ["meta_job_id","lease_id","lease_generation","request_hash","output_hash","output","evidence_artifacts","solidified_event_range","llm_run_metadata","solidified_event_refs","provider_binding","created_at"],
+      insert_columns: [],
+      update_columns: [],
+      delete_allowed: false,
+      writer_kind: "immutable_append",
     },
     {
       table_name: "trigger_process_events",
@@ -79,7 +137,7 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
-      writer_kind: "immutable_append",
+      writer_kind: "state_transition",
     },
     {
       table_name: "quality_signals",
@@ -91,7 +149,7 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "feedback_requests",
-      select_columns: ["id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","source_kind","trigger_process_id","meta_job_id","source_service","source_ref","command_id","conflict_id","candidate_id","dedupe_scope_ref","question_key","question_payload","question_payload_hash","status","answered_by_trigger_id","answer_payload","target_actor_ref","target_binding_ref","delivery_mode","delivery_channel","delivery_status","delivery_version","delivery_id","delivery_attempt_count","delivery_last_error","delivered_at","expires_at","idempotency_key","payload_schema_version","created_at","updated_at"],
+      select_columns: ["id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","source_kind","trigger_process_id","meta_job_id","source_service","source_ref","command_id","request_hash","conflict_id","candidate_id","dedupe_scope_ref","question_key","question_payload_ref","question_payload","question_payload_hash","status","answered_by_trigger_id","answer_payload","target_actor_ref","target_binding_ref","delivery_mode","delivery_channel","delivery_status","delivery_version","delivery_id","delivery_attempt_count","delivery_last_error","delivered_at","expires_at","idempotency_key","payload_schema_version","created_at","updated_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -99,7 +157,7 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "skill_candidates",
-      select_columns: ["id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","trigger_process_id","meta_job_id","candidate_type","skill_key","title","proposal_payload","proposal_hash","baseline_catalog_version","reason","evidence_refs","status","downstream_status","idempotency_key","review_version","review_idempotency_key","review_request_hash","review_response_payload","review_owner_service","reviewed_by","reviewed_at","review_reason","registry_application_id","downstream_ref","delivery_attempt_count","delivery_last_error","superseded_by_candidate_id","created_at","updated_at"],
+      select_columns: ["id","workspace_id","bot_id","owner_agent_id","deployment_environment","release_channel","trigger_process_id","meta_job_id","candidate_type","skill_key","title","proposal_payload","proposal_hash","baseline_catalog_version","reason","evidence_refs","evidence_artifacts","status","downstream_status","idempotency_key","review_version","review_idempotency_key","review_request_hash","review_response_payload","review_owner_service","reviewed_by","reviewed_at","review_reason","registry_application_id","downstream_ref","delivery_attempt_count","delivery_last_error","superseded_by_candidate_id","created_at","updated_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -131,12 +189,13 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "meta_event_dlq",
-      select_columns: ["id","source_event_id","event_type","payload","last_error","failed_at","resolved_at"],
+      select_columns: ["id","source_event_id","event_type","payload","last_error","failed_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
       writer_kind: "immutable_append",
     },
+    META_COGNITION_DLQ_RESOLUTION_V1.table_permission,
     {
       table_name: "meta_job_audit_logs",
       select_columns: ["id","meta_job_id","previous_status","next_status","previous_recovery_state","next_recovery_state","owner_id","actor","trace_id","scope","expanded_fields","source_kind","source_service","source_ref","audit_action","reason_code","reason","error","evidence_refs","schema_version","created_at"],
@@ -147,7 +206,7 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
     },
     {
       table_name: "meta_command_outbox",
-      select_columns: ["id","meta_job_id","command_type","target_service","request_payload","request_payload_ref","request_payload_hash","idempotency_key","lease_generation","status","attempt_count","next_retry_at","last_error","trace_id","created_at","updated_at"],
+      select_columns: ["id","meta_job_id","command_type","target_service","dispatch_mode","owner_request","owner_request_hash","failed_client_item_id","item_hash","source_owner_request_hash","source_idempotency_key","idempotency_key","lease_generation","status","attempt_count","next_retry_at","owner_response_schema_version","owner_response","owner_response_hash","owner_item_set_hash","last_error","trace_id","settled_at","created_at","updated_at"],
       insert_columns: [],
       update_columns: [],
       delete_allowed: false,
@@ -172,12 +231,18 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
     ownerEventingTransportEpochTablePermissionV1(),
     ],
     mutable_writers: [
+      ...META_COGNITION_DLQ_RESOLUTION_V1.mutable_writers,
+      ...META_EVENT_RECONCILIATION_V1.mutable_writers,
       "transition_meta_job_v1",
       "enqueue_meta_job_from_trigger_event_v1",
       "finalize_meta_result_v1",
       "upsert_meta_memory_split_plan_v1",
       "transition_meta_memory_split_chunk_v1",
       "cas_meta_job_lease_v1",
+      "checkpoint_meta_provider_output_v1",
+      "renew_meta_job_lease_v1",
+      "record_meta_stale_attempt_v1",
+      "create_service_feedback_request_v1",
       "create_feedback_request_v1",
       "transition_feedback_request_v1",
       "create_skill_candidate_v1",
@@ -187,10 +252,13 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       "claim_meta_event_outbox_v1",
       "ack_meta_event_outbox_v1",
       "claim_meta_command_outbox_v1",
+      "settle_meta_compensation_v1",
       "ack_meta_command_outbox_v1",
       "activate_eventing_transport_epoch_v1",
     ],
     function_signatures: [
+      ...META_COGNITION_DLQ_RESOLUTION_V1.function_signatures,
+      ...META_EVENT_RECONCILIATION_V1.function_signatures,
     ownerFunctionSignatureV1({
       schema: "meta_cognition",
       function_name: "transition_meta_job_v1",
@@ -228,14 +296,15 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       schema: "meta_cognition",
       function_name: "finalize_meta_result_v1",
       primary_table: "meta_results",
-      writer_kind: "immutable_append",
-      arguments: [["p_result_id", "text"], ["p_job_id", "text"], ["p_expected_job_status", "text"], ["p_expected_job_updated_at", "timestamptz"], ["p_result", "jsonb"], ["p_experience_record", "jsonb"], ["p_quality_signals", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
+      writer_kind: "state_transition",
+      arguments: [["p_result_id", "text"], ["p_job_id", "text"], ["p_expected_job_status", "text"], ["p_expected_job_updated_at", "timestamptz"], ["p_result", "jsonb"], ["p_experience_record", "jsonb"], ["p_quality_signals", "jsonb"], ["p_skill_candidates", "jsonb"], ["p_idempotency_key", "text"], ["p_request_hash", "text"], ["p_trace_id", "text"]],
       reads_tables: ["meta_jobs", "meta_results"],
-      writes_tables: ["meta_results", "experience_records", "quality_signals", "meta_jobs", "meta_job_audit_logs", "meta_event_outbox"],
+      writes_tables: ["meta_results", "experience_records", "quality_signals", "skill_candidates", "meta_jobs", "meta_job_audit_logs", "meta_event_outbox"],
       effects: [
         { table_name: "meta_results", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "experience_records", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "quality_signals", operation: "append", concurrency_control: "idempotency_key" },
+        { table_name: "skill_candidates", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "meta_jobs", operation: "transition", concurrency_control: "expected_state_version" },
         { table_name: "meta_job_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
         { table_name: "meta_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
@@ -279,13 +348,121 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
       function_name: "cas_meta_job_lease_v1",
       primary_table: "meta_job_leases",
       writer_kind: "lease_fence",
-      arguments: [["p_job_id", "text"], ["p_expected_fence_generation", "bigint"], ["p_holder_id", "text"], ["p_lease_until", "timestamptz"], ["p_trace_id", "text"]],
-      reads_tables: ["meta_job_leases"],
-      writes_tables: ["meta_job_leases", "meta_job_audit_logs", "meta_event_outbox"],
+      arguments: [["p_job_id", "text"], ["p_expected_fence_generation", "bigint"], ["p_holder_id", "text"], ["p_lease_until", "timestamptz"], ["p_takeover_grace_ms", "integer"], ["p_trace_id", "text"]],
+      reads_tables: ["meta_jobs", "meta_job_leases"],
+      writes_tables: ["meta_jobs", "meta_job_leases", "meta_job_audit_logs"],
+      effects: [
+        { table_name: "meta_jobs", operation: "transition", concurrency_control: "generation_fence" },
+        { table_name: "meta_job_leases", operation: "cas", concurrency_control: "generation_fence" },
+        { table_name: "meta_job_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "meta_cognition",
+      function_name: "checkpoint_meta_provider_output_v1",
+      primary_table: "meta_provider_output_checkpoints",
+      writer_kind: "immutable_append",
+      arguments: [
+        ["p_job_id", "text"],
+        ["p_lease_id", "text"],
+        ["p_expected_lease_generation", "bigint"],
+        ["p_request_hash", "text"],
+        ["p_output_hash", "text"],
+        ["p_output", "jsonb"],
+        ["p_solidified_event_range", "jsonb"],
+        ["p_llm_run_metadata", "jsonb"],
+        ["p_solidified_event_refs", "jsonb"],
+        ["p_evidence_artifacts", "jsonb"],
+        ["p_provider_binding", "jsonb"],
+        ["p_trace_id", "text"],
+      ],
+      reads_tables: ["meta_jobs", "meta_job_leases", "meta_provider_output_checkpoints"],
+      writes_tables: ["meta_provider_output_checkpoints", "meta_job_audit_logs"],
+      effects: [
+        { table_name: "meta_provider_output_checkpoints", operation: "append", concurrency_control: "generation_fence" },
+        { table_name: "meta_job_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "meta_cognition",
+      function_name: "renew_meta_job_lease_v1",
+      primary_table: "meta_job_leases",
+      writer_kind: "lease_fence",
+      arguments: [
+        ["p_job_id", "text"],
+        ["p_lease_id", "text"],
+        ["p_expected_fence_generation", "bigint"],
+        ["p_holder_id", "text"],
+        ["p_lease_until", "timestamptz"],
+        ["p_trace_id", "text"],
+      ],
+      reads_tables: ["meta_jobs", "meta_job_leases"],
+      writes_tables: ["meta_job_leases", "meta_job_audit_logs"],
       effects: [
         { table_name: "meta_job_leases", operation: "cas", concurrency_control: "generation_fence" },
         { table_name: "meta_job_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
-        { table_name: "meta_event_outbox", operation: "enqueue", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "meta_cognition",
+      function_name: "record_meta_stale_attempt_v1",
+      primary_table: "meta_job_audit_logs",
+      writer_kind: "immutable_append",
+      arguments: [
+        ["p_job_id", "text"],
+        ["p_owner_id", "text"],
+        ["p_observed_lease_generation", "bigint"],
+        ["p_reason_code", "text"],
+        ["p_idempotency_key", "text"],
+        ["p_request_hash", "text"],
+        ["p_trace_id", "text"],
+      ],
+      reads_tables: ["meta_jobs", "meta_job_leases", "meta_job_audit_logs"],
+      writes_tables: ["meta_job_audit_logs"],
+      effects: [
+        { table_name: "meta_job_audit_logs", operation: "append", concurrency_control: "idempotency_key" },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "meta_cognition",
+      function_name: "create_service_feedback_request_v1",
+      primary_table: "feedback_requests",
+      writer_kind: "state_transition",
+      arguments: [
+        ["p_feedback_request_id", "text"],
+        ["p_source_service", "text"],
+        ["p_command_id", "text"],
+        ["p_request_hash", "text"],
+        ["p_bot_id", "text"],
+        ["p_dedupe_scope_ref", "text"],
+        ["p_question_key", "text"],
+        ["p_idempotency_key", "text"],
+        ["p_feedback_request", "jsonb"],
+      ],
+      reads_tables: ["feedback_requests"],
+      writes_tables: ["feedback_requests"],
+      effects: [
+        {
+          table_name: "feedback_requests",
+          operation: "append",
+          concurrency_control: "idempotency_key",
+        },
+        {
+          table_name: "feedback_requests",
+          operation: "append",
+          concurrency_control: "advisory_identity_lock",
+          advisory_lock: META_FEEDBACK_SERVICE_COMMAND_LOCK_V1,
+        },
+        {
+          table_name: "feedback_requests",
+          operation: "append",
+          concurrency_control: "advisory_identity_lock",
+          advisory_lock: META_FEEDBACK_OPEN_SCOPE_LOCK_V1,
+        },
       ],
       returns: "jsonb",
     }),
@@ -417,6 +594,74 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
     }),
     ownerFunctionSignatureV1({
       schema: "meta_cognition",
+      function_name: "settle_meta_compensation_v1",
+      primary_table: "meta_results",
+      writer_kind: "state_transition",
+      arguments: [
+        ["p_command_id", "text"],
+        ["p_worker_id", "text"],
+        ["p_expected_lease_generation", "bigint"],
+        ["p_settlement_id", "text"],
+        ["p_settlement_hash", "text"],
+        ["p_outcome", "text"],
+        ["p_result_ref", "text", { nullable: true }],
+        ["p_error_code", "text", { nullable: true }],
+        ["p_next_retry_at", "timestamptz", { nullable: true }],
+        ["p_expected_target_service", "text"],
+        ["p_owner_request", "jsonb", { nullable: true }],
+        ["p_owner_request_hash", "text", { nullable: true }],
+        ["p_source_owner_request_hash", "text", { nullable: true }],
+        ["p_owner_response", "jsonb", { nullable: true }],
+        ["p_owner_response_hash", "text", { nullable: true }],
+        ["p_expected_result_version", "bigint"],
+        ["p_expected_job_status", "text"],
+        ["p_expected_job_updated_at", "timestamptz"],
+        ["p_trace_id", "text"],
+        ["p_now", "timestamptz"],
+      ],
+      reads_tables: [
+        "meta_command_outbox",
+        "meta_results",
+        "meta_jobs",
+      ],
+      writes_tables: [
+        "meta_command_outbox",
+        "meta_results",
+        "meta_jobs",
+        "meta_job_audit_logs",
+        "meta_event_outbox",
+      ],
+      effects: [
+        {
+          table_name: "meta_command_outbox",
+          operation: "ack",
+          concurrency_control: "generation_fence",
+        },
+        {
+          table_name: "meta_results",
+          operation: "transition",
+          concurrency_control: "expected_state_version",
+        },
+        {
+          table_name: "meta_jobs",
+          operation: "transition",
+          concurrency_control: "expected_state_version",
+        },
+        {
+          table_name: "meta_job_audit_logs",
+          operation: "append",
+          concurrency_control: "expected_state_version",
+        },
+        {
+          table_name: "meta_event_outbox",
+          operation: "enqueue",
+          concurrency_control: "expected_state_version",
+        },
+      ],
+      returns: "jsonb",
+    }),
+    ownerFunctionSignatureV1({
+      schema: "meta_cognition",
       function_name: "ack_meta_command_outbox_v1",
       primary_table: "meta_command_outbox",
       writer_kind: "outbox_claim_ack",
@@ -429,88 +674,40 @@ export const META_COGNITION_REPOSITORY_CONTRACT_V1 =
     }),
     ownerEventingTransportEpochActivationSignatureV1("meta_cognition"),
     ],
-    database_checks: [
-      {
-        constraint_name: "eventing_transport_epochs_active_generation_safe_check",
-        table_name: "eventing_transport_epochs",
-        required_definition_fragments: [
-          "active_generation >= 1",
-          "9007199254740991",
-        ],
-        semantic_constraint: {
-          kind: "integer_range",
-          column_name: "active_generation",
-          min: 1,
-          max: Number.MAX_SAFE_INTEGER,
-        },
-      },
-      {
-        constraint_name: "meta_event_outbox_event_type_check",
-        table_name: "meta_event_outbox",
-        required_definition_fragments: ["event_type", "meta.job.failed"],
-        semantic_constraint: {
-          kind: "text_enum",
-          column_name: "event_type",
-          allowed_values: OWNER_DURABLE_EVENT_TYPES_V1.meta_cognition,
-        },
-      },
-      {
-        constraint_name: "meta_event_outbox_payload_check",
-        table_name: "meta_event_outbox",
-        required_definition_fragments: [
-          "payload",
-          "jsonb_object_length",
-          "producer",
-          "meta_cognition",
-        ],
-        semantic_constraint: {
-          kind: "json_text_equals",
-          column_name: "payload",
-          field_name: "producer",
-          value: "meta_cognition",
-          required_keys: [
-            "schema_version",
-            "producer",
-            "occurred_at",
-            "trace_id",
-            "payload",
-          ],
-        },
-      },
-    ],
+    // The generator imports this module under an explicit cache-busting
+    // `?writer=` URL so it can attest a changed signature before the new
+    // artifact exists. Normal application imports never carry that marker
+    // and therefore remain fail-closed on exact artifact drift.
+    ...(new URL(import.meta.url).searchParams.has("writer")
+      ? {}
+      : { writer_artifacts: META_COGNITION_WRITER_ARTIFACTS_V1 }),
+    database_columns: META_COGNITION_DATABASE_COLUMNS_V1,
+    database_checks: META_COGNITION_DATABASE_CHECKS_V1,
+    database_functions: META_COGNITION_DATABASE_FUNCTIONS_V1,
+    database_triggers: META_COGNITION_DATABASE_TRIGGERS_V1,
+    database_unique_constraints: META_COGNITION_DATABASE_UNIQUE_CONSTRAINTS_V1,
+    database_indexes: META_COGNITION_DATABASE_INDEXES_V1,
     foreign_key_snapshot: {
     status: "complete",
     source: "Database Design revision 476 / fresh 0400_meta_cognition canonical DDL applied to PostgreSQL 17",
   },
-  foreign_keys: ownerForeignKeysV1("meta_cognition", [
-    ["feedback_requests_meta_job_id_fkey","feedback_requests",["meta_job_id"],"meta_jobs",["id"]],
-    ["meta_command_outbox_meta_job_id_fkey","meta_command_outbox",["meta_job_id"],"meta_jobs",["id"]],
-    ["meta_job_audit_logs_meta_job_id_fkey","meta_job_audit_logs",["meta_job_id"],"meta_jobs",["id"]],
-    ["meta_job_leases_job_id_fkey","meta_job_leases",["job_id"],"meta_jobs",["id"]],
-    ["meta_memory_split_chunks_compensation_outbox_id_fkey","meta_memory_split_chunks",["compensation_outbox_id"],"meta_command_outbox",["id"]],
-    ["meta_memory_split_chunks_split_plan_id_fkey","meta_memory_split_chunks",["split_plan_id"],"meta_memory_split_plans",["id"]],
-    ["meta_memory_split_plans_meta_job_id_fkey","meta_memory_split_plans",["meta_job_id"],"meta_jobs",["id"]],
-    ["meta_memory_split_plans_supersedes_plan_id_fkey","meta_memory_split_plans",["supersedes_plan_id"],"meta_memory_split_plans",["id"]],
-    ["meta_results_meta_job_id_fkey","meta_results",["meta_job_id"],"meta_jobs",["id"]],
-    ["personality_suggestions_meta_job_id_fkey","personality_suggestions",["meta_job_id"],"meta_jobs",["id"]],
-    ["personality_suggestions_superseded_by_suggestion_id_fkey","personality_suggestions",["superseded_by_suggestion_id"],"personality_suggestions",["id"]],
-    ["skill_candidates_meta_job_id_fkey","skill_candidates",["meta_job_id"],"meta_jobs",["id"]],
-    ["skill_candidates_superseded_by_candidate_id_fkey","skill_candidates",["superseded_by_candidate_id"],"skill_candidates",["id"]],
-  ]),
+  foreign_keys: META_COGNITION_FOREIGN_KEYS_V1,
   append_only_tables: [
       "trigger_process_events",
+      "meta_provider_output_checkpoints",
       "experience_records",
-      "meta_results",
       "quality_signals",
       "meta_event_outbox",
       "meta_event_inbox",
       "meta_event_dlq",
+      META_COGNITION_DLQ_RESOLUTION_V1.resolution_table,
       "meta_job_audit_logs",
       "meta_command_outbox",
     ],
     outbox_tables: ["meta_event_outbox", "meta_command_outbox"],
     inbox_tables: ["meta_event_inbox"],
     dlq_tables: ["meta_event_dlq"],
+    dlq_resolutions: [META_COGNITION_DLQ_RESOLUTION_V1.binding],
     object_metadata_tables: [],
   } as const);
 

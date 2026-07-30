@@ -32,6 +32,46 @@ describe("canonical JSON V1", () => {
     expect(() => canonicalJsonV1(cyclic)).toThrow(/cyclic/);
   });
 
+  it("fails closed before traversing hostile or excessive object graphs", () => {
+    let getterCalls = 0;
+    const accessor = Object.defineProperty({}, "secret", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return "must-not-run";
+      },
+    });
+    expect(() => canonicalJsonV1(accessor)).toThrow(/accessor/);
+    expect(getterCalls).toBe(0);
+
+    let proxyTrapCalls = 0;
+    const proxy = new Proxy(
+      { stable: true },
+      {
+        ownKeys(target) {
+          proxyTrapCalls += 1;
+          return Reflect.ownKeys(target);
+        },
+      },
+    );
+    expect(() => canonicalJsonV1(proxy)).toThrow(/proxy/);
+    expect(proxyTrapCalls).toBe(0);
+
+    let deep: unknown = "leaf";
+    for (let index = 0; index < 256; index += 1) {
+      deep = { child: deep };
+    }
+    expect(() => canonicalJsonV1(deep)).toThrow(/maximum depth/);
+
+    const shared = { stable: true };
+    expect(canonicalJsonV1({ first: shared, second: shared })).toBe(
+      '{"first":{"stable":true},"second":{"stable":true}}',
+    );
+    expect(() =>
+      canonicalJsonV1(["a", "b"], { max_nodes: 2 }),
+    ).toThrow(/maximum node count/);
+  });
+
   it("hashes only canonical UTF-8 payload bytes", () => {
     expect(canonicalPayloadHashV1({ b: 2, a: 1 })).toBe(
       canonicalPayloadHashV1({ a: 1, b: 2 }),

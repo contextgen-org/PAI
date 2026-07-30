@@ -37,7 +37,11 @@ export interface DirectActivePolicyInputV1 {
   readonly directActiveHint: boolean;
   readonly riskLevel: "low" | "medium" | "high" | "critical";
   readonly evidencePending: boolean;
-  readonly explicitness: "explicit_statement" | "strong_implication" | "inferred";
+  readonly explicitness:
+    | "explicit_statement"
+    | "strong_implication"
+    | "weak_implication"
+    | "inferred";
   readonly confidence: number;
   readonly sourceAndEvidenceValid: boolean;
   readonly hasOpenConflict: boolean;
@@ -48,9 +52,42 @@ export interface DirectActivePolicyInputV1 {
   readonly changesProtectedBoundary: boolean;
 }
 
+function assertDirectActivePolicyInputV1(
+  input: DirectActivePolicyInputV1,
+): void {
+  if (
+    !["active", "candidate"].includes(input.proposedStatus) ||
+    !["low", "medium", "high", "critical"].includes(input.riskLevel) ||
+    ![
+      "explicit_statement",
+      "strong_implication",
+      "weak_implication",
+      "inferred",
+    ].includes(input.explicitness) ||
+    !Number.isFinite(input.confidence) ||
+    input.confidence < 0 ||
+    input.confidence > 1 ||
+    typeof input.category !== "string" ||
+    input.category.length === 0 ||
+    [
+      input.directActiveHint,
+      input.evidencePending,
+      input.sourceAndEvidenceValid,
+      input.hasOpenConflict,
+      input.categoryGatePassed,
+      input.validityGatePassed,
+      input.ruleAllowlisted,
+      input.changesProtectedBoundary,
+    ].some((value) => typeof value !== "boolean")
+  ) {
+    throw new Error("DirectActivePolicyV1 input is invalid");
+  }
+}
+
 export function evaluateDirectActivePolicyV1(
   input: DirectActivePolicyInputV1,
 ): DirectActivePolicyV1 {
+  assertDirectActivePolicyInputV1(input);
   const candidate = (reason_code: DirectActivePolicyV1["reason_code"]) => ({
     policy_version: "knowthat.direct_active.v1" as const,
     status: "candidate" as const,

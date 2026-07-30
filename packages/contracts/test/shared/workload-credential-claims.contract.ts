@@ -20,6 +20,45 @@ const baseClaims = {
 };
 
 describe("WorkloadCredentialClaimsV1", () => {
+  it("preflights hostile claim graphs before Ajv traversal", () => {
+    let proxyTrapCalls = 0;
+    const proxied = new Proxy(baseClaims, {
+      ownKeys(target) {
+        proxyTrapCalls += 1;
+        return Reflect.ownKeys(target);
+      },
+    });
+    expect(validateWorkloadCredentialClaimsV1(proxied)).toMatchObject({
+      ok: false,
+      issues: [{ code: "schema_validation_failed" }],
+    });
+    expect(proxyTrapCalls).toBe(0);
+
+    let getterCalls = 0;
+    const accessor = { ...baseClaims } as Record<string, unknown>;
+    Object.defineProperty(accessor, "capability", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return ["runtime.read", "runtime.start"];
+      },
+    });
+    expect(validateWorkloadCredentialClaimsV1(accessor)).toMatchObject({
+      ok: false,
+      issues: [{ code: "schema_validation_failed" }],
+    });
+    expect(getterCalls).toBe(0);
+
+    let deep: Record<string, unknown> = { ...baseClaims };
+    for (let depth = 0; depth < 65; depth += 1) {
+      deep = { next: deep };
+    }
+    expect(validateWorkloadCredentialClaimsV1(deep)).toMatchObject({
+      ok: false,
+      issues: [{ code: "schema_validation_failed" }],
+    });
+  });
+
   it("accepts a 300-second bot-scoped token", () => {
     expect(validateWorkloadCredentialClaimsV1(baseClaims)).toEqual({
       ok: true,
@@ -61,6 +100,17 @@ describe("WorkloadCredentialClaimsV1", () => {
         expect.objectContaining({ code: "invalid_time_window" }),
       ]),
     });
+  });
+
+  it("rejects timestamps that cannot round-trip through JavaScript", () => {
+    expect(
+      validateWorkloadCredentialClaimsV1({
+        ...baseClaims,
+        iat: Number.MAX_SAFE_INTEGER + 1,
+        nbf: Number.MAX_SAFE_INTEGER + 1,
+        exp: Number.MAX_SAFE_INTEGER + 1,
+      }).ok,
+    ).toBe(false);
   });
 
   it("rejects unsorted capabilities and delegated scope drift", () => {

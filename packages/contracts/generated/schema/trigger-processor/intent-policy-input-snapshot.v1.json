@@ -1,0 +1,182 @@
+{
+  "$id": "urn:pai:trigger-processor:intent-policy-input-snapshot:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "snapshot_ref",
+    "workspace_id",
+    "bot_id",
+    "owner_agent_id",
+    "deployment_environment",
+    "release_channel",
+    "bot_policy_revision_id",
+    "personality_ref",
+    "personality_version",
+    "personality_hash",
+    "safety_boundaries_ref",
+    "safety_boundaries_version",
+    "safety_boundaries_hash",
+    "tool_permission_profile_ref",
+    "tool_permission_profile_revision",
+    "tool_permission_profile_hash",
+    "tool_policy_epoch",
+    "catalog_version",
+    "catalog_as_of",
+    "security_revocation_epoch",
+    "skill_permission_summary_ref",
+    "skill_permission_summary_hash",
+    "snapshot_hash"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "intent_policy_input_snapshot.v1",
+      "type": "string"
+    },
+    "snapshot_ref": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "workspace_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "bot_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "owner_agent_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "deployment_environment": {
+      "$id": "urn:pai:shared:deployment-environment:v1",
+      "anyOf": [
+        {
+          "const": "local",
+          "type": "string"
+        },
+        {
+          "const": "dev",
+          "type": "string"
+        },
+        {
+          "const": "staging",
+          "type": "string"
+        },
+        {
+          "const": "prod",
+          "type": "string"
+        }
+      ]
+    },
+    "release_channel": {
+      "$id": "urn:pai:shared:release-channel:v1",
+      "anyOf": [
+        {
+          "const": "stable",
+          "type": "string"
+        },
+        {
+          "const": "canary",
+          "type": "string"
+        }
+      ]
+    },
+    "bot_policy_revision_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "personality_ref": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "personality_version": {
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "personality_hash": {
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "safety_boundaries_ref": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "safety_boundaries_version": {
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "safety_boundaries_hash": {
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "tool_permission_profile_ref": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "tool_permission_profile_revision": {
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "tool_permission_profile_hash": {
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "tool_policy_epoch": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "catalog_version": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "catalog_as_of": {
+      "minLength": 20,
+      "maxLength": 30,
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+      "type": "string"
+    },
+    "security_revocation_epoch": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "skill_permission_summary_ref": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "skill_permission_summary_hash": {
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "snapshot_hash": {
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "type": "string"
+    }
+  }
+}

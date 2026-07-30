@@ -1,18 +1,43 @@
-import { openVerifiedOwnerPostgresCompositionV1 } from "@pai/persistence";
-import { requiresProductionDependenciesV1, startService } from "@pai/service-kit";
+import {
+  loadServiceRuntimeConfig,
+  requiresProductionDependenciesV1,
+  startService,
+} from "@pai/service-kit";
 
 import { buildSkillRegistryApp } from "./app.js";
-import { SKILL_REGISTRY_REPOSITORY_CONTRACT_V1 } from "./db/permission-manifest.v1.js";
+import { openSkillRegistryProductionCompositionV1 } from "./production-composition.v1.js";
 
-const databaseUrl = process.env.PAI_DATABASE_URL;
-const postgresComposition = databaseUrl === undefined ? undefined : await openVerifiedOwnerPostgresCompositionV1(SKILL_REGISTRY_REPOSITORY_CONTRACT_V1, databaseUrl);
-if (postgresComposition === undefined && requiresProductionDependenciesV1()) throw new Error("PAI_DATABASE_URL is required for owner PostgreSQL verification in production");
-await startService({
-  serviceId: "skill_registry",
-  defaultPort: 3007,
-  buildApp(options) {
-    const app = buildSkillRegistryApp({ ...options, readinessChecks: [...(options.readinessChecks ?? []), ...(postgresComposition === undefined ? [] : [{ name: "owner_postgres", check: postgresComposition.checkReadiness }])] });
-    if (postgresComposition !== undefined) app.addHook("onClose", postgresComposition.close);
-    return app;
-  },
+const runtimeConfig = loadServiceRuntimeConfig({ port: 3007 });
+const production = requiresProductionDependenciesV1();
+const composition = await openSkillRegistryProductionCompositionV1({
+  deployment_environment: runtimeConfig.deployment_environment,
+  release_channel: runtimeConfig.release_channel,
+  production_dependencies_required: production,
 });
+composition.start();
+
+try {
+  await startService({
+    serviceId: "skill_registry",
+    defaultPort: 3007,
+    requireWorkloadVerifier: production,
+    buildApp(options) {
+      const app = buildSkillRegistryApp(
+        {
+          ...options,
+          readinessChecks: [
+            ...(options.readinessChecks ?? []),
+            { name: "skill_registry_production", check: composition.checkReadiness },
+          ],
+        },
+        { registry: composition.application },
+        { require_complete_pipeline: true },
+      );
+      app.addHook("onClose", () => composition.close());
+      return app;
+    },
+  });
+} catch (error) {
+  await composition.close();
+  throw error;
+}

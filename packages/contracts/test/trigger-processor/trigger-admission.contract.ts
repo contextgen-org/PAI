@@ -8,6 +8,9 @@ import {
   AdmitTriggerOkResponseV1Schema,
   AdmitTriggerRetryableFailureResponseV1Schema,
   AdmitTriggerWriterResponseV1Schema,
+  assertCanonicalTimerTriggerTimeV1,
+  assertTimerTriggerBusinessPayloadV1,
+  isCanonicalTimerTriggerTimeV1,
   TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1,
   TriggerSubmitRequestV1Schema,
   TriggerSubmitResponseV1Schema,
@@ -106,8 +109,11 @@ const acceptedResponse = {
     trigger_process_id: "process-1",
     process_phase: "admission",
     process_status: "running",
+    wait_reason: null,
+    blocked_by_process_id: null,
     priority: "strong",
     action: "dispatch",
+    reason_code: "timer_due",
     duplicate_replayed: false,
   },
   trace_id: "trace-1",
@@ -148,6 +154,41 @@ describe("Trigger admission contracts", () => {
       },
     ]) {
       expect(Value.Check(TriggerSubmitRequestV1Schema, invalid)).toBe(false);
+    }
+  });
+
+  it("validates Timer calendar, IANA zone, offset and local instant semantics", () => {
+    expect(isCanonicalTimerTriggerTimeV1(timerBody.payload)).toBe(true);
+    expect(() => assertCanonicalTimerTriggerTimeV1(timerBody.payload)).not.toThrow();
+    expect(() =>
+      assertTimerTriggerBusinessPayloadV1({
+        schema_version: "timer.trigger_payload.v1",
+        value: { intent_hint: "review_memory_quality" },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertTimerTriggerBusinessPayloadV1({
+        schema_version: "timer.trigger_payload.v1",
+        value: { oversized: "界".repeat(3_000) },
+      }),
+    ).toThrow(/8192 canonical JSON bytes/);
+    for (const invalid of [
+      { ...timerBody.payload, local_date: "2026-02-30" },
+      {
+        ...timerBody.payload,
+        scheduled_for: "2026-07-22T00:30:00+24:00",
+      },
+      { ...timerBody.payload, timezone: "not/a-zone" },
+      { ...timerBody.payload, local_time: "09:30:00" },
+      {
+        ...timerBody.payload,
+        scheduled_for: "2026-02-30T00:30:00Z",
+      },
+    ]) {
+      expect(isCanonicalTimerTriggerTimeV1(invalid)).toBe(false);
+      expect(() => assertCanonicalTimerTriggerTimeV1(invalid)).toThrow(
+        /inconsistent/u,
+      );
     }
   });
 
@@ -239,6 +280,15 @@ describe("Trigger admission contracts", () => {
           process_status: "running",
         },
       },
+      {
+        ...acceptedResponse,
+        details: {
+          ...acceptedResponse.details,
+          action: "dispatch",
+          priority: "weak",
+          reason_code: "strong_fifo_waiting",
+        },
+      },
     ]) {
       expect(Value.Check(AdmitTriggerAcceptedResponseV1Schema, impossible)).toBe(
         false,
@@ -252,7 +302,6 @@ describe("Trigger admission contracts", () => {
         retryable: false,
         details: {
           ...acceptedResponse.details,
-          action: "duplicate_replay",
           duplicate_replayed: true,
         },
         trace_id: "trace-2",
@@ -267,7 +316,6 @@ describe("Trigger admission contracts", () => {
           ...acceptedResponse.details,
           process_phase: "closed",
           process_status: "running",
-          action: "duplicate_replay",
           duplicate_replayed: true,
         },
         trace_id: "trace-2",
@@ -371,7 +419,7 @@ describe("Trigger admission contracts", () => {
       active_process: "none",
       active_process_id: null,
       active_process_slot_generation: null,
-      active_process_updated_at: null,
+      active_process_state_version: null,
       foreground_slot_process_id: null,
     } as const;
     expect(Value.Check(TrustedAdmissionFactsV1Schema, idleFacts)).toBe(true);
@@ -422,7 +470,7 @@ describe("Trigger admission contracts", () => {
           slot_generation: 7,
           phase: "execution",
           status: "running",
-          process_updated_at: "2026-07-22T08:00:00.000Z",
+          process_state_version: 9,
           ...fifoSnapshot,
         },
       }),
@@ -436,7 +484,7 @@ describe("Trigger admission contracts", () => {
           slot_generation: 7,
           phase: "execution",
           status: "waiting",
-          process_updated_at: "2026-07-22T08:00:00.000Z",
+          process_state_version: 9,
           ...fifoSnapshot,
         },
       }),
@@ -450,7 +498,7 @@ describe("Trigger admission contracts", () => {
           slot_generation: 7,
           phase: "execution",
           status: "running",
-          process_updated_at: "not-a-canonical-timestamp",
+          process_state_version: 0,
           ...fifoSnapshot,
         },
       }),

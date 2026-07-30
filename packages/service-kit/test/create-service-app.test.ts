@@ -13,6 +13,44 @@ afterEach(async () => {
 });
 
 describe("createServiceApp", () => {
+  it("preflights parsed request graphs before route schema validation and handlers", async () => {
+    const app = createServiceApp("memory", { logger: false });
+    apps.push(app);
+    let handlerCalls = 0;
+    app.post(
+      "/bounded",
+      {
+        schema: {
+          body: {
+            type: "object",
+            additionalProperties: true,
+          },
+        },
+      },
+      async () => {
+        handlerCalls += 1;
+        return { ok: true };
+      },
+    );
+
+    let deep: Record<string, unknown> = { leaf: true };
+    for (let depth = 0; depth < 129; depth += 1) {
+      deep = { next: deep };
+    }
+    const response = await app.inject({
+      method: "POST",
+      url: "/bounded",
+      payload: deep,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      code: "invalid_canonical_json",
+      retryable: false,
+    });
+    expect(handlerCalls).toBe(0);
+  });
+
   it("keeps liveness separate from readiness", async () => {
     const app = createServiceApp("trigger_processor", {
       readinessChecks: [
@@ -104,6 +142,21 @@ describe("createServiceApp", () => {
   });
 
   it("rejects accessor-backed app options and readiness checks without invoking them", () => {
+    let proxyTrapCalls = 0;
+    const proxiedOptions = new Proxy(
+      { logger: false },
+      {
+        getPrototypeOf(target) {
+          proxyTrapCalls += 1;
+          return Reflect.getPrototypeOf(target);
+        },
+      },
+    );
+    expect(() =>
+      createServiceApp("memory", proxiedOptions),
+    ).toThrow("own data properties");
+    expect(proxyTrapCalls).toBe(0);
+
     let optionGetterCalls = 0;
     const options = {} as Record<string, unknown>;
     Object.defineProperty(options, "readinessChecks", {
@@ -346,5 +399,187 @@ describe("createServiceApp", () => {
       details: { schema_version: "1.0.0" },
     });
     expect(response.body).not.toContain("must-never-be-reflected");
+  });
+
+  it("rejects rather than mutating requests to satisfy a route schema", async () => {
+    const app = createServiceApp("knowthat");
+    apps.push(app);
+    let handlerCalls = 0;
+    app.post(
+      "/strict",
+      {
+        schema: {
+          body: {
+            type: "object",
+            additionalProperties: false,
+            required: ["count", "mode"],
+            properties: {
+              count: { type: "integer" },
+              mode: { type: "string", default: "implicit" },
+            },
+          },
+        },
+      },
+      async () => {
+        handlerCalls += 1;
+        return { accepted: true };
+      },
+    );
+
+    for (const payload of [
+      { count: 1, mode: "explicit", unexpected: "must-not-be-removed" },
+      { count: "1", mode: "explicit" },
+      { count: 1 },
+    ]) {
+      const response = await app.inject({
+        method: "POST",
+        url: "/strict",
+        payload,
+      });
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({
+        code: "invalid_request",
+        retryable: false,
+      });
+    }
+    expect(handlerCalls).toBe(0);
+  });
+
+  it("coerces only textual transport scalars while rejecting unknown query fields", async () => {
+    const app = createServiceApp("knowthat");
+    apps.push(app);
+    app.get(
+      "/query",
+      {
+        schema: {
+          querystring: {
+            type: "object",
+            additionalProperties: false,
+            required: ["limit"],
+            properties: {
+              limit: { type: "integer", minimum: 1, maximum: 200 },
+            },
+          },
+        },
+      },
+      async (request) => ({
+        limit: (request.query as Readonly<{ limit: number }>).limit,
+      }),
+    );
+
+    const accepted = await app.inject({
+      method: "GET",
+      url: "/query?limit=50",
+    });
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.json()).toEqual({ limit: 50 });
+
+    const rejected = await app.inject({
+      method: "GET",
+      url: "/query?limit=50&unexpected=must-not-be-removed",
+    });
+    expect(rejected.statusCode).toBe(400);
+    expect(rejected.json()).toMatchObject({
+      code: "invalid_request",
+      retryable: false,
+    });
+  });
+
+  it("executes the shared UTF-8, canonical JSON, identity and conditional keywords", async () => {
+    const app = createServiceApp("memory");
+    apps.push(app);
+    app.post(
+      "/memory-batch",
+      {
+        schema: {
+          body: {
+            type: "object",
+            additionalProperties: false,
+            required: ["id", "subjects", "items"],
+            properties: {
+              compatibility_mode: {
+                type: "string",
+                const: "legacy_subject_order",
+              },
+              id: { type: "string", maxUtf8Bytes: 4 },
+              subjects: {
+                type: "array",
+                minItems: 1,
+                exactlyOnePrimary: "required_when_multiple",
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  atLeastOneOf: ["canonical_id", "label"],
+                  properties: {
+                    canonical_id: { type: "string" },
+                    label: { type: "string" },
+                    primary: { type: "boolean" },
+                  },
+                },
+              },
+              items: {
+                type: "array",
+                uniqueByCanonicalIdentity: "id",
+                items: {
+                  type: "object",
+                  required: ["id"],
+                  properties: { id: { type: "string" } },
+                },
+              },
+            },
+            maxCanonicalJsonBytes: 512,
+          },
+        },
+      },
+      async () => ({ accepted: true }),
+    );
+
+    const valid = await app.inject({
+      method: "POST",
+      url: "/memory-batch",
+      payload: {
+        compatibility_mode: "legacy_subject_order",
+        id: "界",
+        subjects: [
+          { canonical_id: "user-1" },
+          { label: "project" },
+        ],
+        items: [{ id: "one" }, { id: "two" }],
+      },
+    });
+    expect(valid.statusCode).toBe(200);
+
+    for (const payload of [
+      {
+        id: "界界",
+        subjects: [{ canonical_id: "user-1", primary: true }],
+        items: [{ id: "one" }],
+      },
+      {
+        id: "ok",
+        subjects: [{ primary: true }],
+        items: [{ id: "one" }],
+      },
+      {
+        id: "ok",
+        subjects: [
+          { canonical_id: "user-1" },
+          { label: "project" },
+        ],
+        items: [{ id: "one" }],
+      },
+      {
+        id: "ok",
+        subjects: [{ canonical_id: "user-1", primary: true }],
+        items: [{ id: "same" }, { id: "same" }],
+      },
+    ]) {
+      const response = await app.inject({
+        method: "POST",
+        url: "/memory-batch",
+        payload,
+      });
+      expect(response.statusCode).toBe(400);
+    }
   });
 });

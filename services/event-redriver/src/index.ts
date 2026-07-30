@@ -3,6 +3,8 @@ import {
   type DurableSentOutboxReconciliationSummaryV1,
 } from "@pai/eventing";
 
+export * from "./production-composition.v1.js";
+
 export interface EventRedriverBatchPortV1 {
   /**
    * The implementation must settle after abort. The signal is cooperative: the

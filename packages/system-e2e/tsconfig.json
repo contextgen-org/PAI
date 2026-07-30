@@ -1,0 +1,29 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node", "vitest/globals"],
+    "paths": {
+      "@pai/action-runtime": ["../../services/action-runtime/src/index.ts"],
+      "@pai/auth": ["../auth/src/index.ts"],
+      "@pai/contracts": ["../contracts/src/index.ts"],
+      "@pai/eventing": ["../eventing/src/index.ts"],
+      "@pai/knowthat": ["../../services/knowthat/src/index.ts"],
+      "@pai/memory": ["../../services/memory/src/index.ts"],
+      "@pai/meta-cognition": ["../../services/meta-cognition/src/index.ts"],
+      "@pai/object-store": ["../object-store/src/index.ts"],
+      "@pai/observation-gateway": [
+        "../../services/observation-gateway/src/index.ts"
+      ],
+      "@pai/persistence": ["../persistence/src/index.ts"],
+      "@pai/service-kit": ["../service-kit/src/index.ts"],
+      "@pai/timer-trigger-app": [
+        "../../services/timer-trigger-app/src/index.ts"
+      ],
+      "@pai/trigger-processor": [
+        "../../services/trigger-processor/src/index.ts"
+      ]
+    }
+  },
+  "include": ["test/**/*.ts", "vitest.config.ts"]
+}

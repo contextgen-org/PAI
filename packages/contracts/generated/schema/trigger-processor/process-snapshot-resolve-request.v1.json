@@ -1,0 +1,120 @@
+{
+  "$id": "urn:pai:trigger-processor:snapshot-resolve-request:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "trigger_process_id",
+    "workspace_id",
+    "bot_id",
+    "owner_agent_id",
+    "deployment_environment",
+    "release_channel",
+    "snapshot_ref",
+    "expected_snapshot_version",
+    "expected_snapshot_hash",
+    "purpose",
+    "trace_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "trigger_process_snapshot_resolve_request.v1",
+      "type": "string"
+    },
+    "trigger_process_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "workspace_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "bot_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "owner_agent_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "deployment_environment": {
+      "$id": "urn:pai:shared:deployment-environment:v1",
+      "anyOf": [
+        {
+          "const": "local",
+          "type": "string"
+        },
+        {
+          "const": "dev",
+          "type": "string"
+        },
+        {
+          "const": "staging",
+          "type": "string"
+        },
+        {
+          "const": "prod",
+          "type": "string"
+        }
+      ]
+    },
+    "release_channel": {
+      "$id": "urn:pai:shared:release-channel:v1",
+      "anyOf": [
+        {
+          "const": "stable",
+          "type": "string"
+        },
+        {
+          "const": "canary",
+          "type": "string"
+        }
+      ]
+    },
+    "snapshot_ref": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "expected_snapshot_version": {
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "expected_snapshot_hash": {
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "purpose": {
+      "anyOf": [
+        {
+          "const": "meta_learning",
+          "type": "string"
+        },
+        {
+          "const": "observation_replay",
+          "type": "string"
+        },
+        {
+          "const": "repair",
+          "type": "string"
+        },
+        {
+          "const": "diagnostic",
+          "type": "string"
+        }
+      ]
+    },
+    "trace_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    }
+  }
+}

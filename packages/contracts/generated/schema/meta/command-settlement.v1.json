@@ -1,0 +1,150 @@
+{
+  "$id": "urn:pai:meta:command-settlement:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "worker_id",
+        "lease_generation",
+        "settlement_id",
+        "outcome",
+        "result_ref",
+        "error_code",
+        "next_retry_at",
+        "trace_id"
+      ],
+      "properties": {
+        "worker_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "lease_generation": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "settlement_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "const": "retry_wait",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "type": "string"
+            }
+          ]
+        },
+        "result_ref": {
+          "type": "null"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "next_retry_at": {
+          "anyOf": [
+            {
+              "minLength": 20,
+              "maxLength": 30,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "command_id",
+        "status",
+        "duplicate_replayed",
+        "result_status",
+        "result_version"
+      ],
+      "properties": {
+        "command_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "const": "retry_wait",
+              "type": "string"
+            },
+            {
+              "const": "succeeded",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "type": "string"
+            }
+          ]
+        },
+        "duplicate_replayed": {
+          "type": "boolean"
+        },
+        "result_status": {
+          "anyOf": [
+            {
+              "const": "complete",
+              "type": "string"
+            },
+            {
+              "const": "partial_pending",
+              "type": "string"
+            },
+            {
+              "const": "partial_failed",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result_version": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

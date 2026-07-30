@@ -5,7 +5,9 @@ import { ReleaseChannelV1Schema } from "../shared/release-channel.v1.js";
 import { TypedEvidenceRefV1Schema } from "../shared/typed-evidence-ref.v1.js";
 import {
   TerminalOutcomeV1Schema,
+  type TerminalOutcomeV1,
   TriggerProcessStateV1Schema,
+  type TriggerProcessStateV1,
 } from "./trigger-process-state.v1.js";
 import {
   TriggerPriorityV1Schema,
@@ -232,6 +234,95 @@ export const TriggerProcessorDomainEventV1Schema = Type.Union(
 export type TriggerProcessorDomainEventV1 = Static<
   typeof TriggerProcessorDomainEventV1Schema
 >;
+
+const KNOWN_META_REASON_TERMINAL_OUTCOMES_V1 = Object.freeze({
+  cooldown_expired: Object.freeze([
+    "executed",
+    "deferred_then_executed",
+    "failed_with_reason",
+  ]),
+  user_retracted: Object.freeze(["cancelled_with_reason"]),
+  system_interrupted: Object.freeze(["interrupted_with_reason"]),
+  failed_with_learnable_snapshot: Object.freeze(["failed_with_reason"]),
+} as const satisfies Readonly<Record<string, readonly TerminalOutcomeV1[]>>);
+
+function parseCanonicalTimestampMs(value: string): number {
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error("TriggerProcessorDomainEventV1 semantic binding mismatch");
+  }
+  return parsed;
+}
+
+function samePhaseAndStatus(
+  left: TriggerProcessStateV1,
+  right: TriggerProcessStateV1,
+): boolean {
+  return left.phase === right.phase && left.status === right.status;
+}
+
+function assertKnownReasonOutcomeBinding(
+  canonicalReasonCode: string,
+  terminalOutcome: TerminalOutcomeV1,
+): void {
+  const allowed =
+    KNOWN_META_REASON_TERMINAL_OUTCOMES_V1[
+      canonicalReasonCode as keyof typeof KNOWN_META_REASON_TERMINAL_OUTCOMES_V1
+    ];
+  if (
+    allowed !== undefined &&
+    !(allowed as readonly TerminalOutcomeV1[]).includes(terminalOutcome)
+  ) {
+    throw new Error("TriggerProcessorDomainEventV1 semantic binding mismatch");
+  }
+}
+
+export function assertTriggerProcessorDomainEventSemanticBindingsV1(
+  event: TriggerProcessorDomainEventV1,
+): void {
+  switch (event.event_type) {
+    case "trigger_process.phase_changed":
+      if (
+        samePhaseAndStatus(
+          event.payload.previous_state,
+          event.payload.next_state,
+        )
+      ) {
+        throw new Error("TriggerProcessorDomainEventV1 semantic binding mismatch");
+      }
+      return;
+    case "cooldown.expired":
+      if (
+        parseCanonicalTimestampMs(event.payload.expired_at) <
+        parseCanonicalTimestampMs(event.payload.cooldown_until)
+      ) {
+        throw new Error("TriggerProcessorDomainEventV1 semantic binding mismatch");
+      }
+      return;
+    case "weak_trigger.merged": {
+      const merged = event.payload.merged_process_ids;
+      const uniqueMerged = new Set(merged);
+      if (
+        uniqueMerged.size !== merged.length ||
+        uniqueMerged.has(event.payload.canonical_process_id)
+      ) {
+        throw new Error("TriggerProcessorDomainEventV1 semantic binding mismatch");
+      }
+      return;
+    }
+    case "trigger_process.outcome_finalized":
+      assertKnownReasonOutcomeBinding(
+        event.payload.canonical_reason_code,
+        event.payload.terminal_outcome,
+      );
+      return;
+    case "trigger.accepted":
+    case "trigger.rejected":
+    case "trigger_process.user_message_retracted":
+    case "trigger_process.system_interrupted":
+      return;
+  }
+}
 
 const quotedEventTypes = TRIGGER_PROCESSOR_DOMAIN_EVENT_TYPES_V1.map(
   (eventType) => `'${eventType}'`,

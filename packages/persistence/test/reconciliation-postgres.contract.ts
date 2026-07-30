@@ -20,6 +20,9 @@ const reconciliation = ownerEventingReconciliationContractV1(
 const claimWriter = `claim_${outboxTable}_reconciliation_v1`;
 const acknowledgePresentWriter = `ack_${outboxTable}_transport_present_v1`;
 const acknowledgeRematerializedWriter = `ack_${outboxTable}_rematerialized_v1`;
+const acknowledgePermanentFailureWriter =
+  `ack_${outboxTable}_permanent_failure_v1`;
+const dlqTable = "clock_dlq";
 
 const claimBody = `
 DECLARE
@@ -167,6 +170,78 @@ BEGIN
   RETURN jsonb_build_object('acknowledged', true);
 END;`;
 
+const acknowledgePermanentFailureBody = `
+DECLARE
+  v_active_epoch text;
+  v_active_generation bigint;
+  v_updated_id text;
+  v_dlq_id text;
+  v_dlq_payload jsonb;
+BEGIN
+  SELECT active_epoch, active_generation
+    INTO v_active_epoch, v_active_generation
+    FROM ${schema}.eventing_transport_epochs
+   WHERE transport_name = 'redis_stream'
+   FOR UPDATE;
+  IF v_active_epoch IS DISTINCT FROM p_current_transport_epoch OR
+     v_active_generation IS DISTINCT FROM p_current_transport_generation THEN
+    RAISE EXCEPTION 'stale active transport generation';
+  END IF;
+  v_dlq_id := 'sent-outbox-reconciliation:' || p_outbox_id;
+  PERFORM 1
+    FROM ${schema}.${outboxTable}
+   WHERE id = p_outbox_id
+     AND status = 'failed'
+     AND reconciliation_claim_token IS NULL
+     AND transport_ref IS NOT DISTINCT FROM p_previous_transport_ref
+     AND transport_epoch IS NOT DISTINCT FROM p_previous_transport_epoch
+     AND transport_generation IS NOT DISTINCT FROM p_previous_transport_generation;
+  IF FOUND THEN
+    PERFORM 1 FROM ${schema}.${dlqTable} WHERE id = v_dlq_id;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'sent outbox reconciliation replay proof is incomplete';
+    END IF;
+    RETURN jsonb_build_object('acknowledged', true, 'status', 'replayed');
+  END IF;
+  v_dlq_payload := jsonb_build_object(
+    'kind', 'sent_outbox_reconciliation_permanent_failure',
+    'outbox_id', p_outbox_id,
+    'previous_transport_ref', p_previous_transport_ref,
+    'previous_transport_epoch', p_previous_transport_epoch,
+    'previous_transport_generation', p_previous_transport_generation,
+    'current_transport_epoch', p_current_transport_epoch,
+    'current_transport_generation', p_current_transport_generation,
+    'failure_code', p_failure_code
+  );
+  INSERT INTO ${schema}.${dlqTable}(
+    id, source_event_id, event_type, payload, last_error, failed_at
+  ) VALUES (
+    v_dlq_id,
+    p_outbox_id,
+    'sent_outbox_reconciliation_permanent_failure',
+    v_dlq_payload,
+    jsonb_build_object('code', p_failure_code, 'message', p_failure_message),
+    p_now
+  ) ON CONFLICT (id) DO NOTHING;
+  UPDATE ${schema}.${outboxTable}
+     SET status = 'failed',
+         reconciliation_claimed_by = NULL,
+         reconciliation_claim_token = NULL,
+         reconciliation_locked_until = NULL,
+         updated_at = p_now
+   WHERE id = p_outbox_id
+     AND status = 'sent'
+     AND reconciliation_claim_token = p_claim_token
+     AND transport_ref IS NOT DISTINCT FROM p_previous_transport_ref
+     AND transport_epoch IS NOT DISTINCT FROM p_previous_transport_epoch
+     AND transport_generation IS NOT DISTINCT FROM p_previous_transport_generation
+   RETURNING id INTO v_updated_id;
+  IF v_updated_id IS NULL THEN
+    RAISE EXCEPTION 'stale reconciliation permanent failure claim';
+  END IF;
+  RETURN jsonb_build_object('acknowledged', true, 'status', 'quarantined');
+END;`;
+
 const setupSql = `
 DROP SCHEMA IF EXISTS ${schema} CASCADE;
 CREATE SCHEMA ${schema};
@@ -192,6 +267,14 @@ CREATE TABLE ${schema}.${outboxTable} (
   reconciliation_claim_token text,
   reconciliation_claim_generation bigint NOT NULL DEFAULT 0,
   reconciliation_locked_until timestamptz
+);
+CREATE TABLE ${schema}.${dlqTable} (
+  id text PRIMARY KEY,
+  source_event_id text NOT NULL,
+  event_type text NOT NULL,
+  payload jsonb NOT NULL,
+  last_error jsonb NOT NULL,
+  failed_at timestamptz NOT NULL
 );
 INSERT INTO ${schema}.eventing_transport_epochs
   (transport_name, active_epoch, active_generation, activated_at)
@@ -244,6 +327,24 @@ SET search_path = ${schema}, pg_temp
 AS $writer$
 ${acknowledgeRematerializedBody}
 $writer$;
+
+CREATE FUNCTION ${schema}.${acknowledgePermanentFailureWriter}(
+  p_outbox_id text,
+  p_claim_token text,
+  p_previous_transport_ref text,
+  p_previous_transport_epoch text,
+  p_previous_transport_generation bigint,
+  p_current_transport_epoch text,
+  p_current_transport_generation bigint,
+  p_failure_code text,
+  p_failure_message text,
+  p_now timestamptz
+) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = ${schema}, pg_temp
+AS $writer$
+${acknowledgePermanentFailureBody}
+$writer$;
 `;
 
 describePostgres("PostgreSQL reconciliation clock authority", () => {
@@ -283,10 +384,16 @@ describePostgres("PostgreSQL reconciliation clock authority", () => {
     expect(byOperation.get("reconcile_ack_rematerialized")?.slice(-1)).toEqual([
       "p_probe_interval_ms",
     ]);
+    expect(byOperation.get("reconcile_ack_permanent_failure")?.slice(-3)).toEqual([
+      "p_failure_code",
+      "p_failure_message",
+      "p_now",
+    ]);
     const bodyByOperation = new Map([
       ["reconcile_claim", claimBody],
       ["reconcile_ack_present", acknowledgePresentBody],
       ["reconcile_ack_rematerialized", acknowledgeRematerializedBody],
+      ["reconcile_ack_permanent_failure", acknowledgePermanentFailureBody],
     ]);
     for (const signature of reconciliation.function_signatures.slice(1)) {
       const operation = signature.effects[0]?.operation;
@@ -516,5 +623,115 @@ describePostgres("PostgreSQL reconciliation clock authority", () => {
         transport_generation: "7",
       },
     ]);
+  });
+
+  it("durably quarantines permanent reconciliation failures before ACK replay", async () => {
+    const db = await reset();
+    const id = `permanent-${randomUUID()}`;
+    const claimToken = `claim-${randomUUID()}`;
+    await db.query(
+      `INSERT INTO ${schema}.${outboxTable}
+         (id, status, transport_ref, transport_epoch, transport_generation,
+          sent_at, updated_at, reconciliation_claim_token,
+          reconciliation_locked_until)
+       VALUES ($1, 'sent', 'stream:poison-0', 'epoch-current', 7,
+               clock_timestamp(), clock_timestamp(), $2,
+               clock_timestamp() + interval '30 seconds')`,
+      [id, claimToken],
+    );
+
+    const quarantined = await db.query<{ result: unknown }>(
+      `SELECT ${schema}.${acknowledgePermanentFailureWriter}(
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp()
+       ) AS result`,
+      [
+        id,
+        claimToken,
+        "stream:poison-0",
+        "epoch-current",
+        7,
+        "epoch-current",
+        7,
+        "outbox_contract_violation",
+        "invalid retained outbox row",
+      ],
+    );
+    expect(quarantined.rows).toEqual([
+      { result: { acknowledged: true, status: "quarantined" } },
+    ]);
+    const persisted = await db.query<{
+      status: string;
+      claim_token: string | null;
+      dlq_count: string;
+      dlq_payload: { failure_code: string };
+    }>(
+      `SELECT outbox.status,
+              outbox.reconciliation_claim_token AS claim_token,
+              count(dlq.id)::text AS dlq_count,
+              min(dlq.payload::text)::jsonb AS dlq_payload
+         FROM ${schema}.${outboxTable} AS outbox
+         LEFT JOIN ${schema}.${dlqTable} AS dlq
+           ON dlq.id = 'sent-outbox-reconciliation:' || outbox.id
+        WHERE outbox.id = $1
+        GROUP BY outbox.status, outbox.reconciliation_claim_token`,
+      [id],
+    );
+    expect(persisted.rows).toEqual([
+      {
+        status: "failed",
+        claim_token: null,
+        dlq_count: "1",
+        dlq_payload: expect.objectContaining({
+          failure_code: "outbox_contract_violation",
+        }),
+      },
+    ]);
+
+    const replayed = await db.query<{ result: unknown }>(
+      `SELECT ${schema}.${acknowledgePermanentFailureWriter}(
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp()
+       ) AS result`,
+      [
+        id,
+        claimToken,
+        "stream:poison-0",
+        "epoch-current",
+        7,
+        "epoch-current",
+        7,
+        "outbox_contract_violation",
+        "invalid retained outbox row",
+      ],
+    );
+    expect(replayed.rows).toEqual([
+      { result: { acknowledged: true, status: "replayed" } },
+    ]);
+
+    await db.query(
+      `INSERT INTO ${schema}.${outboxTable}
+         (id, status, transport_ref, transport_epoch, transport_generation,
+          sent_at, updated_at, reconciliation_claim_token)
+       VALUES ($1, 'sent', 'stream:stale-0', 'epoch-current', 7,
+               clock_timestamp(), clock_timestamp(), $2)`,
+      [`stale-${id}`, claimToken],
+    );
+    await expect(
+      db.query(
+        `SELECT ${schema}.${acknowledgePermanentFailureWriter}(
+           $1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp()
+         )`,
+        [
+          `stale-${id}`,
+          `${claimToken}:wrong`,
+          "stream:stale-0",
+          "epoch-current",
+          7,
+          "epoch-current",
+          7,
+          "outbox_contract_violation",
+          "invalid retained outbox row",
+        ],
+      ),
+    ).rejects.toThrow(/stale reconciliation permanent failure claim/u);
   });
 });

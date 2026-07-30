@@ -1,0 +1,376 @@
+{
+  "$id": "urn:pai:skill-registry:catalog-query:v1",
+  "anyOf": [
+    {
+      "$id": "urn:pai:skill-registry:catalog-query-request:v1",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "workspace_id",
+        "bot_id",
+        "deployment_environment",
+        "release_channel",
+        "owner_agent_id",
+        "limit",
+        "trace_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "skill_catalog_query.v1",
+          "type": "string"
+        },
+        "workspace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "deployment_environment": {
+          "$id": "urn:pai:shared:deployment-environment:v1",
+          "anyOf": [
+            {
+              "const": "local",
+              "type": "string"
+            },
+            {
+              "const": "dev",
+              "type": "string"
+            },
+            {
+              "const": "staging",
+              "type": "string"
+            },
+            {
+              "const": "prod",
+              "type": "string"
+            }
+          ]
+        },
+        "release_channel": {
+          "$id": "urn:pai:shared:release-channel:v1",
+          "anyOf": [
+            {
+              "const": "stable",
+              "type": "string"
+            },
+            {
+              "const": "canary",
+              "type": "string"
+            }
+          ]
+        },
+        "owner_agent_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "as_of": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "filter": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "cursor": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "limit": {
+          "minimum": 1,
+          "maximum": 500,
+          "type": "integer"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "trace_id"
+      ],
+      "properties": {
+        "code": {
+          "const": "skill_catalog_found",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "retryable": {
+          "const": false,
+          "type": "boolean"
+        },
+        "details": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "schema_version",
+            "workspace_id",
+            "bot_id",
+            "deployment_environment",
+            "release_channel",
+            "owner_agent_id",
+            "catalog_revision_id",
+            "catalog_version",
+            "as_of",
+            "security_revocation_epoch",
+            "skill_permission_summary_ref",
+            "skill_permission_summary_hash",
+            "items",
+            "next_cursor"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "skill_catalog_response.v1",
+              "type": "string"
+            },
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "catalog_revision_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "catalog_version": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "as_of": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "security_revocation_epoch": {
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "skill_permission_summary_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "skill_permission_summary_hash": {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "items": {
+              "maxItems": 500,
+              "type": "array",
+              "items": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "skill_id",
+                  "skill_key",
+                  "skill_name",
+                  "version_id",
+                  "version",
+                  "activation_revision_id",
+                  "lifecycle_state",
+                  "capability_refs"
+                ],
+                "properties": {
+                  "skill_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "skill_key": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "skill_name": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "version_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "version": {
+                    "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "activation_revision_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "lifecycle_state": {
+                    "anyOf": [
+                      {
+                        "const": "published",
+                        "type": "string"
+                      },
+                      {
+                        "const": "deprecated",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "capability_refs": {
+                    "maxItems": 1024,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "next_cursor": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "trace_id"
+      ],
+      "properties": {
+        "code": {
+          "const": "invalid_cursor",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "retryable": {
+          "const": false,
+          "type": "boolean"
+        },
+        "details": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "reason",
+            "restart_from_first_page"
+          ],
+          "properties": {
+            "reason": {
+              "anyOf": [
+                {
+                  "const": "malformed",
+                  "type": "string"
+                },
+                {
+                  "const": "context_changed",
+                  "type": "string"
+                },
+                {
+                  "const": "expired",
+                  "type": "string"
+                }
+              ]
+            },
+            "restart_from_first_page": {
+              "const": true,
+              "type": "boolean"
+            }
+          }
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,346 @@
+{
+  "$id": "urn:pai:action-runtime:tool-permission-profile-current-read:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "selector",
+        "trace_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "tool_permission_profile_current_read_request.v1",
+          "type": "string"
+        },
+        "selector": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "trace_id"
+      ],
+      "properties": {
+        "code": {
+          "const": "tool_permission_profile_current",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "retryable": {
+          "const": false,
+          "type": "boolean"
+        },
+        "details": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "profile",
+            "pointer_version"
+          ],
+          "properties": {
+            "profile": {
+              "$id": "urn:pai:action-runtime:tool-permission-profile:v1",
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "schema_version",
+                "selector",
+                "profile_ref",
+                "revision",
+                "profile_hash",
+                "allowed_tools",
+                "tool_arg_constraints",
+                "resource_scopes",
+                "network_scope",
+                "filesystem_scope",
+                "timer_scope",
+                "memory_scope",
+                "policy_epoch",
+                "effective_at"
+              ],
+              "properties": {
+                "schema_version": {
+                  "const": "tool_permission_profile.v1",
+                  "type": "string"
+                },
+                "selector": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "workspace_id",
+                    "bot_id",
+                    "owner_agent_id",
+                    "deployment_environment",
+                    "release_channel"
+                  ],
+                  "properties": {
+                    "workspace_id": {
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "bot_id": {
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "owner_agent_id": {
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "deployment_environment": {
+                      "$id": "urn:pai:shared:deployment-environment:v1",
+                      "anyOf": [
+                        {
+                          "const": "local",
+                          "type": "string"
+                        },
+                        {
+                          "const": "dev",
+                          "type": "string"
+                        },
+                        {
+                          "const": "staging",
+                          "type": "string"
+                        },
+                        {
+                          "const": "prod",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "release_channel": {
+                      "$id": "urn:pai:shared:release-channel:v1",
+                      "anyOf": [
+                        {
+                          "const": "stable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "canary",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "profile_ref": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "revision": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "profile_hash": {
+                  "minLength": 71,
+                  "maxLength": 71,
+                  "pattern": "^sha256:[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                "allowed_tools": {
+                  "maxItems": 10000,
+                  "uniqueItems": true,
+                  "type": "array",
+                  "items": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  }
+                },
+                "tool_arg_constraints": {
+                  "type": "object",
+                  "patternProperties": {
+                    "^(.*)$": {}
+                  }
+                },
+                "resource_scopes": {
+                  "type": "object",
+                  "patternProperties": {
+                    "^(.*)$": {}
+                  }
+                },
+                "network_scope": {
+                  "type": "object",
+                  "patternProperties": {
+                    "^(.*)$": {}
+                  }
+                },
+                "filesystem_scope": {
+                  "type": "object",
+                  "patternProperties": {
+                    "^(.*)$": {}
+                  }
+                },
+                "timer_scope": {
+                  "type": "object",
+                  "patternProperties": {
+                    "^(.*)$": {}
+                  }
+                },
+                "memory_scope": {
+                  "type": "object",
+                  "patternProperties": {
+                    "^(.*)$": {}
+                  }
+                },
+                "policy_epoch": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "effective_at": {
+                  "minLength": 20,
+                  "maxLength": 30,
+                  "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+                  "type": "string"
+                }
+              }
+            },
+            "pointer_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "trace_id"
+      ],
+      "properties": {
+        "code": {
+          "anyOf": [
+            {
+              "const": "authorization_scope_mismatch",
+              "type": "string"
+            },
+            {
+              "const": "tool_permission_profile_not_found",
+              "type": "string"
+            },
+            {
+              "const": "owner_contract_drift",
+              "type": "string"
+            },
+            {
+              "const": "storage_unavailable",
+              "type": "string"
+            }
+          ]
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "details": {
+          "additionalProperties": false,
+          "type": "object",
+          "properties": {}
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

@@ -5,8 +5,11 @@
   "required": [
     "policy_version",
     "domain",
+    "same_domain",
     "same_actor_scope",
     "authority_gate_passed",
+    "left_source",
+    "right_source",
     "left_rank",
     "right_rank",
     "rank_gap",
@@ -49,22 +52,100 @@
         }
       ]
     },
+    "same_domain": {
+      "type": "boolean"
+    },
     "same_actor_scope": {
       "type": "boolean"
     },
     "authority_gate_passed": {
       "type": "boolean"
     },
+    "left_source": {
+      "anyOf": [
+        {
+          "const": "explicit_feedback",
+          "type": "string"
+        },
+        {
+          "const": "super_user_explicit",
+          "type": "string"
+        },
+        {
+          "const": "approved_artifact",
+          "type": "string"
+        },
+        {
+          "const": "system_event_tool_result",
+          "type": "string"
+        },
+        {
+          "const": "user_explicit",
+          "type": "string"
+        },
+        {
+          "const": "developer_note",
+          "type": "string"
+        },
+        {
+          "const": "agent_observation",
+          "type": "string"
+        },
+        {
+          "const": "meta_inference",
+          "type": "string"
+        }
+      ]
+    },
+    "right_source": {
+      "anyOf": [
+        {
+          "const": "explicit_feedback",
+          "type": "string"
+        },
+        {
+          "const": "super_user_explicit",
+          "type": "string"
+        },
+        {
+          "const": "approved_artifact",
+          "type": "string"
+        },
+        {
+          "const": "system_event_tool_result",
+          "type": "string"
+        },
+        {
+          "const": "user_explicit",
+          "type": "string"
+        },
+        {
+          "const": "developer_note",
+          "type": "string"
+        },
+        {
+          "const": "agent_observation",
+          "type": "string"
+        },
+        {
+          "const": "meta_inference",
+          "type": "string"
+        }
+      ]
+    },
     "left_rank": {
       "minimum": 0,
+      "maximum": 9007199254740991,
       "type": "integer"
     },
     "right_rank": {
       "minimum": 0,
+      "maximum": 9007199254740991,
       "type": "integer"
     },
     "rank_gap": {
       "minimum": 0,
+      "maximum": 9007199254740991,
       "type": "integer"
     },
     "higher_confidence": {

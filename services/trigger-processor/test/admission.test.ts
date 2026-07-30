@@ -39,7 +39,7 @@ const base = {
   active_process: "none" as const,
   active_process_id: null,
   active_process_slot_generation: null,
-  active_process_updated_at: null,
+  active_process_state_version: null,
   trusted_strong_hint: false,
   explicit_interrupt: false,
   is_catch_up: false,
@@ -211,8 +211,11 @@ function acceptedResponse(traceId: string) {
       trigger_process_id: "process-original-1",
       process_phase: "admission",
       process_status: "running",
+      wait_reason: null,
+      blocked_by_process_id: null,
       priority: "strong",
       action: "dispatch",
+      reason_code: "timer_due",
       duplicate_replayed: false,
     },
     trace_id: traceId,
@@ -258,7 +261,15 @@ function databaseCapturing(calls: Array<Record<string, unknown>>) {
                     submit_attempt_id: String(args.p_attempt_id),
                   };
                 }
-                return acceptedResponse(String(args.p_trace_id));
+                const response = acceptedResponse(String(args.p_trace_id));
+                return {
+                  ...response,
+                  details: {
+                    ...response.details,
+                    trigger_id: String(args.p_trigger_id),
+                    trigger_process_id: String(args.p_process_id),
+                  },
+                };
               },
             },
           },
@@ -320,7 +331,7 @@ describe("Trigger admission domain", () => {
         active_process: "execution_running",
         active_process_id: "process-active",
         active_process_slot_generation: 7,
-        active_process_updated_at: "2026-07-22T08:00:00.000Z",
+        active_process_state_version: 9,
         foreground_slot_process_id: "process-active",
       }),
     ).toMatchObject({
@@ -333,7 +344,7 @@ describe("Trigger admission domain", () => {
         active_process: "execution_running",
         active_process_id: "process-active",
         active_process_slot_generation: 7,
-        active_process_updated_at: "2026-07-22T08:00:00.000Z",
+        active_process_state_version: 9,
         foreground_slot_process_id: "process-active",
       }),
     ).toMatchObject({ action: "enqueue_weak", reason_code: "active_process_running" });
@@ -381,7 +392,7 @@ describe("Trigger admission domain", () => {
       active_process: "execution_running",
       active_process_id: "process-a",
       active_process_slot_generation: 7,
-      active_process_updated_at: "2026-07-22T08:00:00.000Z",
+      active_process_state_version: 9,
       foreground_slot_process_id: "process-a",
     });
     if (occupied.trigger_status !== "accepted") throw new Error("expected accepted");
@@ -389,7 +400,7 @@ describe("Trigger admission domain", () => {
       process_id: "process-a",
       phase: "execution" as const,
       status: "running" as const,
-      updated_at: "2026-07-22T08:00:00.000Z",
+      state_version: 9,
     };
     expect(() =>
       assertTriggerAdmissionCommitPreconditionV1(
@@ -405,6 +416,14 @@ describe("Trigger admission domain", () => {
         { process_id: "process-a", generation: 7 },
         process,
         { ...currentEmptyFifo, head_process_id: "raced-head", head_admission_time: "2026-07-22T08:00:01.000Z" },
+      ),
+    ).toThrow("changed before atomic trigger admission commit");
+    expect(() =>
+      assertTriggerAdmissionCommitPreconditionV1(
+        occupied,
+        { process_id: "process-a", generation: 7 },
+        { ...process, state_version: 10 },
+        currentEmptyFifo,
       ),
     ).toThrow("changed before atomic trigger admission commit");
   });
@@ -494,9 +513,14 @@ describe("Trigger admission application", () => {
       { generateId: () => generatedIds.shift() ?? "unexpected-extra-id" },
     );
 
-    await expect(application.admit(timerIngress, timerCommand)).resolves.toEqual(
-      acceptedResponse("trace-1"),
-    );
+    await expect(application.admit(timerIngress, timerCommand)).resolves.toEqual({
+      ...acceptedResponse("trace-1"),
+      details: {
+        ...acceptedResponse("trace-1").details,
+        trigger_id: "trigger-generated-1",
+        trigger_process_id: "process-generated-1",
+      },
+    });
     expect(calls[0]?.transaction).toEqual({
       operation: "admit_trigger",
       idempotency_key: timerBody.dedupe_key,
@@ -505,7 +529,7 @@ describe("Trigger admission application", () => {
       retry: "serialization_failures",
     });
     expect(calls[1]?.writer).toMatchObject({
-      writer: "admit_trigger_v1",
+      writer: "create_trigger_admission_v1",
       expected_rows: 1,
       arguments: {
         p_trigger_id: "trigger-generated-1",
@@ -731,6 +755,108 @@ describe("Trigger admission application", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("preflights bounded pure JSON before recursive admission schema validation", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const application = createTriggerAdmissionApplicationV1(
+      databaseCapturing(calls),
+    );
+    let deeplyNested: unknown = "leaf";
+    for (let depth = 0; depth < 130; depth += 1) {
+      deeplyNested = { child: deeplyNested };
+    }
+    await expect(
+      application.admit(supabaseUserIngress, {
+        ...chatBody,
+        payload: { deeplyNested },
+        trace_id: "trace-deep",
+      }),
+    ).rejects.toMatchObject({
+      kind: "invalid_request",
+      message:
+        "admission command is outside the bounded canonical JSON contract",
+    });
+
+    let proxyTrapCalls = 0;
+    const proxiedCommand = new Proxy(
+      { ...chatBody, trace_id: "trace-proxy" },
+      {
+        getPrototypeOf() {
+          proxyTrapCalls += 1;
+          return Object.prototype;
+        },
+      },
+    );
+    await expect(
+      application.admit(supabaseUserIngress, proxiedCommand),
+    ).rejects.toMatchObject({ kind: "invalid_request" });
+    expect(proxyTrapCalls).toBe(0);
+    expect(calls).toHaveLength(0);
+
+    const shared = { value: "same-pure-json-value" };
+    await expect(
+      application.admit(supabaseUserIngress, {
+        ...chatBody,
+        payload: { first: shared, second: shared },
+        trace_id: "trace-alias",
+      }),
+    ).resolves.toMatchObject({ code: "trigger_accepted" });
+  });
+
+  it("pins command and verified workload identity before transaction acquisition", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const gatedDatabase = databaseCapturing(calls);
+    const originalWithTransaction =
+      gatedDatabase.unit_of_work.withTransaction.bind(
+        gatedDatabase.unit_of_work,
+      );
+    let releaseTransaction!: () => void;
+    const transactionGate = new Promise<void>((resolve) => {
+      releaseTransaction = resolve;
+    });
+    gatedDatabase.unit_of_work.withTransaction = (async (
+      request: Parameters<typeof originalWithTransaction>[0],
+      work: Parameters<typeof originalWithTransaction>[1],
+    ) => {
+      await transactionGate;
+      return originalWithTransaction(request, work);
+    }) as typeof gatedDatabase.unit_of_work.withTransaction;
+    const generatedIds = ["trigger-pinned", "process-pinned"];
+    const application = createTriggerAdmissionApplicationV1(
+      gatedDatabase,
+      { generateId: () => generatedIds.shift() ?? "unexpected-id" },
+    );
+    const mutableIngress = structuredClone(timerIngress);
+    const mutableCommand = structuredClone(timerCommand);
+    const pending = application.admit(mutableIngress, mutableCommand);
+
+    Reflect.set(mutableCommand, "dedupe_key", "timer:mutated");
+    Reflect.set(mutableCommand, "trace_id", "trace-mutated");
+    Reflect.set(mutableCommand.payload, "message", "mutated message");
+    Reflect.set(mutableIngress.credential.claims, "jti", "mutated-jti");
+    releaseTransaction();
+
+    await expect(pending).resolves.toMatchObject({
+      code: "trigger_accepted",
+      trace_id: timerCommand.trace_id,
+    });
+    expect(calls[1]).toMatchObject({
+      writer: {
+        arguments: {
+          p_dedupe_key: timerCommand.dedupe_key,
+          p_trace_id: timerCommand.trace_id,
+          p_payload: { message: timerCommand.payload.message },
+          p_authenticated_context: {
+            credential_jti: timerCredential.claims.jti,
+          },
+        },
+      },
+    });
+    const writer = calls[1]?.writer as
+      | { arguments?: { p_payload?: object } }
+      | undefined;
+    expect(Object.isFrozen(writer?.arguments?.p_payload)).toBe(true);
+  });
+
   it("hashes exactly the canonical TriggerSubmit request body", async () => {
     const calls: Array<Record<string, unknown>> = [];
     const generatedIds = ["trigger-1", "process-1"];
@@ -787,6 +913,22 @@ describe("Trigger admission application", () => {
         payload: { ...timerCommand.payload, message: "界".repeat(2_800) },
       }),
     ).rejects.toThrow("8KB");
+    for (const invalidTime of [
+      { ...timerCommand.payload, local_date: "2026-02-30" },
+      {
+        ...timerCommand.payload,
+        scheduled_for: "2026-07-22T00:30:00+24:00",
+      },
+      { ...timerCommand.payload, timezone: "not/a-zone" },
+      { ...timerCommand.payload, local_time: "09:30:00" },
+    ]) {
+      await expect(
+        application.admit(timerIngress, {
+          ...timerCommand,
+          payload: invalidTime,
+        }),
+      ).rejects.toMatchObject({ kind: "invalid_request" });
+    }
     await expect(
       application.admit(
         {
@@ -835,7 +977,8 @@ describe("Trigger admission application", () => {
       ),
     ).rejects.toMatchObject({
       kind: "server_invariant",
-      message: "admit_trigger_v1 returned a non-canonical response",
+      message:
+        "create_trigger_admission_v1 returned a non-canonical response",
     } satisfies Partial<InvalidAdmitTriggerCommandError>);
   });
 
@@ -1495,7 +1638,6 @@ describe("POST /v1/triggers", () => {
           retryable: false,
           details: {
             ...acceptedResponse("unused").details,
-            action: "duplicate_replay",
             duplicate_replayed: true,
           },
           trace_id: (command as { trace_id: string }).trace_id,
@@ -1511,7 +1653,7 @@ describe("POST /v1/triggers", () => {
     expect(duplicate.statusCode).toBe(200);
     expect(JSON.parse(duplicate.payload)).toMatchObject({
       code: "duplicate_replayed",
-      details: { action: "duplicate_replay", duplicate_replayed: true },
+      details: { action: "dispatch", duplicate_replayed: true },
     });
     await duplicateApp.close();
 

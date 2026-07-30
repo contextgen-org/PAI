@@ -1,0 +1,362 @@
+{
+  "$id": "observation.quality-signal.list",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "items",
+    "degraded_flags",
+    "redacted_field_count",
+    "trace_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0",
+      "type": "string"
+    },
+    "items": {
+      "maxItems": 200,
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "signal_type",
+          "severity",
+          "source_kind",
+          "source_service",
+          "source_ref",
+          "evidence_refs",
+          "recommended_action",
+          "payload_summary",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "minLength": 1,
+            "maxLength": 512,
+            "type": "string"
+          },
+          "signal_type": {
+            "anyOf": [
+              {
+                "const": "snapshot_missing",
+                "type": "string"
+              },
+              {
+                "const": "snapshot_incomplete",
+                "type": "string"
+              },
+              {
+                "const": "snapshot_schema_incompatible",
+                "type": "string"
+              },
+              {
+                "const": "snapshot_hash_mismatch",
+                "type": "string"
+              },
+              {
+                "const": "artifact_unreadable",
+                "type": "string"
+              },
+              {
+                "const": "redaction_incomplete",
+                "type": "string"
+              },
+              {
+                "const": "llm_parse_failed",
+                "type": "string"
+              },
+              {
+                "const": "schema_validation_failed",
+                "type": "string"
+              },
+              {
+                "const": "memory_write_partial_failed",
+                "type": "string"
+              },
+              {
+                "const": "knowthat_conflict_detected",
+                "type": "string"
+              },
+              {
+                "const": "tool_execution_failed",
+                "type": "string"
+              },
+              {
+                "const": "user_dissatisfied",
+                "type": "string"
+              },
+              {
+                "const": "low_confidence_extraction",
+                "type": "string"
+              },
+              {
+                "const": "feedback_required",
+                "type": "string"
+              },
+              {
+                "const": "downstream_operation_failed",
+                "type": "string"
+              }
+            ]
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "const": "info",
+                "type": "string"
+              },
+              {
+                "const": "warning",
+                "type": "string"
+              },
+              {
+                "const": "error",
+                "type": "string"
+              },
+              {
+                "const": "critical",
+                "type": "string"
+              }
+            ]
+          },
+          "source_kind": {
+            "anyOf": [
+              {
+                "const": "service",
+                "type": "string"
+              },
+              {
+                "const": "manual",
+                "type": "string"
+              },
+              {
+                "const": "operator",
+                "type": "string"
+              },
+              {
+                "const": "offline_repair",
+                "type": "string"
+              }
+            ]
+          },
+          "source_service": {
+            "anyOf": [
+              {
+                "$id": "urn:pai:shared:service-id:v1",
+                "anyOf": [
+                  {
+                    "const": "trigger_processor",
+                    "type": "string"
+                  },
+                  {
+                    "const": "action_runtime",
+                    "type": "string"
+                  },
+                  {
+                    "const": "meta_cognition",
+                    "type": "string"
+                  },
+                  {
+                    "const": "memory",
+                    "type": "string"
+                  },
+                  {
+                    "const": "knowthat",
+                    "type": "string"
+                  },
+                  {
+                    "const": "skill_registry",
+                    "type": "string"
+                  },
+                  {
+                    "const": "timer_trigger_app",
+                    "type": "string"
+                  },
+                  {
+                    "const": "observation_gateway",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_ref": {
+            "minLength": 1,
+            "maxLength": 512,
+            "type": "string"
+          },
+          "evidence_refs": {
+            "maxItems": 10000,
+            "uniqueItems": true,
+            "type": "array",
+            "items": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            }
+          },
+          "recommended_action": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "payload_summary": {
+            "maxProperties": 64,
+            "type": "object",
+            "patternProperties": {
+              "^(.*)$": {
+                "anyOf": [
+                  {
+                    "anyOf": [
+                      {
+                        "maxLength": 1024,
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  {
+                    "maxItems": 64,
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "maxLength": 1024,
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "maxProperties": 64,
+                    "type": "object",
+                    "patternProperties": {
+                      "^(.*)$": {
+                        "anyOf": [
+                          {
+                            "anyOf": [
+                              {
+                                "maxLength": 1024,
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          {
+                            "maxItems": 64,
+                            "type": "array",
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "maxLength": 1024,
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        }
+      }
+    },
+    "next_cursor": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "degraded_flags": {
+      "uniqueItems": true,
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "const": "runtime_unavailable",
+            "type": "string"
+          },
+          {
+            "const": "meta_unavailable",
+            "type": "string"
+          },
+          {
+            "const": "meta_projection_lag",
+            "type": "string"
+          },
+          {
+            "const": "runtime_token_stream_unavailable",
+            "type": "string"
+          },
+          {
+            "const": "optional_detail_timeout",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "redacted_field_count": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "trace_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    }
+  }
+}

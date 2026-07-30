@@ -1,0 +1,1337 @@
+{
+  "$id": "urn:pai:action-runtime:tool-event:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "runtime.tool.requested",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "runtime_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "action_runtime",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "trigger_process_id",
+            "runtime_run_id",
+            "sequence_no",
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "start_attempt_no",
+            "start_fence_generation",
+            "tool_invocation_id",
+            "tool_name",
+            "status",
+            "policy_snapshot_id",
+            "capability_token_id",
+            "input_ref",
+            "output_ref",
+            "side_effect_status",
+            "downstream_idempotency_key",
+            "external_response_ref",
+            "external_error_ref",
+            "duplicate_replayed",
+            "error",
+            "duration_ms",
+            "reason_code",
+            "error_summary",
+            "artifact_ref"
+          ],
+          "properties": {
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "runtime_run_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "sequence_no": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "start_attempt_no": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "start_fence_generation": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "tool_invocation_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "tool_name": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "status": {
+              "const": "requested",
+              "type": "string"
+            },
+            "policy_snapshot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "capability_token_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "input_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "output_ref": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "side_effect_status": {
+              "anyOf": [
+                {
+                  "const": "none",
+                  "type": "string"
+                },
+                {
+                  "const": "produced",
+                  "type": "string"
+                },
+                {
+                  "const": "unknown",
+                  "type": "string"
+                }
+              ]
+            },
+            "downstream_idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "external_response_ref": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "external_error_ref": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "duplicate_replayed": {
+              "type": "boolean"
+            },
+            "error": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "failure_class",
+                    "code",
+                    "message",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "failure_class": {
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "maxLength": 1024,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "duration_ms": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reason_code": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error_summary": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "runtime.tool.completed",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "runtime_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "action_runtime",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "trigger_process_id",
+            "runtime_run_id",
+            "sequence_no",
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "start_attempt_no",
+            "start_fence_generation",
+            "tool_invocation_id",
+            "tool_name",
+            "status",
+            "policy_snapshot_id",
+            "capability_token_id",
+            "input_ref",
+            "output_ref",
+            "side_effect_status",
+            "downstream_idempotency_key",
+            "external_response_ref",
+            "external_error_ref",
+            "duplicate_replayed",
+            "error",
+            "duration_ms",
+            "reason_code",
+            "error_summary",
+            "artifact_ref"
+          ],
+          "properties": {
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "runtime_run_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "sequence_no": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "start_attempt_no": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "start_fence_generation": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "tool_invocation_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "tool_name": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "status": {
+              "const": "completed",
+              "type": "string"
+            },
+            "policy_snapshot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "capability_token_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "input_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "output_ref": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "side_effect_status": {
+              "anyOf": [
+                {
+                  "const": "none",
+                  "type": "string"
+                },
+                {
+                  "const": "produced",
+                  "type": "string"
+                },
+                {
+                  "const": "unknown",
+                  "type": "string"
+                }
+              ]
+            },
+            "downstream_idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "external_response_ref": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "external_error_ref": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "duplicate_replayed": {
+              "type": "boolean"
+            },
+            "error": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "failure_class",
+                    "code",
+                    "message",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "failure_class": {
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "maxLength": 1024,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "duration_ms": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reason_code": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error_summary": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "runtime.tool.failed",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "runtime_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "action_runtime",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "trigger_process_id",
+            "runtime_run_id",
+            "sequence_no",
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "start_attempt_no",
+            "start_fence_generation",
+            "tool_invocation_id",
+            "tool_name",
+            "status",
+            "policy_snapshot_id",
+            "capability_token_id",
+            "input_ref",
+            "output_ref",
+            "side_effect_status",
+            "downstream_idempotency_key",
+            "external_response_ref",
+            "external_error_ref",
+            "duplicate_replayed",
+            "error",
+            "duration_ms",
+            "reason_code",
+            "error_summary",
+            "artifact_ref"
+          ],
+          "properties": {
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "runtime_run_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "sequence_no": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "start_attempt_no": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "start_fence_generation": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "tool_invocation_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "tool_name": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "status": {
+              "const": "failed",
+              "type": "string"
+            },
+            "policy_snapshot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "capability_token_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "input_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "output_ref": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "side_effect_status": {
+              "anyOf": [
+                {
+                  "const": "none",
+                  "type": "string"
+                },
+                {
+                  "const": "produced",
+                  "type": "string"
+                },
+                {
+                  "const": "unknown",
+                  "type": "string"
+                }
+              ]
+            },
+            "downstream_idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "external_response_ref": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "external_error_ref": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "duplicate_replayed": {
+              "type": "boolean"
+            },
+            "error": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "failure_class",
+                    "code",
+                    "message",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "failure_class": {
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "maxLength": 1024,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "duration_ms": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reason_code": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error_summary": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "runtime.tool.cancelled",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "runtime_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "action_runtime",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "trigger_process_id",
+            "runtime_run_id",
+            "sequence_no",
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "start_attempt_no",
+            "start_fence_generation",
+            "tool_invocation_id",
+            "tool_name",
+            "status",
+            "policy_snapshot_id",
+            "capability_token_id",
+            "input_ref",
+            "output_ref",
+            "side_effect_status",
+            "downstream_idempotency_key",
+            "external_response_ref",
+            "external_error_ref",
+            "duplicate_replayed",
+            "error",
+            "duration_ms",
+            "reason_code",
+            "error_summary",
+            "artifact_ref"
+          ],
+          "properties": {
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "runtime_run_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "sequence_no": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "start_attempt_no": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "start_fence_generation": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "tool_invocation_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "tool_name": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "status": {
+              "const": "cancelled",
+              "type": "string"
+            },
+            "policy_snapshot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "capability_token_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "input_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "output_ref": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "side_effect_status": {
+              "anyOf": [
+                {
+                  "const": "none",
+                  "type": "string"
+                },
+                {
+                  "const": "produced",
+                  "type": "string"
+                },
+                {
+                  "const": "unknown",
+                  "type": "string"
+                }
+              ]
+            },
+            "downstream_idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "external_response_ref": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "external_error_ref": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "duplicate_replayed": {
+              "type": "boolean"
+            },
+            "error": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "failure_class",
+                    "code",
+                    "message",
+                    "retryable"
+                  ],
+                  "properties": {
+                    "failure_class": {
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "maxLength": 1024,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "duration_ms": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reason_code": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error_summary": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "artifact_ref": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

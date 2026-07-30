@@ -1,0 +1,245 @@
+{
+  "$id": "urn:pai:skill-registry:context-catalog:v1",
+  "anyOf": [
+    {
+      "$id": "urn:pai:skill-registry:context-catalog-request:v1",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "workspace_id",
+        "bot_id",
+        "deployment_environment",
+        "release_channel",
+        "owner_agent_id",
+        "limit",
+        "trace_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "skill_context_catalog_request.v1",
+          "type": "string"
+        },
+        "workspace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "deployment_environment": {
+          "$id": "urn:pai:shared:deployment-environment:v1",
+          "anyOf": [
+            {
+              "const": "local",
+              "type": "string"
+            },
+            {
+              "const": "dev",
+              "type": "string"
+            },
+            {
+              "const": "staging",
+              "type": "string"
+            },
+            {
+              "const": "prod",
+              "type": "string"
+            }
+          ]
+        },
+        "release_channel": {
+          "$id": "urn:pai:shared:release-channel:v1",
+          "anyOf": [
+            {
+              "const": "stable",
+              "type": "string"
+            },
+            {
+              "const": "canary",
+              "type": "string"
+            }
+          ]
+        },
+        "owner_agent_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "limit": {
+          "minimum": 1,
+          "maximum": 500,
+          "type": "integer"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "trace_id"
+      ],
+      "properties": {
+        "code": {
+          "const": "skill_context_catalog_found",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "retryable": {
+          "const": false,
+          "type": "boolean"
+        },
+        "details": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "schema_version",
+            "workspace_id",
+            "bot_id",
+            "deployment_environment",
+            "release_channel",
+            "owner_agent_id",
+            "catalog_version",
+            "as_of",
+            "items"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "skill_context_catalog_response.v1",
+              "type": "string"
+            },
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "catalog_version": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "as_of": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "items": {
+              "maxItems": 500,
+              "type": "array",
+              "items": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "skill_key",
+                  "name",
+                  "description",
+                  "active_version",
+                  "package_digest",
+                  "manifest_digest",
+                  "runtime_target"
+                ],
+                "properties": {
+                  "skill_key": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "name": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "description": {
+                    "maxLength": 16384,
+                    "type": "string"
+                  },
+                  "active_version": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "package_digest": {
+                    "pattern": "^sha256:[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  "manifest_digest": {
+                    "pattern": "^sha256:[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  "runtime_target": {
+                    "const": "filesystem_bundle.v1",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

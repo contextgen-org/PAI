@@ -57,6 +57,7 @@
         },
         "auth_time": {
           "minimum": 0,
+          "maximum": 9007199254740991,
           "type": "integer"
         },
         "scope_kind": {
@@ -134,6 +135,7 @@
         },
         "auth_time": {
           "minimum": 0,
+          "maximum": 9007199254740991,
           "type": "integer"
         },
         "scope_kind": {

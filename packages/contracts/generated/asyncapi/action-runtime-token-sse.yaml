@@ -1,0 +1,72 @@
+{
+  "asyncapi": "3.0.0",
+  "info": {
+    "title": "PAI Action Runtime Live Token SSE",
+    "version": "1.0.0"
+  },
+  "channels": {
+    "runtime_token": {
+      "address": "/internal/runtime-runs/{runtime_run_id}/tokens",
+      "messages": {
+        "RuntimeTokenSseEventV1": {
+          "$ref": "#/components/messages/RuntimeTokenSseEventV1"
+        }
+      },
+      "x-pai-durable": false,
+      "x-pai-replay": false,
+      "x-pai-sse-event-id": false
+    }
+  },
+  "operations": {
+    "receive_runtime_token_v1": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/runtime_token"
+      }
+    }
+  },
+  "components": {
+    "messages": {
+      "RuntimeTokenSseEventV1": {
+        "name": "runtime_token",
+        "payload": {
+          "$id": "urn:pai:action-runtime:runtime-token-sse-event:v1",
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "schema_version",
+            "runtime_run_id",
+            "trigger_process_id",
+            "token",
+            "emitted_at"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "runtime_token_sse_event.v1",
+              "type": "string"
+            },
+            "runtime_run_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "token": {
+              "minLength": 1,
+              "maxLength": 16384,
+              "type": "string"
+            },
+            "emitted_at": {
+              "format": "date-time",
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

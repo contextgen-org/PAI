@@ -1,0 +1,293 @@
+{
+  "$id": "urn:pai:meta:job-query-details:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "job_id",
+    "trigger_process_id",
+    "bot_id",
+    "status",
+    "result_status",
+    "attempt_count",
+    "next_retry_at",
+    "summary",
+    "error",
+    "created_at",
+    "updated_at",
+    "trace_id"
+  ],
+  "properties": {
+    "job_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "trigger_process_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "bot_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "const": "queued",
+          "type": "string"
+        },
+        {
+          "const": "running",
+          "type": "string"
+        },
+        {
+          "const": "retry_wait",
+          "type": "string"
+        },
+        {
+          "const": "completed",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "type": "string"
+        }
+      ]
+    },
+    "result_status": {
+      "anyOf": [
+        {
+          "anyOf": [
+            {
+              "const": "complete",
+              "type": "string"
+            },
+            {
+              "const": "partial_pending",
+              "type": "string"
+            },
+            {
+              "const": "partial_failed",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "attempt_count": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "next_retry_at": {
+      "anyOf": [
+        {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "summary": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "experience_summary",
+            "result_status",
+            "partial_failures_count",
+            "quality_signals_count",
+            "memory_write_refs",
+            "knowthat_write_refs",
+            "candidate_review_refs",
+            "skill_candidate_refs",
+            "personality_suggestion_refs"
+          ],
+          "properties": {
+            "experience_summary": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "summary",
+                "reflection_summary",
+                "evidence_refs"
+              ],
+              "properties": {
+                "summary": {
+                  "minLength": 1,
+                  "maxLength": 16384,
+                  "type": "string"
+                },
+                "reflection_summary": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "maxLength": 16384,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "evidence_refs": {
+                  "maxItems": 10000,
+                  "uniqueItems": true,
+                  "type": "array",
+                  "items": {
+                    "$id": "urn:pai:shared:typed-evidence-ref:v1",
+                    "minLength": 3,
+                    "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "result_status": {
+              "anyOf": [
+                {
+                  "const": "complete",
+                  "type": "string"
+                },
+                {
+                  "const": "partial_pending",
+                  "type": "string"
+                },
+                {
+                  "const": "partial_failed",
+                  "type": "string"
+                }
+              ]
+            },
+            "partial_failures_count": {
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "quality_signals_count": {
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "memory_write_refs": {
+              "maxItems": 10000,
+              "uniqueItems": true,
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              }
+            },
+            "knowthat_write_refs": {
+              "maxItems": 10000,
+              "uniqueItems": true,
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              }
+            },
+            "candidate_review_refs": {
+              "maxItems": 10000,
+              "uniqueItems": true,
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              }
+            },
+            "skill_candidate_refs": {
+              "maxItems": 10000,
+              "uniqueItems": true,
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              }
+            },
+            "personality_suggestion_refs": {
+              "maxItems": 10000,
+              "uniqueItems": true,
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "code",
+            "message",
+            "retryable"
+          ],
+          "properties": {
+            "code": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "message": {
+              "minLength": 1,
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "details_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "created_at": {
+      "minLength": 20,
+      "maxLength": 35,
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+      "type": "string"
+    },
+    "updated_at": {
+      "minLength": 20,
+      "maxLength": 35,
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+      "type": "string"
+    },
+    "trace_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,273 @@
+{
+  "$id": "urn:pai:skill-registry:candidate-application:v1",
+  "anyOf": [
+    {
+      "$id": "urn:pai:skill-registry:candidate-application-request:v1",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "application_id",
+        "candidate_id",
+        "review_version",
+        "candidate_type",
+        "skill_key",
+        "workspace_id",
+        "bot_id",
+        "deployment_environment",
+        "release_channel",
+        "owner_agent_id",
+        "baseline_catalog_version",
+        "proposal_ref",
+        "proposal_hash",
+        "evidence_refs",
+        "reviewer_principal_id",
+        "idempotency_key",
+        "trace_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "skill_candidate_application.v1",
+          "type": "string"
+        },
+        "application_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "candidate_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "review_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "candidate_type": {
+          "anyOf": [
+            {
+              "const": "new_skill",
+              "type": "string"
+            },
+            {
+              "const": "skill_update",
+              "type": "string"
+            },
+            {
+              "const": "deprecation",
+              "type": "string"
+            }
+          ]
+        },
+        "skill_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "workspace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "deployment_environment": {
+          "$id": "urn:pai:shared:deployment-environment:v1",
+          "anyOf": [
+            {
+              "const": "local",
+              "type": "string"
+            },
+            {
+              "const": "dev",
+              "type": "string"
+            },
+            {
+              "const": "staging",
+              "type": "string"
+            },
+            {
+              "const": "prod",
+              "type": "string"
+            }
+          ]
+        },
+        "release_channel": {
+          "$id": "urn:pai:shared:release-channel:v1",
+          "anyOf": [
+            {
+              "const": "stable",
+              "type": "string"
+            },
+            {
+              "const": "canary",
+              "type": "string"
+            }
+          ]
+        },
+        "owner_agent_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "baseline_catalog_version": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "proposal_ref": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "proposal_hash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "evidence_refs": {
+          "minItems": 1,
+          "maxItems": 256,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "ref",
+              "hash"
+            ],
+            "properties": {
+              "ref": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              "hash": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              }
+            }
+          }
+        },
+        "reviewer_principal_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "trace_id"
+      ],
+      "properties": {
+        "code": {
+          "const": "skill_candidate_application_updated",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "retryable": {
+          "const": false,
+          "type": "boolean"
+        },
+        "details": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "application_id",
+            "status",
+            "response_ref",
+            "response_hash",
+            "duplicate_replayed"
+          ],
+          "properties": {
+            "application_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "const": "received",
+                  "type": "string"
+                },
+                {
+                  "const": "validating",
+                  "type": "string"
+                },
+                {
+                  "const": "draft_created",
+                  "type": "string"
+                },
+                {
+                  "const": "deprecation_review_created",
+                  "type": "string"
+                },
+                {
+                  "const": "rejected",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                }
+              ]
+            },
+            "staging_version_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "review_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "response_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "response_hash": {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "duplicate_replayed": {
+              "type": "boolean"
+            }
+          }
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

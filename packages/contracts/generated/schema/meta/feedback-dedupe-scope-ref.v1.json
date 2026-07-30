@@ -1,0 +1,65 @@
+{
+  "$id": "urn:pai:meta:feedback-dedupe-scope-ref:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "ref"
+      ],
+      "properties": {
+        "kind": {
+          "const": "conflict",
+          "type": "string"
+        },
+        "ref": {
+          "minLength": 10,
+          "maxLength": 512,
+          "pattern": "^conflict:[^\\r\\n:][^\\r\\n]*$",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "ref"
+      ],
+      "properties": {
+        "kind": {
+          "const": "candidate",
+          "type": "string"
+        },
+        "ref": {
+          "minLength": 11,
+          "maxLength": 512,
+          "pattern": "^candidate:[^\\r\\n:][^\\r\\n]*$",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "ref"
+      ],
+      "properties": {
+        "kind": {
+          "const": "schedule",
+          "type": "string"
+        },
+        "ref": {
+          "minLength": 10,
+          "maxLength": 512,
+          "pattern": "^schedule:[^\\r\\n:][^\\r\\n]*$",
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

@@ -176,13 +176,16 @@ export function loadServiceRuntimeConfig(
 }
 
 /**
- * Production dependency gates use the typed PAI environment as authority and
- * retain NODE_ENV=production as a fail-closed compatibility signal.
+ * Production-like dependency gates use the typed PAI environment as authority
+ * and retain NODE_ENV=production as a fail-closed compatibility signal.
+ * Staging must exercise the same durable adapters as production; otherwise a
+ * staging deployment could become ready on an in-memory or partial pipeline.
  */
 export function requiresProductionDependenciesV1(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): boolean {
   return (
+    env.PAI_DEPLOYMENT_ENVIRONMENT === "staging" ||
     env.PAI_DEPLOYMENT_ENVIRONMENT === "prod" ||
     env.NODE_ENV === "production"
   );

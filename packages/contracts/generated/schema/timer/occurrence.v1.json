@@ -1,0 +1,646 @@
+{
+  "additionalProperties": false,
+  "$id": "urn:pai:timer:occurrence:v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "workspace_id",
+    "bot_id",
+    "owner_agent_id",
+    "deployment_environment",
+    "release_channel",
+    "occurrence_id",
+    "schedule_id",
+    "occurrence_key",
+    "occurrence_version",
+    "scheduled_fire_at",
+    "effective_fire_at",
+    "local_date",
+    "local_time",
+    "timezone",
+    "schedule_end_time",
+    "schedule_version",
+    "dispatch_payload",
+    "dispatch_payload_hash",
+    "payload_schema_version",
+    "status",
+    "trigger_id",
+    "trigger_process_id",
+    "dedupe_key",
+    "error",
+    "attempt_count",
+    "next_dispatch_at",
+    "catch_up_batch_id",
+    "is_catch_up",
+    "dispatch_generation",
+    "claim_token",
+    "locked_by",
+    "locked_until",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "timer.occurrence.v1",
+      "type": "string"
+    },
+    "workspace_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+      "type": "string"
+    },
+    "bot_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+      "type": "string"
+    },
+    "owner_agent_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+      "type": "string"
+    },
+    "deployment_environment": {
+      "$id": "urn:pai:shared:deployment-environment:v1",
+      "anyOf": [
+        {
+          "const": "local",
+          "type": "string"
+        },
+        {
+          "const": "dev",
+          "type": "string"
+        },
+        {
+          "const": "staging",
+          "type": "string"
+        },
+        {
+          "const": "prod",
+          "type": "string"
+        }
+      ]
+    },
+    "release_channel": {
+      "$id": "urn:pai:shared:release-channel:v1",
+      "anyOf": [
+        {
+          "const": "stable",
+          "type": "string"
+        },
+        {
+          "const": "canary",
+          "type": "string"
+        }
+      ]
+    },
+    "occurrence_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+      "type": "string"
+    },
+    "schedule_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+      "type": "string"
+    },
+    "occurrence_key": {
+      "minLength": 46,
+      "maxLength": 46,
+      "pattern": "^v1:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "occurrence_version": {
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "scheduled_fire_at": {
+      "minLength": 20,
+      "maxLength": 30,
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+      "type": "string"
+    },
+    "effective_fire_at": {
+      "minLength": 20,
+      "maxLength": 30,
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+      "type": "string"
+    },
+    "local_date": {
+      "minLength": 10,
+      "maxLength": 10,
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])$",
+      "type": "string"
+    },
+    "local_time": {
+      "minLength": 8,
+      "maxLength": 8,
+      "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d$",
+      "type": "string"
+    },
+    "timezone": {
+      "minLength": 1,
+      "maxLength": 255,
+      "type": "string"
+    },
+    "schedule_end_time": {
+      "anyOf": [
+        {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "schedule_version": {
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "dispatch_payload": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "schedule_id",
+            "schedule_version",
+            "occurrence_id",
+            "local_date",
+            "local_time",
+            "timezone",
+            "scheduled_for",
+            "occurrence_key",
+            "message",
+            "is_catch_up",
+            "catch_up_batch_id",
+            "missed_window_summary"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "schedule_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "schedule_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "occurrence_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "local_date": {
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])$",
+              "description": "Real Gregorian calendar date; enforced by the Timer semantic guard.",
+              "type": "string"
+            },
+            "local_time": {
+              "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d$",
+              "type": "string"
+            },
+            "timezone": {
+              "minLength": 1,
+              "maxLength": 255,
+              "description": "IANA time-zone identifier; enforced by the Timer semantic guard.",
+              "type": "string"
+            },
+            "scheduled_for": {
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "description": "RFC3339 instant that must resolve to the declared local date/time and timezone.",
+              "type": "string"
+            },
+            "occurrence_key": {
+              "pattern": "^v1:[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            },
+            "message": {
+              "minLength": 1,
+              "maxLength": 8192,
+              "type": "string"
+            },
+            "trigger_payload": {
+              "additionalProperties": false,
+              "description": "The complete object is limited to 8192 canonical JSON UTF-8 bytes by assertTimerTriggerBusinessPayloadV1.",
+              "type": "object",
+              "required": [
+                "schema_version",
+                "value"
+              ],
+              "properties": {
+                "schema_version": {
+                  "const": "timer.trigger_payload.v1",
+                  "type": "string"
+                },
+                "value": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "properties": {}
+                }
+              }
+            },
+            "is_catch_up": {
+              "const": false,
+              "type": "boolean"
+            },
+            "catch_up_batch_id": {
+              "type": "null"
+            },
+            "missed_window_summary": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "schedule_id",
+            "schedule_version",
+            "occurrence_id",
+            "local_date",
+            "local_time",
+            "timezone",
+            "scheduled_for",
+            "occurrence_key",
+            "message",
+            "is_catch_up",
+            "catch_up_batch_id",
+            "missed_window_summary"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "schedule_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "schedule_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "occurrence_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "local_date": {
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])$",
+              "description": "Real Gregorian calendar date; enforced by the Timer semantic guard.",
+              "type": "string"
+            },
+            "local_time": {
+              "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d$",
+              "type": "string"
+            },
+            "timezone": {
+              "minLength": 1,
+              "maxLength": 255,
+              "description": "IANA time-zone identifier; enforced by the Timer semantic guard.",
+              "type": "string"
+            },
+            "scheduled_for": {
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "description": "RFC3339 instant that must resolve to the declared local date/time and timezone.",
+              "type": "string"
+            },
+            "occurrence_key": {
+              "pattern": "^v1:[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            },
+            "message": {
+              "minLength": 1,
+              "maxLength": 8192,
+              "type": "string"
+            },
+            "trigger_payload": {
+              "additionalProperties": false,
+              "description": "The complete object is limited to 8192 canonical JSON UTF-8 bytes by assertTimerTriggerBusinessPayloadV1.",
+              "type": "object",
+              "required": [
+                "schema_version",
+                "value"
+              ],
+              "properties": {
+                "schema_version": {
+                  "const": "timer.trigger_payload.v1",
+                  "type": "string"
+                },
+                "value": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "properties": {}
+                }
+              }
+            },
+            "is_catch_up": {
+              "const": true,
+              "type": "boolean"
+            },
+            "catch_up_batch_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "missed_window_summary": {
+              "minLength": 1,
+              "maxLength": 2048,
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "dispatch_payload_hash": {
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "payload_schema_version": {
+      "const": "timer.trigger_payload.v1",
+      "type": "string"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "const": "pending",
+          "type": "string"
+        },
+        {
+          "const": "dispatching",
+          "type": "string"
+        },
+        {
+          "const": "retry_wait",
+          "type": "string"
+        },
+        {
+          "const": "dispatched",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "type": "string"
+        },
+        {
+          "const": "skipped",
+          "type": "string"
+        },
+        {
+          "const": "cancelled",
+          "type": "string"
+        }
+      ]
+    },
+    "trigger_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "trigger_process_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "dedupe_key": {
+      "minLength": 52,
+      "maxLength": 52,
+      "pattern": "^timer:v1:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object",
+          "properties": {}
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "attempt_count": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "next_dispatch_at": {
+      "anyOf": [
+        {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "catch_up_batch_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "is_catch_up": {
+      "type": "boolean"
+    },
+    "dispatch_generation": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "claim_token": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "locked_by": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "locked_until": {
+      "anyOf": [
+        {
+          "minLength": 20,
+          "maxLength": 30,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "created_at": {
+      "minLength": 20,
+      "maxLength": 30,
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+      "type": "string"
+    },
+    "updated_at": {
+      "minLength": 20,
+      "maxLength": 30,
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+      "type": "string"
+    }
+  }
+}

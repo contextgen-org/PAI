@@ -1,0 +1,41 @@
+{
+  "$id": "urn:pai:action-runtime:runtime-policy-input:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "intent_policy_snapshot_ref",
+    "intent_policy_snapshot_hash",
+    "created_at",
+    "expires_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "runtime_policy_input.v1",
+      "type": "string"
+    },
+    "intent_policy_snapshot_ref": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "intent_policy_snapshot_hash": {
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "created_at": {
+      "minLength": 20,
+      "maxLength": 30,
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+      "type": "string"
+    },
+    "expires_at": {
+      "minLength": 20,
+      "maxLength": 30,
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+      "type": "string"
+    }
+  }
+}

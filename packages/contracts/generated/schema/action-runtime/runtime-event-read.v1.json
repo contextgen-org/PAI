@@ -1,0 +1,141 @@
+{
+  "$id": "urn:pai:action-runtime:runtime-event-read:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "source_event_id",
+    "payload_ref",
+    "payload_hash",
+    "runtime_run_id",
+    "trigger_process_id",
+    "source_sequence_no",
+    "workspace_id",
+    "bot_id",
+    "owner_agent_id",
+    "deployment_environment",
+    "release_channel",
+    "purpose",
+    "runtime_event",
+    "retention_until",
+    "redaction_state",
+    "resolved_at",
+    "trace_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "runtime_event_read.v1",
+      "type": "string"
+    },
+    "source_event_id": {
+      "minLength": 1,
+      "maxLength": 256,
+      "type": "string"
+    },
+    "payload_ref": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "payload_hash": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "runtime_run_id": {
+      "minLength": 1,
+      "maxLength": 256,
+      "type": "string"
+    },
+    "trigger_process_id": {
+      "minLength": 1,
+      "maxLength": 256,
+      "type": "string"
+    },
+    "source_sequence_no": {
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "workspace_id": {
+      "minLength": 1,
+      "maxLength": 256,
+      "type": "string"
+    },
+    "bot_id": {
+      "minLength": 1,
+      "maxLength": 256,
+      "type": "string"
+    },
+    "owner_agent_id": {
+      "minLength": 1,
+      "maxLength": 256,
+      "type": "string"
+    },
+    "deployment_environment": {
+      "$id": "urn:pai:shared:deployment-environment:v1",
+      "anyOf": [
+        {
+          "const": "local",
+          "type": "string"
+        },
+        {
+          "const": "dev",
+          "type": "string"
+        },
+        {
+          "const": "staging",
+          "type": "string"
+        },
+        {
+          "const": "prod",
+          "type": "string"
+        }
+      ]
+    },
+    "release_channel": {
+      "$id": "urn:pai:shared:release-channel:v1",
+      "anyOf": [
+        {
+          "const": "stable",
+          "type": "string"
+        },
+        {
+          "const": "canary",
+          "type": "string"
+        }
+      ]
+    },
+    "purpose": {
+      "const": "trigger_snapshot_append",
+      "type": "string"
+    },
+    "runtime_event": {
+      "$ref": "urn:pai:action-runtime:runtime-event:v1"
+    },
+    "retention_until": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "redaction_state": {
+      "anyOf": [
+        {
+          "const": "not_required",
+          "type": "string"
+        },
+        {
+          "const": "complete",
+          "type": "string"
+        }
+      ]
+    },
+    "resolved_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "trace_id": {
+      "minLength": 1,
+      "maxLength": 256,
+      "type": "string"
+    }
+  }
+}

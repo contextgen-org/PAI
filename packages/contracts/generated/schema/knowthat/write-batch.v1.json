@@ -1,0 +1,625 @@
+{
+  "$id": "urn:pai:knowthat:write-batch:v1",
+  "anyOf": [
+    {
+      "$id": "urn:pai:knowthat:write-batch-request:v1",
+      "additionalProperties": false,
+      "maxCanonicalJsonBytes": 2097152,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "workspace_id",
+        "bot_id",
+        "owner_agent_id",
+        "deployment_environment",
+        "release_channel",
+        "trigger_process_id",
+        "source_meta_job_id",
+        "idempotency_key",
+        "trace_id",
+        "items"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "knowthat.write_batch.v1",
+          "type": "string"
+        },
+        "workspace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+          "type": "string"
+        },
+        "owner_agent_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+          "type": "string"
+        },
+        "deployment_environment": {
+          "$id": "urn:pai:shared:deployment-environment:v1",
+          "anyOf": [
+            {
+              "const": "local",
+              "type": "string"
+            },
+            {
+              "const": "dev",
+              "type": "string"
+            },
+            {
+              "const": "staging",
+              "type": "string"
+            },
+            {
+              "const": "prod",
+              "type": "string"
+            }
+          ]
+        },
+        "release_channel": {
+          "$id": "urn:pai:shared:release-channel:v1",
+          "anyOf": [
+            {
+              "const": "stable",
+              "type": "string"
+            },
+            {
+              "const": "canary",
+              "type": "string"
+            }
+          ]
+        },
+        "trigger_process_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+          "type": "string"
+        },
+        "source_meta_job_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+          "type": "string"
+        },
+        "items": {
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueByCanonicalIdentity": "client_item_id",
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "maxCanonicalJsonBytes": 65536,
+            "type": "object",
+            "required": [
+              "client_item_id",
+              "text",
+              "subject",
+              "predicate",
+              "object",
+              "category",
+              "proposed_status",
+              "direct_active_hint",
+              "risk_level",
+              "explicitness",
+              "confidence",
+              "source",
+              "source_ref",
+              "evidence_refs",
+              "evidence_pending"
+            ],
+            "properties": {
+              "client_item_id": {
+                "minLength": 1,
+                "maxLength": 512,
+                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                "type": "string"
+              },
+              "text": {
+                "minLength": 1,
+                "maxLength": 16384,
+                "type": "string"
+              },
+              "subject": {
+                "minLength": 1,
+                "maxLength": 4096,
+                "type": "string"
+              },
+              "predicate": {
+                "minLength": 1,
+                "maxLength": 4096,
+                "type": "string"
+              },
+              "object": {
+                "minLength": 1,
+                "maxLength": 4096,
+                "type": "string"
+              },
+              "category": {
+                "anyOf": [
+                  {
+                    "const": "user_profile",
+                    "type": "string"
+                  },
+                  {
+                    "const": "relationship_state",
+                    "type": "string"
+                  },
+                  {
+                    "const": "world_state",
+                    "type": "string"
+                  },
+                  {
+                    "const": "self_state",
+                    "type": "string"
+                  },
+                  {
+                    "const": "project_fact",
+                    "type": "string"
+                  },
+                  {
+                    "const": "preference",
+                    "type": "string"
+                  },
+                  {
+                    "const": "rule",
+                    "type": "string"
+                  }
+                ]
+              },
+              "semantic_key_candidate": {
+                "minLength": 1,
+                "maxLength": 4096,
+                "type": "string"
+              },
+              "proposed_status": {
+                "anyOf": [
+                  {
+                    "const": "candidate",
+                    "type": "string"
+                  },
+                  {
+                    "const": "active",
+                    "type": "string"
+                  }
+                ]
+              },
+              "direct_active_hint": {
+                "type": "boolean"
+              },
+              "direct_active_reason": {
+                "anyOf": [
+                  {
+                    "const": "user_explicit",
+                    "type": "string"
+                  },
+                  {
+                    "const": "low_risk",
+                    "type": "string"
+                  },
+                  {
+                    "const": "multi_source",
+                    "type": "string"
+                  },
+                  {
+                    "const": "system_event",
+                    "type": "string"
+                  }
+                ]
+              },
+              "risk_level": {
+                "anyOf": [
+                  {
+                    "const": "low",
+                    "type": "string"
+                  },
+                  {
+                    "const": "medium",
+                    "type": "string"
+                  },
+                  {
+                    "const": "high",
+                    "type": "string"
+                  },
+                  {
+                    "const": "critical",
+                    "type": "string"
+                  }
+                ]
+              },
+              "explicitness": {
+                "anyOf": [
+                  {
+                    "const": "explicit_statement",
+                    "type": "string"
+                  },
+                  {
+                    "const": "strong_implication",
+                    "type": "string"
+                  },
+                  {
+                    "const": "weak_implication",
+                    "type": "string"
+                  },
+                  {
+                    "const": "inferred",
+                    "type": "string"
+                  }
+                ]
+              },
+              "confidence": {
+                "minimum": 0,
+                "maximum": 1,
+                "type": "number"
+              },
+              "source": {
+                "anyOf": [
+                  {
+                    "const": "explicit_feedback",
+                    "type": "string"
+                  },
+                  {
+                    "const": "super_user_explicit",
+                    "type": "string"
+                  },
+                  {
+                    "const": "approved_artifact",
+                    "type": "string"
+                  },
+                  {
+                    "const": "system_event_tool_result",
+                    "type": "string"
+                  },
+                  {
+                    "const": "user_explicit",
+                    "type": "string"
+                  },
+                  {
+                    "const": "developer_note",
+                    "type": "string"
+                  },
+                  {
+                    "const": "agent_observation",
+                    "type": "string"
+                  },
+                  {
+                    "const": "meta_inference",
+                    "type": "string"
+                  }
+                ]
+              },
+              "source_ref": {
+                "$id": "urn:pai:shared:typed-evidence-ref:v1",
+                "minLength": 3,
+                "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+                "type": "string"
+              },
+              "evidence_refs": {
+                "minItems": 1,
+                "maxItems": 64,
+                "uniqueItems": true,
+                "type": "array",
+                "items": {
+                  "$id": "urn:pai:shared:typed-evidence-ref:v1",
+                  "minLength": 3,
+                  "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+                  "type": "string"
+                }
+              },
+              "valid_from": {
+                "minLength": 20,
+                "maxLength": 35,
+                "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                "type": "string"
+              },
+              "valid_until": {
+                "minLength": 20,
+                "maxLength": 35,
+                "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                "type": "string"
+              },
+              "evidence_pending": {
+                "type": "boolean"
+              },
+              "evidence_pending_reason": {
+                "minLength": 1,
+                "maxLength": 4096,
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "$id": "urn:pai:knowthat:write-batch-response:v1",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "write_batch_id",
+        "batch_status",
+        "item_results",
+        "active_fact_ids",
+        "candidate_fact_ids",
+        "rejected_items",
+        "conflict_ids",
+        "linkage_check_ids",
+        "duplicate_replayed"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "knowthat.write_batch.v1",
+          "type": "string"
+        },
+        "write_batch_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+          "type": "string"
+        },
+        "batch_status": {
+          "anyOf": [
+            {
+              "const": "completed",
+              "type": "string"
+            },
+            {
+              "const": "partial_failed",
+              "type": "string"
+            }
+          ]
+        },
+        "item_results": {
+          "minItems": 1,
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "client_item_id",
+                  "status",
+                  "semantic_key",
+                  "final_status",
+                  "fact_id",
+                  "decision_reason",
+                  "representative_client_item_id",
+                  "group_role",
+                  "linkage_check_ids",
+                  "duplicate_replayed"
+                ],
+                "properties": {
+                  "client_item_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                    "type": "string"
+                  },
+                  "status": {
+                    "const": "succeeded",
+                    "type": "string"
+                  },
+                  "semantic_key": {
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "type": "string"
+                  },
+                  "final_status": {
+                    "anyOf": [
+                      {
+                        "const": "active",
+                        "type": "string"
+                      },
+                      {
+                        "const": "candidate",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "fact_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                    "type": "string"
+                  },
+                  "decision_reason": {
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "type": "string"
+                  },
+                  "representative_client_item_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                    "type": "string"
+                  },
+                  "group_role": {
+                    "anyOf": [
+                      {
+                        "const": "representative",
+                        "type": "string"
+                      },
+                      {
+                        "const": "merged",
+                        "type": "string"
+                      },
+                      {
+                        "const": "conflict",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "conflict_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                    "type": "string"
+                  },
+                  "linkage_check_ids": {
+                    "maxItems": 256,
+                    "uniqueItems": true,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string"
+                    }
+                  },
+                  "duplicate_replayed": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "client_item_id",
+                  "status",
+                  "code",
+                  "message"
+                ],
+                "properties": {
+                  "client_item_id": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                    "type": "string"
+                  },
+                  "status": {
+                    "const": "rejected",
+                    "type": "string"
+                  },
+                  "code": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "type": "string"
+                  },
+                  "field_path": {
+                    "minLength": 1,
+                    "maxLength": 2048,
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "active_fact_ids": {
+          "maxItems": 100,
+          "uniqueItems": true,
+          "type": "array",
+          "items": {
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+            "type": "string"
+          }
+        },
+        "candidate_fact_ids": {
+          "maxItems": 100,
+          "uniqueItems": true,
+          "type": "array",
+          "items": {
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+            "type": "string"
+          }
+        },
+        "rejected_items": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "client_item_id",
+              "status",
+              "code",
+              "message"
+            ],
+            "properties": {
+              "client_item_id": {
+                "minLength": 1,
+                "maxLength": 512,
+                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                "type": "string"
+              },
+              "status": {
+                "const": "rejected",
+                "type": "string"
+              },
+              "code": {
+                "minLength": 1,
+                "maxLength": 128,
+                "type": "string"
+              },
+              "message": {
+                "minLength": 1,
+                "maxLength": 4096,
+                "type": "string"
+              },
+              "field_path": {
+                "minLength": 1,
+                "maxLength": 2048,
+                "type": "string"
+              }
+            }
+          }
+        },
+        "conflict_ids": {
+          "maxItems": 100,
+          "uniqueItems": true,
+          "type": "array",
+          "items": {
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+            "type": "string"
+          }
+        },
+        "linkage_check_ids": {
+          "maxItems": 256,
+          "uniqueItems": true,
+          "type": "array",
+          "items": {
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+            "type": "string"
+          }
+        },
+        "duplicate_replayed": {
+          "type": "boolean"
+        }
+      }
+    }
+  ]
+}

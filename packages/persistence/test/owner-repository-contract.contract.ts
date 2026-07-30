@@ -23,6 +23,7 @@ import {
   ownerDatabaseApplicationDependenciesV1,
   ownerEventingReconciliationContractV1,
   ownerFunctionSignatureV1,
+  ownerImmutableTriggerV1,
   ownerWriterArtifactV1,
   verifyOwnerDatabaseCheckDefinitionV1,
   verifyOwnerRepositoryDeploymentFromPostgresV1,
@@ -134,6 +135,7 @@ function timerContractWithReconciliation() {
     );
   return {
     ...TIMER_REPOSITORY_CONTRACT_V1,
+    writer_artifacts: undefined,
     mutable_writers: [
       ...TIMER_REPOSITORY_CONTRACT_V1.mutable_writers,
       ...(alreadyIntegrated ? [] : timerReconciliation.mutable_writers),
@@ -155,6 +157,22 @@ function timerContractWithReconciliation() {
 }
 
 describe("owner repository contracts", () => {
+  it("accepts exact physical CHECK snapshots without weakening semantic checks", () => {
+    expect(() =>
+      defineOwnerRepositoryContractV1({
+        ...TIMER_REPOSITORY_CONTRACT_V1,
+        database_checks: [
+          ...(TIMER_REPOSITORY_CONTRACT_V1.database_checks ?? []),
+          {
+            constraint_name: "timer_exact_snapshot_probe_check",
+            table_name: "timer_schedules",
+            required_definition_fragments: ["CHECK ((status IS NOT NULL))"],
+          },
+        ],
+      } as never),
+    ).not.toThrow();
+  });
+
   it("accepts only the exact fenced outbox ACK confirmation", () => {
     expect(() =>
       assertOwnerOutboxAcknowledgeConfirmationV1({ acknowledged: true }),
@@ -301,67 +319,33 @@ describe("owner repository contracts", () => {
     }
   });
 
-  it("forbids a second business-key uniqueness constraint from shadowing inbox delivery identity", () => {
+  it("requires exact delivery and idempotency inbox identities", () => {
     const base = timerContractWithReconciliation();
-    const deliveryIdentity = {
-      constraint_name: "timer_event_inbox_source_event_id_key",
-      table_name: "timer_event_inbox",
-      columns: ["source", "event_id"],
-      kind: "unique",
-      deferrable: false,
-      initially_deferred: false,
-      validated: true,
-    } as const;
-    const deliveryIdentityIndex = {
-      index_name: "timer_event_inbox_source_event_id_key",
-      table_name: "timer_event_inbox",
-      unique: true,
-      primary: false,
-      valid: true,
-      definition:
-        "CREATE UNIQUE INDEX timer_event_inbox_source_event_id_key ON timer.timer_event_inbox USING btree (source, event_id)",
-    } as const;
-    const businessKeyIndex = {
-      ...deliveryIdentityIndex,
-      index_name: "timer_event_inbox_source_idempotency_key",
-      definition:
-        "CREATE UNIQUE INDEX timer_event_inbox_source_idempotency_key ON timer.timer_event_inbox USING btree (source, idempotency_key)",
-    } as const;
     expect(() =>
       defineOwnerRepositoryContractV1({
         ...base,
-        database_unique_constraints: [deliveryIdentity],
-        database_indexes: [
-          ...(base.database_indexes ?? []),
-          deliveryIdentityIndex,
-        ],
       } as never),
     ).not.toThrow();
     expect(() =>
       defineOwnerRepositoryContractV1({
         ...base,
-        database_unique_constraints: [
-          deliveryIdentity,
-          {
-            ...deliveryIdentity,
-            constraint_name:
-              "timer_event_inbox_source_scope_idempotency_key",
-            columns: ["source", "scope_fingerprint", "idempotency_key"],
-          },
-        ],
+        database_unique_constraints:
+          base.database_unique_constraints?.filter(
+            ({ constraint_name }) =>
+              constraint_name !==
+              "timer_event_inbox_source_idempotency_key_key",
+          ),
       } as never),
-    ).toThrow(/only one non-deferrable UNIQUE\(source,event_id\)/u);
+    ).toThrow(/exact non-deferrable UNIQUE/u);
     expect(() =>
       defineOwnerRepositoryContractV1({
         ...base,
-        database_unique_constraints: [deliveryIdentity],
-        database_indexes: [
-          ...(base.database_indexes ?? []),
-          deliveryIdentityIndex,
-          businessKeyIndex,
-        ],
+        database_indexes: base.database_indexes?.filter(
+          ({ index_name }) =>
+            index_name !== "timer_event_inbox_source_idempotency_key_key",
+        ),
       } as never),
-    ).toThrow(/only one non-deferrable UNIQUE\(source,event_id\)/u);
+    ).toThrow(/exact unique delivery and idempotency indexes/u);
   });
 
   it("requires durable inbox conflicts to close before business mutations", () => {
@@ -405,7 +389,7 @@ describe("owner repository contracts", () => {
     const auditInsert = `
         INSERT INTO timer.timer_audit_logs(id, event_type, payload)
           VALUES (p_idempotency_key, 'timer.event.applied', p_event);`;
-    const definition = (businessBeforeConflict = "") => `
+    const definition = () => `
       CREATE FUNCTION timer.consume_timer_event_v1(
         p_event jsonb,
         p_idempotency_key text,
@@ -417,11 +401,11 @@ describe("owner repository contracts", () => {
       DECLARE
         existing timer.timer_event_inbox%ROWTYPE;
         inserted_id text;
+        isolation_id text;
       BEGIN
         IF p_idempotency_key IS NULL THEN
           RAISE EXCEPTION 'missing idempotency key';
         END IF;
-        ${businessBeforeConflict}
         INSERT INTO timer.timer_event_inbox(
           source,
           event_id,
@@ -440,22 +424,39 @@ describe("owner repository contracts", () => {
         ON CONFLICT (source, event_id) DO NOTHING
         RETURNING event_id INTO inserted_id;
 
+        IF inserted_id IS NOT NULL THEN
+          ${auditInsert}
+          RETURN jsonb_build_object('status', 'processed');
+        END IF;
+
         SELECT * INTO existing
           FROM timer.timer_event_inbox
          WHERE source = p_event->>'producer'
            AND event_id = p_event->>'event_id'
          FOR UPDATE;
 
-        IF existing.idempotency_key IS DISTINCT FROM p_idempotency_key
+        IF existing.event_id IS DISTINCT FROM p_event->>'event_id'
+           OR existing.idempotency_key IS DISTINCT FROM p_idempotency_key
            OR existing.payload_hash IS DISTINCT FROM p_payload_hash
            OR existing.semantic_hash IS DISTINCT FROM p_semantic_hash
            OR existing.scope_fingerprint IS DISTINCT FROM p_scope_fingerprint THEN
+          isolation_id := 'inbox-conflict:' || (p_event->>'producer') || ':' ||
+            (p_event->>'event_id') || ':' || md5(jsonb_build_array(
+              p_idempotency_key,
+              p_payload_hash,
+              p_semantic_hash,
+              p_scope_fingerprint
+            )::text);
           INSERT INTO timer.timer_event_dlq(id, payload)
-            VALUES (p_idempotency_key, p_event);
-          RETURN jsonb_build_object('status', 'conflict');
+            VALUES (isolation_id, p_event)
+            ON CONFLICT (id) DO NOTHING;
+          RETURN jsonb_build_object(
+            'status', 'isolated',
+            'isolation_code', 'durable_inbox_identity_conflict',
+            'isolation_ref', 'timer.timer_event_dlq/' || isolation_id
+          );
         END IF;
-        ${auditInsert}
-        RETURN jsonb_build_object('status', 'processed');
+        RETURN jsonb_build_object('status', 'replayed');
       END
       $body$`;
 
@@ -466,13 +467,266 @@ describe("owner repository contracts", () => {
         definition(),
       ),
     ).not.toThrow();
+    for (const invalid of [
+      definition().replace(
+        "INSERT INTO timer.timer_event_inbox(",
+        `${auditInsert}\n        INSERT INTO timer.timer_event_inbox(`,
+      ),
+      definition().replace(
+        "OR existing.payload_hash IS DISTINCT FROM p_payload_hash",
+        "AND existing.payload_hash IS DISTINCT FROM p_payload_hash",
+      ),
+      definition().replace(
+        `p_event->>'producer',
+          p_event->>'event_id',
+          p_idempotency_key,`,
+        `p_event->>'event_id',
+          p_event->>'producer',
+          p_idempotency_key,`,
+      ),
+      definition().replace(
+        `IF inserted_id IS NOT NULL THEN
+          ${auditInsert}
+          RETURN jsonb_build_object('status', 'processed');
+        END IF;`,
+        `${auditInsert}
+        RETURN jsonb_build_object('status', 'processed');`,
+      ),
+      definition().replace(
+        `${auditInsert}
+          RETURN jsonb_build_object('status', 'processed');`,
+        `RETURN jsonb_build_object('status', 'processed');
+          ${auditInsert}`,
+      ),
+      definition().replace(
+        "RETURN jsonb_build_object('status', 'replayed');",
+        `${auditInsert}\n        RETURN jsonb_build_object('status', 'replayed');`,
+      ),
+      definition().replace(
+        "'isolation_ref', 'timer.timer_event_dlq/' || isolation_id",
+        "'isolation_ref', 'timer.timer_event_dlq/caller-reported'",
+      ),
+      definition().replace("ON CONFLICT (id) DO NOTHING;", ""),
+      definition().replace(
+        "(p_event->>'event_id') || ':' || md5",
+        "'shared-event-id' || ':' || md5",
+      ),
+      definition().replace(
+        "p_scope_fingerprint\n            )::text",
+        "'shared-scope'\n            )::text",
+      ),
+    ]) {
+      expect(() =>
+        lintOwnerWriterDefinitionV1(
+          TIMER_REPOSITORY_CONTRACT_V1,
+          signature,
+          invalid,
+        ),
+      ).toThrow(/durable event identity drift/u);
+    }
+  });
+
+  it("derives Meta finalization provenance from locked transition history", () => {
+    const signature = ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "finalize_trigger_meta_projection_v1",
+      primary_table: "trigger_processes",
+      writer_kind: "state_transition",
+      arguments: [
+        ["p_process_id", "text"],
+        ["p_expected_process_phase", "text"],
+        ["p_expected_process_status", "text"],
+        ["p_expected_process_updated_at", "timestamptz"],
+        ["p_expected_meta_enqueue_reason", "text"],
+        ["p_meta_finalization_evidence", "jsonb"],
+      ],
+      reads_tables: ["trigger_processes", "trigger_process_transitions"],
+      writes_tables: [],
+      effects: [],
+      returns: "jsonb",
+    });
+    const body = `
+      DECLARE
+        v_execution_provenance text;
+        v_execution_transition_ref text;
+        v_deferred_transition_ref text;
+        v_execution_transition_created_at timestamptz;
+        v_persisted_process_phase text;
+        v_persisted_process_status text;
+        v_persisted_process_updated_at timestamptz;
+        v_persisted_meta_enqueue_reason text;
+      BEGIN
+        SELECT process.phase,
+               process.status,
+               process.updated_at,
+               process.meta_enqueue_reason
+          INTO v_persisted_process_phase,
+               v_persisted_process_status,
+               v_persisted_process_updated_at,
+               v_persisted_meta_enqueue_reason
+          FROM trigger_processor.trigger_processes process
+         WHERE process.id = p_process_id
+         FOR UPDATE;
+        IF v_persisted_process_phase IS DISTINCT FROM p_expected_process_phase
+           OR v_persisted_process_status IS DISTINCT FROM p_expected_process_status
+           OR v_persisted_process_updated_at IS DISTINCT FROM p_expected_process_updated_at
+           OR v_persisted_meta_enqueue_reason IS DISTINCT FROM p_expected_meta_enqueue_reason THEN
+          RAISE EXCEPTION 'stale persisted Meta process state';
+        END IF;
+        PERFORM 1
+          FROM trigger_processor.trigger_process_transitions transition
+         WHERE transition.trigger_process_id = p_process_id
+         FOR SHARE;
+        SELECT transition.id::text,
+               transition.created_at,
+               CASE
+                 WHEN transition.from_phase = 'deferred'
+                   THEN 'deferred_execution'
+                 ELSE 'direct_execution'
+               END
+          INTO v_execution_transition_ref,
+               v_execution_transition_created_at,
+               v_execution_provenance
+          FROM trigger_processor.trigger_process_transitions transition
+         WHERE transition.trigger_process_id = p_process_id
+           AND transition.to_phase = 'execution'
+         ORDER BY transition.created_at DESC, transition.id DESC
+         LIMIT 1;
+        IF v_execution_transition_ref IS NULL THEN
+          v_execution_provenance := 'not_applicable';
+          v_deferred_transition_ref := NULL;
+        ELSIF v_execution_provenance = 'deferred_execution' THEN
+          SELECT transition.id::text
+            INTO v_deferred_transition_ref
+            FROM trigger_processor.trigger_process_transitions transition
+           WHERE transition.trigger_process_id = p_process_id
+             AND transition.to_phase = 'deferred'
+             AND transition.created_at < v_execution_transition_created_at
+           ORDER BY transition.created_at DESC, transition.id DESC
+           LIMIT 1;
+          IF v_deferred_transition_ref IS NULL THEN
+            RAISE EXCEPTION 'deferred execution transition is incomplete';
+          END IF;
+        ELSE
+          v_deferred_transition_ref := NULL;
+        END IF;
+        IF NOT (
+          (v_persisted_meta_enqueue_reason = 'user_retracted'
+           AND p_meta_finalization_evidence->>'terminal_outcome' = 'cancelled_with_reason')
+          OR (v_persisted_meta_enqueue_reason = 'system_interrupted'
+           AND p_meta_finalization_evidence->>'terminal_outcome' = 'interrupted_with_reason')
+          OR (v_persisted_meta_enqueue_reason = 'failed_with_learnable_snapshot'
+           AND p_meta_finalization_evidence->>'terminal_outcome' = 'failed_with_reason')
+          OR (v_persisted_meta_enqueue_reason = 'cooldown_expired'
+           AND p_meta_finalization_evidence->>'terminal_outcome' = 'executed'
+           AND p_meta_finalization_evidence->>'execution_provenance' = 'direct_execution')
+          OR (v_persisted_meta_enqueue_reason = 'cooldown_expired'
+           AND p_meta_finalization_evidence->>'terminal_outcome' = 'deferred_then_executed'
+           AND p_meta_finalization_evidence->>'execution_provenance' = 'deferred_execution')
+          OR (v_persisted_meta_enqueue_reason = 'cooldown_expired'
+           AND p_meta_finalization_evidence->>'terminal_outcome' = 'failed_with_reason'
+           AND p_meta_finalization_evidence->>'execution_provenance' = 'direct_execution')
+          OR (v_persisted_meta_enqueue_reason = 'cooldown_expired'
+           AND p_meta_finalization_evidence->>'terminal_outcome' = 'failed_with_reason'
+           AND p_meta_finalization_evidence->>'execution_provenance' = 'deferred_execution')
+        ) THEN
+          RAISE EXCEPTION 'Meta finalization reason/outcome mismatch';
+        END IF;
+        IF p_meta_finalization_evidence->>'execution_provenance'
+             IS DISTINCT FROM v_execution_provenance
+           OR p_meta_finalization_evidence->>'execution_transition_ref'
+             IS DISTINCT FROM v_execution_transition_ref
+           OR p_meta_finalization_evidence->>'deferred_transition_ref'
+             IS DISTINCT FROM v_deferred_transition_ref THEN
+          RAISE EXCEPTION 'Meta finalization provenance mismatch';
+        END IF;
+        RETURN jsonb_build_object('status', 'processed');
+      END;`;
+    const definition = (source: string) => `
+      CREATE FUNCTION trigger_processor.finalize_trigger_meta_projection_v1(
+        p_process_id text,
+        p_expected_process_phase text,
+        p_expected_process_status text,
+        p_expected_process_updated_at timestamptz,
+        p_expected_meta_enqueue_reason text,
+        p_meta_finalization_evidence jsonb
+      ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+      SET search_path = trigger_processor, pg_temp AS $body$
+      ${source}
+      $body$`;
+    expect(() =>
+      lintOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        signature,
+        definition(body),
+      ),
+    ).not.toThrow();
+    for (const invalid of [
+      body.replace("         FOR UPDATE;", ";"),
+      body.replace("         FOR SHARE;", ";"),
+      body.replaceAll(
+        "transition.from_phase",
+        "p_meta_finalization_evidence",
+      ),
+      body.replace(
+        "transition.created_at < v_execution_transition_created_at",
+        "transition.created_at < clock_timestamp()",
+      ),
+      body.replaceAll(
+        "v_persisted_meta_enqueue_reason =",
+        "p_expected_meta_enqueue_reason =",
+      ),
+      body.replace(
+        "p_meta_finalization_evidence->>'terminal_outcome' = 'interrupted_with_reason'",
+        "p_meta_finalization_evidence->>'terminal_outcome' = 'cancelled_with_reason'",
+      ),
+      body.replace(
+        "AND p_meta_finalization_evidence->>'terminal_outcome' = 'cancelled_with_reason')",
+        `AND p_meta_finalization_evidence->>'terminal_outcome' = 'cancelled_with_reason'
+           AND p_meta_finalization_evidence->>'execution_provenance' = 'not_applicable')`,
+      ),
+      body.replace(
+        "IS DISTINCT FROM v_execution_provenance",
+        "IS DISTINCT FROM p_meta_finalization_evidence->>'execution_provenance'",
+      ),
+    ]) {
+      expect(() =>
+        lintOwnerWriterDefinitionV1(
+          TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+          signature,
+          definition(invalid),
+        ),
+      ).toThrow(/Meta finalization provenance drift/u);
+    }
+  });
+
+  it.each([
+    "SET LOCAL synchronous_commit = off;",
+    "SET SESSION session_replication_role = replica;",
+    "PERFORM pg_catalog.set_config('synchronous_commit', 'off', true);",
+    "PERFORM pg_catalog.set_config('synchronous_' || 'commit', 'off', true);",
+    "PERFORM pg_catalog.set_config(variable_name, variable_value, true);",
+  ])("forbids protected runtime GUC changes in owner writers", (statement) => {
+    const signature = ownerFunctionSignatureV1({
+      schema: "timer",
+      function_name: "protected_guc_probe_v1",
+      primary_table: "contract_parents",
+      writer_kind: "state_transition",
+      arguments: [],
+      reads_tables: [],
+      writes_tables: [],
+      effects: [],
+      returns: "jsonb",
+    });
     expect(() =>
       lintOwnerWriterDefinitionV1(
         TIMER_REPOSITORY_CONTRACT_V1,
         signature,
-        definition(auditInsert),
+        `CREATE FUNCTION timer.protected_guc_probe_v1() RETURNS jsonb
+         LANGUAGE plpgsql SECURITY DEFINER SET search_path = timer, pg_temp
+         AS $body$ BEGIN ${statement} RETURN '{}'::jsonb; END; $body$`,
       ),
-    ).toThrow(/durable event identity drift/u);
+    ).toThrow(/protected runtime GUC changes are forbidden/u);
   });
 
   it("declares exact writer-only permissions for every fresh table", () => {
@@ -518,10 +772,31 @@ describe("owner repository contracts", () => {
         expect(Object.isFrozen(signature.reads_tables)).toBe(true);
         expect(Object.isFrozen(signature.writes_tables)).toBe(true);
         expect(Object.isFrozen(signature.effects)).toBe(true);
-        expect(signature.effects).toHaveLength(signature.writes_tables.length);
-        expect(signature.effects.map(({ table_name }) => table_name).sort()).toEqual(
+        expect(signature.effects.length).toBeGreaterThanOrEqual(
+          signature.writes_tables.length,
+        );
+        expect(
+          [...new Set(signature.effects.map(({ table_name }) => table_name))].sort(),
+        ).toEqual(
           [...signature.writes_tables].sort(),
         );
+        expect(
+          new Set(
+            signature.effects.map(
+              ({
+                table_name,
+                operation,
+                concurrency_control,
+                advisory_lock,
+              }) =>
+                `${table_name}:${operation}:${concurrency_control}:${
+                  advisory_lock === undefined
+                    ? ""
+                    : JSON.stringify(advisory_lock)
+                }`,
+            ),
+          ).size,
+        ).toBe(signature.effects.length);
         expect(signature.writes_tables).toContain(signature.primary_table);
         expect(signature.reads_tables.every((table) => contract.tables.includes(table)))
           .toBe(true);
@@ -722,6 +997,7 @@ describe("owner repository contracts", () => {
       "claim_timer_event_outbox_reconciliation_v1",
       "ack_timer_event_outbox_transport_present_v1",
       "ack_timer_event_outbox_rematerialized_v1",
+      "ack_timer_event_outbox_permanent_failure_v1",
     ]);
     expect(
       timerReconciliation.function_signatures.map(
@@ -736,6 +1012,7 @@ describe("owner repository contracts", () => {
       ["reconcile_claim", "reconciliation_fence", "setof jsonb"],
       ["reconcile_ack_present", "reconciliation_fence", "jsonb"],
       ["reconcile_ack_rematerialized", "reconciliation_fence", "jsonb"],
+      ["reconcile_ack_permanent_failure", "reconciliation_fence", "jsonb"],
     ]);
     const argumentsFor = (operation: string) =>
       timerReconciliation.function_signatures
@@ -753,6 +1030,11 @@ describe("owner repository contracts", () => {
     ]);
     expect(argumentsFor("reconcile_ack_rematerialized")?.slice(-1)).toEqual([
       "p_probe_interval_ms",
+    ]);
+    expect(argumentsFor("reconcile_ack_permanent_failure")?.slice(-3)).toEqual([
+      "p_failure_code",
+      "p_failure_message",
+      "p_now",
     ]);
     expect(
       timerReconciliation.function_signatures.flatMap(({ arguments: values }) =>
@@ -790,7 +1072,7 @@ describe("owner repository contracts", () => {
     expect(outboxes).toHaveLength(11);
     for (const { schema, table } of outboxes) {
       const fragment = ownerEventingReconciliationContractV1(schema, table);
-      expect(fragment.function_signatures).toHaveLength(4);
+      expect(fragment.function_signatures).toHaveLength(5);
       expect(fragment.database_columns).toHaveLength(7);
       expect(fragment.database_indexes).toHaveLength(3);
       expect(
@@ -870,7 +1152,11 @@ describe("owner repository contracts", () => {
     expect(() =>
       defineOwnerRepositoryContractV1({
         ...missingIndex,
-        database_indexes: missingIndex.database_indexes.slice(1),
+        database_indexes: missingIndex.database_indexes.filter(
+          ({ index_name }) =>
+            index_name !==
+            timerReconciliation.database_indexes[0]?.index_name,
+        ),
       } as never),
     ).toThrow(/reconciliation index drift/u);
   });
@@ -983,20 +1269,28 @@ $writer$`;
   it("binds every canonical event outbox to the owner event union and producer", () => {
     for (const contract of contracts) {
       const checks = contract.database_checks ?? [];
+      const expectedOwnerEventTypes = [
+        ...OWNER_DURABLE_EVENT_TYPES_V1[contract.owner_service],
+      ].sort();
       const ownerEventTypeChecks = checks.filter(
         ({ semantic_constraint }) =>
           semantic_constraint?.kind === "text_enum" &&
-          semantic_constraint.column_name === "event_type",
+          semantic_constraint.column_name === "event_type" &&
+          semantic_constraint.allowed_values.length ===
+            expectedOwnerEventTypes.length &&
+          JSON.stringify([...semantic_constraint.allowed_values].sort()) ===
+            JSON.stringify(expectedOwnerEventTypes),
       );
-      expect(ownerEventTypeChecks).toHaveLength(1);
+      expect(
+        ownerEventTypeChecks,
+        `${contract.owner_service} must expose exactly one canonical owner-event enum`,
+      ).toHaveLength(1);
       expect(ownerEventTypeChecks[0]?.semantic_constraint).toMatchObject({
         kind: "text_enum",
-        allowed_values:
-          OWNER_DURABLE_EVENT_TYPES_V1[contract.owner_service],
       });
       if (ownerEventTypeChecks[0]?.semantic_constraint?.kind === "text_enum") {
-        expect(ownerEventTypeChecks[0].semantic_constraint.allowed_values).toBe(
-          OWNER_DURABLE_EVENT_TYPES_V1[contract.owner_service],
+        expect([...ownerEventTypeChecks[0].semantic_constraint.allowed_values].sort()).toEqual(
+          expectedOwnerEventTypes,
         );
       }
       for (const table of contract.outbox_tables) {
@@ -1027,10 +1321,14 @@ $writer$`;
             checks.filter(
               ({ table_name, semantic_constraint }) =>
                 table_name === table &&
-                semantic_constraint?.kind === "json_text_equals" &&
-                semantic_constraint.column_name === "payload" &&
-                semantic_constraint.field_name === "producer" &&
-                semantic_constraint.value === contract.owner_service,
+                ((semantic_constraint?.kind === "json_text_equals" &&
+                  semantic_constraint.column_name === "payload" &&
+                  semantic_constraint.field_name === "producer" &&
+                  semantic_constraint.value === contract.owner_service) ||
+                  (semantic_constraint?.kind === "json_event_envelope" &&
+                    semantic_constraint.column_name === "payload" &&
+                    semantic_constraint.producer_value ===
+                      contract.owner_service)),
             ),
           ).toHaveLength(1);
         }
@@ -1052,6 +1350,35 @@ $writer$`;
         }),
       ]),
     );
+  });
+
+  it("verifies every JSON payload schema against its PostgreSQL discriminator branch", () => {
+    const expectation = TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks
+      ?.find(
+        ({ constraint_name }) =>
+          constraint_name ===
+          "trigger_process_work_items_payload_schema_check",
+      );
+    expect(expectation).toBeDefined();
+    const definition = `CHECK (jsonb_typeof(payload) = 'object' AND (
+      (work_kind = 'stage_execute' AND payload->>'schema_version' = 'trigger_stage_execute_work.v1') OR
+      (work_kind = 'stage_retry' AND payload->>'schema_version' = 'trigger_stage_retry_work.v1') OR
+      (work_kind = 'runtime_start_recompose' AND payload->>'schema_version' = 'trigger_runtime_start_recompose_work.v1') OR
+      (work_kind = 'snapshot_repair' AND payload->>'schema_version' = 'trigger_snapshot_repair_work.v1') OR
+      (work_kind = 'meta_enqueue' AND payload->>'schema_version' = 'trigger_meta_enqueue_work.v1')
+    ))`;
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(expectation!, definition),
+    ).not.toThrow();
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        expectation!,
+        definition.replace(
+          "trigger_meta_enqueue_work.v1",
+          "trigger_stage_execute_work.v1",
+        ),
+      ),
+    ).toThrow(/CHECK constraint drift/u);
   });
 
   it("binds the Action Runtime controlled outbox to a complete canonical source envelope", () => {
@@ -1081,6 +1408,7 @@ $writer$`;
             kind: "json_event_envelope",
             column_name: "envelope",
             producer_value: "action_runtime",
+            allow_additional_keys: true,
             required_keys: [
               "event_id",
               "event_type",
@@ -1110,7 +1438,7 @@ $writer$`;
       .find(({ constraint_name }) => constraint_name === "runtime_events_check");
     expect(expectation).toBeDefined();
     if (expectation === undefined) return;
-    const definition = `CHECK (((jsonb_typeof(envelope) = 'object'::text) AND (jsonb_object_length(envelope) = 8) AND (envelope ?& ARRAY['event_id'::text, 'event_type'::text, 'schema_version'::text, 'producer'::text, 'occurred_at'::text, 'idempotency_key'::text, 'trace_id'::text, 'payload'::text]) AND ((envelope ->> 'event_id'::text) = id) AND ((envelope ->> 'event_type'::text) = event_type) AND ((envelope ->> 'idempotency_key'::text) = idempotency_key) AND ((envelope ->> 'producer'::text) = 'action_runtime'::text)))`;
+    const definition = `CHECK (jsonb_typeof(envelope) = 'object'::text AND envelope ?& ARRAY['event_id'::text, 'event_type'::text, 'schema_version'::text, 'producer'::text, 'occurred_at'::text, 'idempotency_key'::text, 'trace_id'::text, 'payload'::text] AND (envelope ->> 'event_id'::text) = id AND (envelope ->> 'event_type'::text) = event_type AND (envelope ->> 'idempotency_key'::text) = idempotency_key AND (envelope ->> 'producer'::text) = 'action_runtime'::text)`;
 
     expect(() =>
       verifyOwnerDatabaseCheckDefinitionV1(expectation, definition),
@@ -1125,21 +1453,6 @@ $writer$`;
       verifyOwnerDatabaseCheckDefinitionV1(
         expectation,
         definition.replace("'payload'::text", "'trace_id'::text"),
-      ),
-    ).toThrow(/CHECK constraint drift/u);
-    expect(() =>
-      verifyOwnerDatabaseCheckDefinitionV1(
-        expectation,
-        definition.replace("(jsonb_object_length(envelope) = 8) AND ", ""),
-      ),
-    ).toThrow(/CHECK constraint drift/u);
-    expect(() =>
-      verifyOwnerDatabaseCheckDefinitionV1(
-        expectation,
-        definition.replace(
-          "jsonb_object_length(envelope) = 8",
-          "jsonb_object_length(envelope) = 9",
-        ),
       ),
     ).toThrow(/CHECK constraint drift/u);
     expect(() =>
@@ -1165,11 +1478,57 @@ $writer$`;
     ).toThrow(/CHECK constraint drift/u);
   });
 
+  it("proves Action Runtime resolver ref, hash, canonical bytes and retention CHECK semantics", () => {
+    const expectations = Object.fromEntries(
+      (ACTION_RUNTIME_REPOSITORY_CONTRACT_V1.database_checks ?? []).map(
+        (check) => [check.constraint_name, check],
+      ),
+    );
+    const cases = [
+      [
+        "runtime_events_payload_ref_shape_check",
+        "CHECK ((payload_ref = ('runtime_event:'::text || id)))",
+        "CHECK ((payload_ref = ('artifact:'::text || id)))",
+      ],
+      [
+        "runtime_events_payload_hash_shape_check",
+        "CHECK ((payload_hash ~ '^sha256:[0-9a-f]{64}$'::text))",
+        "CHECK ((payload_hash ~ '^sha256:.+$'::text))",
+      ],
+      [
+        "runtime_events_canonical_bytes_check",
+        "CHECK ((octet_length(envelope_canonical_bytes) > 0))",
+        "CHECK ((octet_length(envelope_canonical_bytes) >= 0))",
+      ],
+      [
+        "runtime_events_retention_check",
+        "CHECK ((retention_until > created_at))",
+        "CHECK ((retention_until >= created_at))",
+      ],
+    ] as const;
+    for (const [name, valid, weakened] of cases) {
+      const expectation = expectations[name];
+      expect(expectation, name).toBeDefined();
+      if (expectation === undefined) continue;
+      expect(() =>
+        verifyOwnerDatabaseCheckDefinitionV1(expectation, valid),
+      ).not.toThrow();
+      expect(() =>
+        verifyOwnerDatabaseCheckDefinitionV1(expectation, weakened),
+      ).toThrow(/CHECK constraint drift/u);
+    }
+  });
+
   it("rejects semantic weakening of integer range and meta enqueue CHECKs", () => {
     const generationExpectation =
       TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks?.find(
         ({ constraint_name }) =>
           constraint_name === "bot_foreground_slots_generation_safe_check",
+      );
+    const transitionVersionExpectation =
+      TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks?.find(
+        ({ constraint_name }) =>
+          constraint_name === "trigger_process_transition_version_step_check",
       );
     const reasonExpectation =
       TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks?.find(
@@ -1187,11 +1546,13 @@ $writer$`;
           constraint_name === "trigger_processes_terminal_reason_presence_check",
       );
     expect(generationExpectation).toBeDefined();
+    expect(transitionVersionExpectation).toBeDefined();
     expect(reasonExpectation).toBeDefined();
     expect(presenceExpectation).toBeDefined();
     expect(terminalExpectation).toBeDefined();
     if (
       generationExpectation === undefined ||
+      transitionVersionExpectation === undefined ||
       reasonExpectation === undefined ||
       presenceExpectation === undefined ||
       terminalExpectation === undefined
@@ -1200,27 +1561,47 @@ $writer$`;
     expect(() =>
       verifyOwnerDatabaseCheckDefinitionV1(
         generationExpectation,
-        "CHECK ((slot_generation >= 0) AND (slot_generation <= 9007199254740991))",
+        "CHECK ((slot_generation >= 1) AND (slot_generation <= 9007199254740991))",
       ),
     ).not.toThrow();
     expect(() =>
       verifyOwnerDatabaseCheckDefinitionV1(
         generationExpectation,
-        "CHECK (slot_generation >= 0 AND slot_generation <= '9007199254740991'::bigint)",
+        "CHECK (slot_generation >= 1 AND slot_generation <= '9007199254740991'::bigint)",
       ),
     ).not.toThrow();
     expect(() =>
       verifyOwnerDatabaseCheckDefinitionV1(
         generationExpectation,
-        "CHECK (((slot_generation >= 0) AND (slot_generation <= 9007199254740991)) OR true)",
+        "CHECK (((slot_generation >= 1) AND (slot_generation <= 9007199254740991)) OR true)",
       ),
     ).toThrow(/CHECK constraint drift/u);
     expect(() =>
       verifyOwnerDatabaseCheckDefinitionV1(
         generationExpectation,
-        "CHECK ((slot_generation >= 0) AND (slot_generation <= 9223372036854775807))",
+        "CHECK ((slot_generation >= 1) AND (slot_generation <= 9223372036854775807))",
       ),
     ).toThrow(/CHECK constraint drift/u);
+
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        transitionVersionExpectation,
+        "CHECK (resulting_state_version = previous_state_version + 1)",
+      ),
+    ).not.toThrow();
+    for (const weakened of [
+      "CHECK (resulting_state_version >= previous_state_version + 1)",
+      "CHECK (resulting_state_version = previous_state_version)",
+      "CHECK ((resulting_state_version = previous_state_version + 1) OR true)",
+      "CHECK (resulting_state_version = unrelated_version + 1)",
+    ]) {
+      expect(() =>
+        verifyOwnerDatabaseCheckDefinitionV1(
+          transitionVersionExpectation,
+          weakened,
+        ),
+      ).toThrow(/CHECK constraint drift/u);
+    }
 
     expect(() =>
       verifyOwnerDatabaseCheckDefinitionV1(
@@ -1273,29 +1654,259 @@ $writer$`;
     ).toThrow(/CHECK constraint drift/u);
   });
 
-  it("requires Meta's nested envelope projection to contain exactly the five controlled fields", () => {
-    const expectation = META_COGNITION_REPOSITORY_CONTRACT_V1.database_checks
-      .find(
+  it("proves bounded non-null text arrays and permission-summary branch closure", () => {
+    const capabilityRefsExpectation = {
+      constraint_name:
+        "skill_permission_summary_entries_capability_refs_check",
+      table_name: "skill_permission_summary_entries",
+      required_definition_fragments: [
+        "cardinality",
+        "capability_refs",
+        "1024",
+        "array_position",
+      ],
+      semantic_constraint: {
+        kind: "text_array_bounded_no_null" as const,
+        column_name: "capability_refs",
+        max_items: 1024,
+      },
+    };
+    const branchExpectation = {
+      constraint_name: "skill_permission_summary_entries_branch_check",
+      table_name: "skill_permission_summary_entries",
+      required_definition_fragments: [
+        "decision_source",
+        "revision",
+        "default_deny",
+        "permission_revision_id",
+        "revision_no",
+        "scope_hash",
+        "owner_agent_condition",
+        "cardinality",
+      ],
+      semantic_constraint: {
+        kind: "permission_summary_entry_branch" as const,
+        column_name: "decision_source",
+        revision_value: "revision",
+        default_deny_value: "default_deny",
+        decision_column_name: "decision",
+        deny_value: "deny",
+        revision_required_columns: [
+          "permission_revision_id",
+          "revision_no",
+          "scope_hash",
+        ],
+        default_null_columns: [
+          "permission_revision_id",
+          "revision_no",
+          "scope_hash",
+          "owner_agent_condition",
+        ],
+        default_empty_array_column_name: "capability_refs",
+      },
+    };
+    const validCapabilityRefs =
+      "CHECK ((cardinality(capability_refs) <= 1024) AND (array_position(capability_refs, NULL::text) IS NULL))";
+    const validBranch = `CHECK (((decision_source = 'revision'::text) AND (permission_revision_id IS NOT NULL) AND (revision_no IS NOT NULL) AND (scope_hash IS NOT NULL)) OR ((decision_source = 'default_deny'::text) AND (decision = 'deny'::text) AND (permission_revision_id IS NULL) AND (revision_no IS NULL) AND (scope_hash IS NULL) AND (owner_agent_condition IS NULL) AND (cardinality(capability_refs) = 0)))`;
+
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(
+        capabilityRefsExpectation,
+        validCapabilityRefs,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(branchExpectation, validBranch),
+    ).not.toThrow();
+
+    for (const weakened of [
+      validCapabilityRefs.replace("<= 1024", "<= 2048"),
+      validCapabilityRefs.replace(
+        "(array_position(capability_refs, NULL::text) IS NULL)",
+        "true",
+      ),
+      `CHECK ((${validCapabilityRefs.slice(7, -1)}) OR true)`,
+    ]) {
+      expect(() =>
+        verifyOwnerDatabaseCheckDefinitionV1(
+          capabilityRefsExpectation,
+          weakened,
+        ),
+      ).toThrow(/CHECK constraint drift/u);
+    }
+    for (const weakened of [
+      validBranch.replace(" AND (scope_hash IS NOT NULL)", ""),
+      validBranch.replace("(decision = 'deny'::text)", "(decision = 'grant'::text)"),
+      validBranch.replace(
+        " AND (cardinality(capability_refs) = 0)",
+        "",
+      ),
+      `CHECK ((${validBranch.slice(7, -1)}) OR true)`,
+    ]) {
+      expect(() =>
+        verifyOwnerDatabaseCheckDefinitionV1(branchExpectation, weakened),
+      ).toThrow(/CHECK constraint drift/u);
+    }
+  });
+
+  it("proves nullable Action Runtime generations are either NULL or JavaScript-safe", () => {
+    const expectation =
+      ACTION_RUNTIME_REPOSITORY_CONTRACT_V1.database_checks?.find(
         ({ constraint_name }) =>
-          constraint_name === "meta_event_outbox_payload_check",
+          constraint_name ===
+          "runtime_control_signals_target_lease_safe_check",
       );
     expect(expectation).toBeDefined();
     if (expectation === undefined) return;
-    const definition = `CHECK (((jsonb_object_length(payload) = 5) AND (payload ?& ARRAY['schema_version'::text, 'producer'::text, 'occurred_at'::text, 'trace_id'::text, 'payload'::text]) AND ((payload ->> 'producer'::text) = 'meta_cognition'::text)))`;
+
+    for (const valid of [
+      "CHECK ((target_lease_generation IS NULL) OR ((target_lease_generation >= 1) AND (target_lease_generation <= 9007199254740991)))",
+      "CHECK (target_lease_generation IS NULL OR (target_lease_generation >= '1'::bigint AND target_lease_generation <= '9007199254740991'::bigint))",
+    ]) {
+      expect(() =>
+        verifyOwnerDatabaseCheckDefinitionV1(expectation, valid),
+      ).not.toThrow();
+    }
+    for (const weakened of [
+      "CHECK (target_lease_generation IS NULL OR target_lease_generation >= 1)",
+      "CHECK (target_lease_generation IS NULL OR (target_lease_generation >= 1 AND target_lease_generation <= 9223372036854775807))",
+      "CHECK ((target_lease_generation IS NULL OR (target_lease_generation >= 1 AND target_lease_generation <= 9007199254740991)) OR true)",
+    ]) {
+      expect(() =>
+        verifyOwnerDatabaseCheckDefinitionV1(expectation, weakened),
+      ).toThrow(/CHECK constraint drift/u);
+    }
+  });
+
+  it("proves nullable versioned identities are complete and JavaScript-safe", () => {
+    const expectation =
+      TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks?.find(
+        ({ constraint_name }) =>
+          constraint_name ===
+          "trigger_processes_context_identity_complete_check",
+      );
+    expect(expectation).toBeDefined();
+    if (expectation === undefined) return;
+
+    const valid =
+      "CHECK (((context_snapshot_ref IS NULL) AND (context_snapshot_version IS NULL) AND (context_snapshot_hash IS NULL)) OR ((context_snapshot_ref IS NOT NULL) AND (context_snapshot_version >= 1) AND (context_snapshot_version <= 9007199254740991) AND (context_snapshot_hash IS NOT NULL) AND (length(context_snapshot_hash) > 0)))";
+    expect(() =>
+      verifyOwnerDatabaseCheckDefinitionV1(expectation, valid),
+    ).not.toThrow();
+
+    for (const weakened of [
+      valid.replace(
+        "(context_snapshot_hash IS NULL)",
+        "(context_snapshot_hash IS NOT NULL)",
+      ),
+      valid.replace(
+        "context_snapshot_version <= 9007199254740991",
+        "context_snapshot_version <= 9223372036854775807",
+      ),
+      valid.replace(
+        "(length(context_snapshot_hash) > 0)",
+        "true",
+      ),
+      `CHECK ((${valid.slice(7, -1)}) OR true)`,
+    ]) {
+      expect(() =>
+        verifyOwnerDatabaseCheckDefinitionV1(expectation, weakened),
+      ).toThrow(/CHECK constraint drift/u);
+    }
 
     expect(() =>
-      verifyOwnerDatabaseCheckDefinitionV1(expectation, definition),
-    ).not.toThrow();
+      defineOwnerRepositoryContractV1({
+        ...TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        database_checks:
+          TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks?.map(
+            (check) =>
+              check.constraint_name ===
+                "trigger_processes_context_identity_complete_check" &&
+              check.semantic_constraint?.kind ===
+                "nullable_versioned_identity"
+                ? {
+                    ...check,
+                    semantic_constraint: {
+                      ...check.semantic_constraint,
+                      hash_column_name: "caller_claimed_hash",
+                    },
+                  }
+                : check,
+          ),
+      } as never),
+    ).toThrow(/invalid owner database check/u);
+  });
+
+  it("proves every field in a combined JSON-safe integer CHECK", () => {
+    const expectation =
+      TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks?.find(
+        ({ constraint_name }) =>
+          constraint_name ===
+          "trigger_process_snapshots_json_safe_integer_check",
+      );
+    expect(expectation).toBeDefined();
+    if (expectation === undefined) return;
+
+    const valid =
+      "CHECK (((snapshot_version >= 1) AND (snapshot_version <= 9007199254740991) AND (first_append_sequence_no >= 0) AND (first_append_sequence_no <= 9007199254740991) AND (last_append_sequence_no >= 0) AND (last_append_sequence_no <= 9007199254740991) AND ((personality_version IS NULL) OR ((personality_version >= 1) AND (personality_version <= 9007199254740991)))))";
+    const postgresDeparsed =
+      "CHECK (snapshot_version >= 1 AND snapshot_version <= '9007199254740991'::bigint AND first_append_sequence_no >= 0 AND first_append_sequence_no <= '9007199254740991'::bigint AND last_append_sequence_no >= 0 AND last_append_sequence_no <= '9007199254740991'::bigint AND (personality_version IS NULL OR personality_version >= 1 AND personality_version <= '9007199254740991'::bigint))";
+    for (const definition of [valid, postgresDeparsed]) {
+      expect(() =>
+        verifyOwnerDatabaseCheckDefinitionV1(expectation, definition),
+      ).not.toThrow();
+    }
+
+    for (const weakened of [
+      valid.replace(
+        "personality_version <= 9007199254740991",
+        "personality_version <= 9223372036854775807",
+      ),
+      valid.replace(
+        "last_append_sequence_no <= 9007199254740991",
+        "last_append_sequence_no >= 0",
+      ),
+      valid.replace(
+        "snapshot_version <= 9007199254740991",
+        "snapshot_version <= 9007199254740991) OR true OR (snapshot_version <= 9007199254740991",
+      ),
+    ]) {
+      expect(() =>
+        verifyOwnerDatabaseCheckDefinitionV1(expectation, weakened),
+      ).toThrow(/CHECK constraint drift/u);
+    }
+  });
+
+  it("requires Meta's complete owner-event envelope to contain exactly the eight controlled fields", () => {
+    const expectation = META_COGNITION_REPOSITORY_CONTRACT_V1.database_checks
+      .find(
+        ({ constraint_name }) =>
+          constraint_name === "meta_event_outbox_check",
+      );
+    expect(expectation).toBeDefined();
+    if (expectation === undefined) return;
+    const keys = "'event_id'::text, 'event_type'::text, 'schema_version'::text, 'producer'::text, 'occurred_at'::text, 'idempotency_key'::text, 'trace_id'::text, 'payload'::text";
+    const bindings = "(payload ->> 'producer'::text) = 'meta_cognition'::text AND (payload ->> 'event_id'::text) = id AND (payload ->> 'event_type'::text) = event_type AND (payload ->> 'idempotency_key'::text) = idempotency_key";
+    const definition = `CHECK (jsonb_typeof(payload) = 'object'::text AND jsonb_object_length(payload) = 8 AND payload ?& ARRAY[${keys}] AND ${bindings})`;
+
+    for (const valid of [
+      definition,
+      `CHECK (jsonb_typeof(payload) = 'object'::text AND payload ?& ARRAY[${keys}] AND (payload - ARRAY[${keys}]) = '{}'::jsonb AND ${bindings})`,
+    ]) {
+      expect(() =>
+        verifyOwnerDatabaseCheckDefinitionV1(expectation, valid),
+      ).not.toThrow();
+    }
     expect(() =>
       verifyOwnerDatabaseCheckDefinitionV1(
         expectation,
-        definition.replace("jsonb_object_length(payload) = 5", "true"),
+        definition.replace("jsonb_object_length(payload) = 8", "true"),
       ),
     ).toThrow(/CHECK constraint drift/u);
     expect(() =>
       verifyOwnerDatabaseCheckDefinitionV1(
         expectation,
-        definition.replace("'trace_id'::text", "'extra'::text"),
+        definition.replace("(payload ->> 'event_id'::text) = id", "true"),
       ),
     ).toThrow(/CHECK constraint drift/u);
   });
@@ -1304,7 +1915,7 @@ $writer$`;
     const expectation = TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks
       .find(
         ({ constraint_name }) =>
-          constraint_name === "trigger_event_outbox_domain_event_v1_check",
+          constraint_name === "trigger_event_outbox_generated_contract_check",
       );
     expect(expectation).toBeDefined();
     if (expectation === undefined) return;
@@ -1366,10 +1977,14 @@ $writer$`;
         expect.objectContaining({
           constraint_name: "trigger_processes_meta_enqueue_reason_check",
           table_name: "trigger_processes",
-          required_definition_fragments: expect.arrayContaining([
-            "user_retracted",
-            "system_interrupted",
-          ]),
+          semantic_constraint: expect.objectContaining({
+            kind: "nullable_text_enum",
+            column_name: "meta_enqueue_reason",
+            allowed_values: expect.arrayContaining([
+              "user_retracted",
+              "system_interrupted",
+            ]),
+          }),
         }),
         expect.objectContaining({
           constraint_name: "trigger_processes_meta_enqueue_presence_check",
@@ -1379,9 +1994,12 @@ $writer$`;
     );
   });
 
-  it("models trigger admission as one slot-fenced state/audit/outbox transaction", () => {
+  it("models trigger admission as one slot-aware state/audit/outbox transaction", () => {
     const signature = TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.function_signatures
-      .find(({ function_name }) => function_name === "admit_trigger_v1");
+      .find(
+        ({ function_name }) =>
+          function_name === "create_trigger_admission_v1",
+      );
     expect(signature?.arguments.map(({ argument_name }) => argument_name)).toEqual(
       expect.arrayContaining([
         "p_dedupe_key",
@@ -1403,12 +2021,13 @@ $writer$`;
         "p_admission_decision",
       ]),
     );
+    expect(signature?.reads_tables).toContain("bot_foreground_slots");
+    expect(signature?.writes_tables).not.toContain("bot_foreground_slots");
     expect(signature?.writes_tables).toEqual(
       expect.arrayContaining([
         "triggers",
         "trigger_processes",
         "trigger_process_transitions",
-        "bot_foreground_slots",
         "weak_trigger_queue_items",
         "trigger_submit_attempts",
         "trigger_event_outbox",
@@ -1457,6 +2076,7 @@ $writer$`;
     );
     expect(runWriter?.writes_tables).toEqual([
       "runtime_runs",
+      "runtime_run_leases",
       "runtime_events",
       "runtime_event_outbox",
     ]);
@@ -1467,12 +2087,27 @@ $writer$`;
       ACTION_RUNTIME_REPOSITORY_CONTRACT_V1.mutable_writers,
     ).toEqual(
       expect.arrayContaining([
-        "persist_runtime_policy_snapshot_v1",
-        "transition_tool_invocation_v1",
+        "create_runtime_start_attempt_v1",
+        "begin_runtime_start_reservation_validation_call_v1",
+        "append_runtime_start_reservation_validation_v1",
+        "transition_runtime_start_attempt_v1",
+        "cas_runtime_run_lease_v1",
+        "cas_tool_permission_profile_current_v1",
+        "append_runtime_event_v1",
+        "record_tool_invocation_v1",
         "transition_runtime_control_signal_v1",
-        "transition_runtime_artifact_v1",
+        "record_runtime_artifact_v1",
       ]),
     );
+    for (const legacyWriter of [
+      "persist_runtime_policy_snapshot_v1",
+      "transition_tool_invocation_v1",
+      "transition_runtime_artifact_v1",
+    ]) {
+      expect(
+        ACTION_RUNTIME_REPOSITORY_CONTRACT_V1.mutable_writers,
+      ).not.toContain(legacyWriter);
+    }
   });
 
   it("fails closed on schema or role drift", () => {
@@ -1494,7 +2129,10 @@ $writer$`;
     };
     await expect(
       verifyOwnerRepositoryDeploymentFromPostgresV1(
-        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        {
+          ...TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+          dlq_resolutions: undefined,
+        } as never,
         postgres,
         {
           expected_schema_owner: "pai_migrator",
@@ -1542,15 +2180,19 @@ $writer$`;
         contract.foreign_keys.every(
           (foreignKey) => {
             const sourceColumns = new Set(
-              contract.table_permissions.find(
-                ({ table_name }) => table_name === foreignKey.table_name,
-              )?.select_columns,
+              contract.database_columns
+                ?.filter(
+                  ({ table_name }) => table_name === foreignKey.table_name,
+                )
+                .map(({ column_name }) => column_name),
             );
             const referencedColumns = new Set(
-              contract.table_permissions.find(
-                ({ table_name }) =>
-                  table_name === foreignKey.referenced_table,
-              )?.select_columns,
+              contract.database_columns
+                ?.filter(
+                  ({ table_name }) =>
+                    table_name === foreignKey.referenced_table,
+                )
+                .map(({ column_name }) => column_name),
             );
             return (
               foreignKey.referenced_schema === contract.schema &&
@@ -1634,7 +2276,7 @@ $writer$`;
         signature,
         body("PERFORM pg_catalog.set_config('search_path', 'pg_temp', true);"),
       ),
-    ).toThrow(/search_path/u);
+    ).toThrow(/protected runtime GUC changes|search_path/u);
 
     expect(() =>
       lintOwnerWriterDefinitionV1(
@@ -1709,6 +2351,272 @@ $writer$`;
       expect(() =>
         verifyOwnerWriterDefinitionV1(contract, signature, definition(bypassBody)),
       ).toThrow(/trusted PostgreSQL writer artifact drift/u);
+    }
+  });
+
+  it("accepts only a static unconditional immutable-trigger RAISE body", () => {
+    const body = `BEGIN
+  RAISE EXCEPTION 'immutable owner fact' USING ERRCODE = '55000';
+END;`;
+    const artifact = ownerImmutableTriggerV1({
+      trigger_name: "owner_facts_immutable",
+      table_name: "owner_facts",
+      function_name: "reject_owner_fact_mutation_v1",
+      function_body: body,
+    });
+    expect(artifact).toMatchObject({
+      trigger_name: "owner_facts_immutable",
+      table_name: "owner_facts",
+      function_name: "reject_owner_fact_mutation_v1",
+      timing: "before",
+      events: ["update", "delete"],
+      orientation: "row",
+      enabled_mode: "origin",
+    });
+    expect(artifact.function_body_sha256).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    expect(Object.isFrozen(artifact)).toBe(true);
+    expect(Object.isFrozen(artifact.events)).toBe(true);
+
+    for (const unsafeBody of [
+      `BEGIN PERFORM 1; RAISE EXCEPTION 'immutable'; END;`,
+      `BEGIN IF true THEN RAISE EXCEPTION 'immutable'; END IF; END;`,
+      `BEGIN RAISE EXCEPTION p_message; END;`,
+      `BEGIN RAISE EXCEPTION 'immutable'; RETURN OLD; END;`,
+      `BEGIN RAISE EXCEPTION 'immutable'; EXCEPTION WHEN OTHERS THEN RETURN OLD; END;`,
+    ]) {
+      expect(() =>
+        ownerImmutableTriggerV1({
+          trigger_name: "owner_facts_immutable",
+          table_name: "owner_facts",
+          function_name: "reject_owner_fact_mutation_v1",
+          function_body: unsafeBody,
+        }),
+      ).toThrow(/exactly one unconditional static RAISE EXCEPTION/u);
+    }
+  });
+
+  it("requires the schema-prefixed transaction advisory lock before owner fact access", () => {
+    const signature = ownerFunctionSignatureV1({
+      schema: "action_runtime",
+      function_name: "advisory_start_control_fence_v1",
+      primary_table: "runtime_start_attempts",
+      writer_kind: "state_transition",
+      arguments: [["p_runtime_run_id", "text"]],
+      reads_tables: [
+        "runtime_start_attempts",
+        "runtime_control_tombstones",
+      ],
+      writes_tables: ["runtime_start_attempts"],
+      effects: [
+        {
+          table_name: "runtime_start_attempts",
+          operation: "append",
+          concurrency_control: "advisory_identity_lock",
+        },
+      ],
+      returns: "jsonb",
+    });
+    const lock =
+      "PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('action_runtime:' || p_runtime_run_id, 0));";
+    const insert =
+      "INSERT INTO action_runtime.runtime_start_attempts(id) VALUES (p_runtime_run_id);";
+    const definition = (body: string) => `
+      CREATE FUNCTION action_runtime.advisory_start_control_fence_v1(
+        p_runtime_run_id text
+      ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+      SET search_path = action_runtime, pg_temp AS $body$
+      BEGIN
+        ${body}
+        RETURN '{}'::jsonb;
+      END
+      $body$`;
+
+    expect(() =>
+      lintOwnerWriterDefinitionV1(
+        ACTION_RUNTIME_REPOSITORY_CONTRACT_V1,
+        signature,
+        definition(`${lock}\n${insert}`),
+      ),
+    ).not.toThrow();
+
+    for (const weakened of [
+      insert,
+      `${insert}\n${lock}`,
+      `${lock.replace("action_runtime:", "other_domain:")}\n${insert}`,
+      `${lock.replace("pg_advisory_xact_lock", "pg_advisory_lock")}\n${insert}`,
+      `${lock.replace("pg_catalog.pg_advisory_xact_lock", "pg_advisory_xact_lock")}\n${insert}`,
+      `${lock.replace("pg_catalog.hashtextextended", "hashtextextended")}\n${insert}`,
+      `${lock.replace("pg_catalog.pg_advisory_xact_lock", "action_runtime.pg_advisory_xact_lock")}\n${insert}`,
+      `${lock.replace("pg_catalog.hashtextextended", "action_runtime.hashtextextended")}\n${insert}`,
+      `IF p_runtime_run_id <> '' THEN ${lock} END IF;\n${insert}`,
+      `BEGIN ${lock} RAISE EXCEPTION 'rollback lock'; EXCEPTION WHEN OTHERS THEN NULL; END;\n${insert}`,
+      `PERFORM 1 FROM action_runtime.runtime_control_tombstones WHERE runtime_run_id = p_runtime_run_id;\n${lock}\n${insert}`,
+      `PERFORM action_runtime.some_owner_helper(p_runtime_run_id);\n${lock}\n${insert}`,
+    ]) {
+      expect(() =>
+        lintOwnerWriterDefinitionV1(
+          ACTION_RUNTIME_REPOSITORY_CONTRACT_V1,
+          signature,
+          definition(weakened),
+        ),
+      ).toThrow(/advisory identity lock drift/u);
+    }
+  });
+
+  it("pins ordered process and exact-attempt advisory locks before Runtime Start facts", () => {
+    const signature = ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "runtime_start_lock_probe_v1",
+      primary_table: "runtime_start_reservations",
+      writer_kind: "state_transition",
+      arguments: [
+        ["p_process_id", "text"],
+        ["p_start_attempt_no", "bigint"],
+      ],
+      reads_tables: ["runtime_start_reservations"],
+      writes_tables: ["runtime_start_reservations"],
+      effects: [
+        {
+          table_name: "runtime_start_reservations",
+          operation: "transition",
+          concurrency_control: "advisory_identity_lock",
+          advisory_lock: {
+            key_prefix:
+              "trigger_processor:runtime_start_reservation_process:",
+            identity_arguments: ["p_process_id"],
+            separator: ":",
+            order: 1,
+          },
+        },
+        {
+          table_name: "runtime_start_reservations",
+          operation: "transition",
+          concurrency_control: "advisory_identity_lock",
+          advisory_lock: {
+            key_prefix: "trigger_processor:runtime_start_reservation:",
+            identity_arguments: [
+              "p_process_id",
+              "p_start_attempt_no",
+            ],
+            separator: ":",
+            order: 2,
+          },
+        },
+      ],
+      returns: "jsonb",
+    });
+    const coarse = `PERFORM pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended(
+        'trigger_processor:runtime_start_reservation_process:'::pg_catalog.text
+          || p_process_id::pg_catalog.text,
+        0));`;
+    const exact = `PERFORM pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended(
+        'trigger_processor:runtime_start_reservation:'::pg_catalog.text
+          || p_process_id::pg_catalog.text
+          || ':'::pg_catalog.text
+          || p_start_attempt_no::pg_catalog.text,
+        0));`;
+    const mutation = `UPDATE trigger_processor.runtime_start_reservations
+      SET status = 'dispatching'
+      WHERE trigger_process_id = p_process_id
+        AND start_attempt_no = p_start_attempt_no;`;
+    const definition = (statements: string) => `
+      CREATE FUNCTION trigger_processor.runtime_start_lock_probe_v1(
+        p_process_id text,
+        p_start_attempt_no bigint
+      ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+      SET search_path = trigger_processor, pg_temp AS $body$
+      BEGIN
+        ${statements}
+        RETURN '{}'::jsonb;
+      END;
+      $body$`;
+
+    expect(() =>
+      lintOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        signature,
+        definition(`${coarse}\n${exact}\n${mutation}`),
+      ),
+    ).not.toThrow();
+    for (const weakened of [
+      `${exact}\n${coarse}\n${mutation}`,
+      `${coarse}\n${mutation}`,
+      `${coarse}\n${mutation}\n${exact}`,
+      `${coarse}\n${exact.replace(
+        "runtime_start_reservation:",
+        "runtime_start_other:",
+      )}\n${mutation}`,
+    ]) {
+      expect(() =>
+        lintOwnerWriterDefinitionV1(
+          TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+          signature,
+          definition(weakened),
+        ),
+      ).toThrow(/advisory identity lock drift/u);
+    }
+  });
+
+  it("locks the declared authority row before mutating a different effect table", () => {
+    const signature = ownerFunctionSignatureV1({
+      schema: "action_runtime",
+      function_name: "append_event_from_locked_run_v1",
+      primary_table: "runtime_events",
+      writer_kind: "state_transition",
+      arguments: [["p_runtime_run_id", "text"]],
+      reads_tables: ["runtime_runs"],
+      writes_tables: ["runtime_events"],
+      effects: [
+        {
+          table_name: "runtime_events",
+          operation: "append",
+          concurrency_control: "database_row_lock",
+          lock_table_name: "runtime_runs",
+        },
+      ],
+      returns: "jsonb",
+    });
+    const lock = `SELECT id INTO v_run_id
+        FROM action_runtime.runtime_runs
+       WHERE id = p_runtime_run_id
+       FOR UPDATE;`;
+    const insert = `INSERT INTO action_runtime.runtime_events(
+        id, runtime_run_id
+      ) VALUES ('event-id', p_runtime_run_id);`;
+    const definition = (body: string) => `
+      CREATE FUNCTION action_runtime.append_event_from_locked_run_v1(
+        p_runtime_run_id text
+      ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+      SET search_path = action_runtime, pg_temp AS $body$
+      DECLARE
+        v_run_id text;
+      BEGIN
+        ${body}
+        RETURN '{}'::jsonb;
+      END
+      $body$`;
+
+    expect(() =>
+      lintOwnerWriterDefinitionV1(
+        ACTION_RUNTIME_REPOSITORY_CONTRACT_V1,
+        signature,
+        definition(`${lock}\n${insert}`),
+      ),
+    ).not.toThrow();
+    for (const weakened of [
+      `${insert}\n${lock}`,
+      `${lock.replace("runtime_runs", "runtime_events")}\n${insert}`,
+      insert,
+    ]) {
+      expect(() =>
+        lintOwnerWriterDefinitionV1(
+          ACTION_RUNTIME_REPOSITORY_CONTRACT_V1,
+          signature,
+          definition(weakened),
+        ),
+      ).toThrow(/row-lock drift|undeclared PostgreSQL read/u);
     }
   });
 
@@ -2012,21 +2920,285 @@ $writer$`;
         `),
       ),
     ).toThrow(/unreachable relational proof|slot\/process fence drift/);
+
+    const callerFencedSignature = ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "test_caller_fenced_admission_v1",
+      primary_table: "weak_trigger_queue_items",
+      writer_kind: "state_transition",
+      arguments: [
+        ["p_scope", "jsonb"],
+        ["p_admission_precondition", "jsonb"],
+      ],
+      reads_tables: ["bot_foreground_slots", "trigger_processes"],
+      writes_tables: ["weak_trigger_queue_items"],
+      effects: [
+        {
+          table_name: "weak_trigger_queue_items",
+          operation: "enqueue",
+          concurrency_control: "slot_and_process_state_fence",
+        },
+      ],
+      returns: "jsonb",
+    });
+    const callerFencedBody = (stateVersionField: string) => `
+      CREATE FUNCTION trigger_processor.test_caller_fenced_admission_v1(
+        p_scope jsonb,
+        p_admission_precondition jsonb
+      ) RETURNS jsonb LANGUAGE plpgsql AS $body$
+      BEGIN
+        PERFORM 1
+          FROM trigger_processor.bot_foreground_slots slot
+          JOIN trigger_processor.trigger_processes process
+            ON process.id = slot.process_id
+         WHERE slot.bot_id = p_scope->>'bot_id'
+           AND p_admission_precondition->>'process_id' = process.id
+           AND p_admission_precondition->>'slot_generation' = slot.generation::text
+           AND p_admission_precondition->>'phase' = process.phase
+           AND p_admission_precondition->>'status' = process.status
+           AND p_admission_precondition->>'${stateVersionField}' = process.state_version::text
+         FOR UPDATE;
+        IF NOT FOUND THEN
+          RAISE EXCEPTION 'slot/process fence not found';
+        END IF;
+        INSERT INTO trigger_processor.weak_trigger_queue_items(id) VALUES ('id');
+        RETURN '{}'::jsonb;
+      END $body$`;
+    expect(() =>
+      lintOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        callerFencedSignature,
+        callerFencedBody("process_state_version"),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      lintOwnerWriterDefinitionV1(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        callerFencedSignature,
+        callerFencedBody("process_updated_at"),
+      ),
+    ).toThrow(/slot\/process fence drift/);
+  });
+
+  it("requires candidate application baseline Catalog comparison under a locked current row", () => {
+    const signature = ownerFunctionSignatureV1({
+      schema: "skill_registry",
+      function_name: "test_apply_candidate_v1",
+      primary_table: "skill_candidate_applications",
+      writer_kind: "state_transition",
+      arguments: [
+        ["p_application_id", "text"],
+        ["p_workspace_id", "text"],
+        ["p_bot_id", "text"],
+        ["p_deployment_environment", "text"],
+        ["p_release_channel", "text"],
+        ["p_baseline_catalog_version", "text"],
+        ["p_idempotency_key", "text"],
+      ],
+      reads_tables: [
+        "skill_candidate_applications",
+        "skill_catalog_current",
+        "skill_catalog_revisions",
+      ],
+      writes_tables: ["skill_candidate_applications"],
+      effects: [
+        {
+          table_name: "skill_candidate_applications",
+          operation: "append",
+          concurrency_control: "idempotency_key",
+        },
+        {
+          table_name: "skill_candidate_applications",
+          operation: "append",
+          concurrency_control: "catalog_baseline_fence",
+        },
+      ],
+      returns: "jsonb",
+    });
+    const lockedCatalogRead = `
+        SELECT cr.catalog_version
+          INTO v_current_catalog_version
+          FROM skill_registry.skill_catalog_current cc
+          JOIN skill_registry.skill_catalog_revisions cr
+            ON cc.catalog_revision_id = cr.id
+         WHERE cc.workspace_id = p_workspace_id
+           AND cc.bot_id = p_bot_id
+           AND cc.deployment_environment = p_deployment_environment
+           AND cc.release_channel = p_release_channel
+         FOR UPDATE OF cc;
+        IF v_current_catalog_version IS DISTINCT FROM p_baseline_catalog_version THEN
+          RAISE EXCEPTION 'catalog baseline conflict';
+        END IF;`;
+    const body = (proof: string) => `
+      CREATE FUNCTION skill_registry.test_apply_candidate_v1(
+        p_application_id text,
+        p_workspace_id text,
+        p_bot_id text,
+        p_deployment_environment text,
+        p_release_channel text,
+        p_baseline_catalog_version text,
+        p_idempotency_key text
+      ) RETURNS jsonb LANGUAGE plpgsql AS $body$
+      DECLARE
+        v_current_catalog_version text;
+      BEGIN
+        ${proof}
+        INSERT INTO skill_registry.skill_candidate_applications(
+          id,
+          idempotency_key
+        ) VALUES (
+          p_application_id,
+          p_idempotency_key
+        );
+        RETURN '{}'::jsonb;
+      END $body$`;
+
+    expect(() =>
+      lintOwnerWriterDefinitionV1(
+        SKILL_REGISTRY_REPOSITORY_CONTRACT_V1,
+        signature,
+        body(lockedCatalogRead),
+      ),
+    ).not.toThrow();
+    for (const invalidProof of [
+      lockedCatalogRead.replace("FOR UPDATE OF cc", ""),
+      lockedCatalogRead.replace(
+        "cc.release_channel = p_release_channel",
+        "cc.release_channel = 'stable'",
+      ),
+      lockedCatalogRead.replace(
+        "cc.catalog_revision_id = cr.id",
+        "cc.catalog_revision_id = cc.catalog_revision_id",
+      ),
+      lockedCatalogRead.replace(
+        "v_current_catalog_version IS DISTINCT FROM p_baseline_catalog_version",
+        "v_current_catalog_version IS NOT NULL",
+      ),
+    ]) {
+      expect(() =>
+        lintOwnerWriterDefinitionV1(
+          SKILL_REGISTRY_REPOSITORY_CONTRACT_V1,
+          signature,
+          body(invalidProof),
+        ),
+      ).toThrow(/catalog baseline fence drift/u);
+    }
+    expect(() =>
+      lintOwnerWriterDefinitionV1(
+        SKILL_REGISTRY_REPOSITORY_CONTRACT_V1,
+        signature,
+        body(
+          `${lockedCatalogRead.replace(
+            /IF v_current_catalog_version[\s\S]*?END IF;/u,
+            "",
+          )}
+           INSERT INTO skill_registry.skill_candidate_applications(
+             id,
+             idempotency_key
+           ) VALUES (p_application_id, p_idempotency_key);
+           IF v_current_catalog_version IS DISTINCT FROM p_baseline_catalog_version THEN
+             RAISE EXCEPTION 'catalog baseline conflict';
+           END IF;`,
+        ),
+      ),
+    ).toThrow(/catalog baseline fence drift/u);
+  });
+
+  it("requires deployed Memory mutators to lock and reject exact active promotion targets before mutation", () => {
+    const signature = ownerFunctionSignatureV1({
+      schema: "memory",
+      function_name: "test_transition_memory_series_v1",
+      primary_table: "memory_series",
+      writer_kind: "state_transition",
+      arguments: [["p_series_id", "text"]],
+      reads_tables: [
+        "memory_series",
+        "memory_promotion_reservations",
+        "memory_promotion_reservation_targets",
+      ],
+      writes_tables: ["memory_series"],
+      effects: [
+        {
+          table_name: "memory_series",
+          operation: "transition",
+          concurrency_control: "promotion_reservation_fence",
+          promotion_reservation_targets: [
+            {
+              aggregate_type: "memory_series",
+              id_argument: "p_series_id",
+            },
+          ],
+        },
+      ],
+      returns: "jsonb",
+    });
+    const fence = `
+        PERFORM 1
+          FROM memory.memory_promotion_reservations pr
+          JOIN memory.memory_promotion_reservation_targets pt
+            ON pt.reservation_id = pr.id
+         WHERE pr.status = 'active'
+           AND pr.expires_at > clock_timestamp()
+           AND pt.aggregate_type = 'memory_series'
+           AND pt.aggregate_id = p_series_id
+         FOR UPDATE OF pr;
+        IF FOUND THEN
+          RAISE EXCEPTION 'promotion_reserved';
+        END IF;`;
+    const body = (proof: string) => `
+      CREATE FUNCTION memory.test_transition_memory_series_v1(
+        p_series_id text
+      ) RETURNS jsonb LANGUAGE plpgsql AS $body$
+      BEGIN
+        ${proof}
+        UPDATE memory.memory_series
+           SET updated_at = clock_timestamp()
+         WHERE id = p_series_id;
+        RETURN '{}'::jsonb;
+      END $body$`;
+
+    expect(() =>
+      lintOwnerWriterDefinitionV1(
+        MEMORY_REPOSITORY_CONTRACT_V1,
+        signature,
+        body(fence),
+      ),
+    ).not.toThrow();
+    for (const invalidProof of [
+      fence.replace("pr.status = 'active'", "pr.status = 'released'"),
+      fence.replace(
+        "pr.expires_at > clock_timestamp()",
+        "pr.expires_at IS NOT NULL",
+      ),
+      fence.replace(
+        "pt.aggregate_type = 'memory_series'",
+        "pt.aggregate_type = 'memory_point'",
+      ),
+      fence.replace(
+        "pt.aggregate_id = p_series_id",
+        "pt.aggregate_id IS NOT NULL",
+      ),
+      fence.replace("FOR UPDATE OF pr", ""),
+      fence.replace("RAISE EXCEPTION 'promotion_reserved';", "NULL;"),
+    ]) {
+      expect(() =>
+        lintOwnerWriterDefinitionV1(
+          MEMORY_REPOSITORY_CONTRACT_V1,
+          signature,
+          body(invalidProof),
+        ),
+      ).toThrow(/promotion reservation fence drift/u);
+    }
   });
 
   it("fails closed when FK columns drift outside declared table columns", () => {
-    const aliasPermissionIndex =
-      KNOWTHAT_REPOSITORY_CONTRACT_V1.table_permissions.findIndex(
-        ({ table_name }) => table_name === "semantic_key_aliases",
-      );
-    expect(aliasPermissionIndex).toBeGreaterThanOrEqual(0);
     expect(() =>
       defineOwnerRepositoryContractV1({
         ...KNOWTHAT_REPOSITORY_CONTRACT_V1,
         table_permissions:
           KNOWTHAT_REPOSITORY_CONTRACT_V1.table_permissions.map(
-            (permission, index) =>
-              index === aliasPermissionIndex
+            (permission) =>
+              permission.table_name === "semantic_key_aliases"
                 ? {
                     ...permission,
                     select_columns: permission.select_columns.filter(
@@ -2034,6 +3206,12 @@ $writer$`;
                     ),
                   }
                 : permission,
+          ),
+        database_columns:
+          KNOWTHAT_REPOSITORY_CONTRACT_V1.database_columns?.filter(
+            ({ table_name, column_name }) =>
+              table_name !== "semantic_key_aliases" ||
+              column_name !== "target_fact_id",
           ),
       } as never),
     ).toThrow(/invalid owner foreign key/);
@@ -2310,7 +3488,9 @@ $writer$`;
           ...TIMER_REPOSITORY_CONTRACT_V1.function_signatures.slice(1),
         ],
       } as never),
-    ).toThrow(/arguments must contain unique SQL identifiers/);
+    ).toThrow(
+      /arguments must contain unique SQL identifiers|must declare one canonical idempotent resolve writer/,
+    );
 
     expect(() =>
       defineOwnerRepositoryContractV1({
@@ -2348,6 +3528,202 @@ $writer$`;
           ),
       } as never),
     ).toThrow(/active eventing transport epoch/);
+  });
+
+  it("requires batched state-table claims to declare a bounded SKIP LOCKED contract", () => {
+    const claim =
+      ACTION_RUNTIME_REPOSITORY_CONTRACT_V1.function_signatures.find(
+        ({ function_name }) =>
+          function_name ===
+          "claim_runtime_artifact_reconciliation_v1",
+      );
+    expect(claim).toBeDefined();
+    expect(claim?.effects).toEqual([
+      {
+        table_name: "runtime_artifacts",
+        operation: "claim",
+        concurrency_control: "lease_fence",
+        claim_locking: "for_update_skip_locked",
+        claim_fence: {
+          identity_column: "id",
+          status_column: "status",
+          eligible_status: "creating",
+          worker_column: "reconciliation_owner",
+          lease_expires_at_column: "reconciliation_expires_at",
+          generation_column: "reconciliation_generation",
+          order_by_columns: [
+            "reconciliation_expires_at",
+            "created_at",
+            "id",
+          ],
+        },
+        claim_authority: {
+          owner_table_name: "runtime_runs",
+          owner_identity_column: "id",
+          claimed_owner_identity_column: "runtime_run_id",
+          originating_lease_generation_column:
+            "originating_lease_generation",
+          lease_table_name: "runtime_run_leases",
+          lease_owner_identity_column: "runtime_run_id",
+          lease_generation_column: "lease_generation",
+          lease_expires_at_column: "lease_expires_at",
+          lease_state_column: "recovery_state",
+          active_lease_state: "active",
+        },
+      },
+    ]);
+    expect(() =>
+      defineOwnerRepositoryContractV1({
+        ...ACTION_RUNTIME_REPOSITORY_CONTRACT_V1,
+        function_signatures:
+          ACTION_RUNTIME_REPOSITORY_CONTRACT_V1.function_signatures.map(
+            (signature) =>
+              signature.function_name ===
+              "claim_runtime_artifact_reconciliation_v1"
+                ? {
+                    ...signature,
+                    effects: signature.effects.map(
+                      ({
+                        claim_locking: _claimLocking,
+                        claim_fence: _claimFence,
+                        claim_authority: _claimAuthority,
+                        ...effect
+                      }) => effect,
+                    ),
+                  }
+                : signature,
+          ),
+      } as never),
+    ).toThrow(/semantic effect/u);
+
+    expect(() =>
+      defineOwnerRepositoryContractV1({
+        ...ACTION_RUNTIME_REPOSITORY_CONTRACT_V1,
+        function_signatures:
+          ACTION_RUNTIME_REPOSITORY_CONTRACT_V1.function_signatures.map(
+            (signature) =>
+              signature.function_name ===
+              "claim_runtime_artifact_reconciliation_v1"
+                ? {
+                    ...signature,
+                    effects: signature.effects.map((effect) => ({
+                      ...effect,
+                      claim_fence:
+                        effect.claim_fence === undefined
+                          ? undefined
+                          : {
+                              ...effect.claim_fence,
+                              generation_column: "created_at",
+                            },
+                    })),
+                  }
+                : signature,
+          ),
+      } as never),
+    ).toThrow(/semantic effect/u);
+  });
+
+  it("lints the exact batched artifact claim fence instead of accepting a table scan label", () => {
+    const claim =
+      ACTION_RUNTIME_REPOSITORY_CONTRACT_V1.function_signatures.find(
+        ({ function_name }) =>
+          function_name ===
+          "claim_runtime_artifact_reconciliation_v1",
+      );
+    expect(claim).toBeDefined();
+    if (claim === undefined) return;
+    const trustedBody = `
+      CREATE FUNCTION action_runtime.claim_runtime_artifact_reconciliation_v1(
+        p_worker_id text,
+        p_limit integer,
+        p_lease_seconds integer,
+        p_now timestamptz
+      ) RETURNS SETOF jsonb
+      LANGUAGE plpgsql
+      SECURITY DEFINER
+      SET search_path = action_runtime, pg_temp
+      AS $body$
+      BEGIN
+        RETURN QUERY
+          WITH claim_candidates AS (
+            SELECT artifact.id
+              FROM action_runtime.runtime_artifacts AS artifact
+              JOIN action_runtime.runtime_runs AS runtime_run
+                ON runtime_run.id = artifact.runtime_run_id
+             WHERE artifact.status = 'creating'
+               AND (
+                 artifact.reconciliation_expires_at IS NULL
+                 OR artifact.reconciliation_expires_at
+                      <= pg_catalog.clock_timestamp()
+               )
+               AND NOT EXISTS (
+                 SELECT 1
+                   FROM action_runtime.runtime_run_leases AS active_lease
+                  WHERE active_lease.runtime_run_id =
+                        artifact.runtime_run_id
+                    AND active_lease.lease_generation =
+                        artifact.originating_lease_generation
+                    AND active_lease.recovery_state = 'active'
+                    AND active_lease.lease_expires_at >
+                        pg_catalog.clock_timestamp()
+               )
+             ORDER BY
+               artifact.reconciliation_expires_at NULLS FIRST,
+               artifact.created_at,
+               artifact.id
+             FOR UPDATE SKIP LOCKED
+             LIMIT p_limit
+          )
+          UPDATE action_runtime.runtime_artifacts AS artifact
+             SET reconciliation_owner = p_worker_id,
+                 reconciliation_expires_at =
+                   pg_catalog.clock_timestamp()
+                   + pg_catalog.make_interval(secs => p_lease_seconds),
+                 reconciliation_generation =
+                   artifact.reconciliation_generation + 1
+            FROM claim_candidates
+           WHERE artifact.id = claim_candidates.id
+           RETURNING to_jsonb(artifact);
+      END
+      $body$`;
+
+    expect(() =>
+      lintOwnerWriterDefinitionV1(
+        ACTION_RUNTIME_REPOSITORY_CONTRACT_V1,
+        claim,
+        trustedBody,
+      ),
+    ).not.toThrow();
+    for (const driftedDefinition of [
+      trustedBody.replaceAll(
+        "pg_catalog.clock_timestamp()",
+        "p_now",
+      ),
+      trustedBody.replace(
+        "artifact.reconciliation_generation + 1",
+        "artifact.reconciliation_generation",
+      ),
+      trustedBody.replace(
+        "artifact.status = 'creating'",
+        "artifact.status = 'available'",
+      ),
+      trustedBody.replace(
+        "artifact.id = claim_candidates.id",
+        "artifact.id = artifact.id",
+      ),
+      trustedBody.replace(
+        "active_lease.recovery_state = 'active'",
+        "active_lease.recovery_state = 'takeover_pending'",
+      ),
+    ]) {
+      expect(() =>
+        lintOwnerWriterDefinitionV1(
+          ACTION_RUNTIME_REPOSITORY_CONTRACT_V1,
+          claim,
+          driftedDefinition,
+        ),
+      ).toThrow(/claim fence drift/u);
+    }
   });
 
 });

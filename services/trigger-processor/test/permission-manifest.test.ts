@@ -18,7 +18,7 @@ const signature = (
 ) => contract.function_signatures.find(({ function_name }) => function_name === name);
 
 describe("owner permission manifest lifecycle boundaries", () => {
-  it("does not claim DLQ resolution deployment before canonical fresh DDL exists", () => {
+  it("exposes only explicitly declared immutable DLQ resolution contracts", () => {
     for (const contract of [
       ACTION_RUNTIME_REPOSITORY_CONTRACT_V1,
       TIMER_REPOSITORY_CONTRACT_V1,
@@ -28,23 +28,40 @@ describe("owner permission manifest lifecycle boundaries", () => {
       MEMORY_REPOSITORY_CONTRACT_V1,
       TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
     ]) {
+      const ownerContract = contract as {
+        readonly tables: readonly string[];
+        readonly function_signatures: readonly {
+          readonly function_name: string;
+        }[];
+        readonly dlq_resolutions?: readonly {
+          readonly resolution_table: string;
+          readonly resolve_writer: string;
+        }[];
+      };
+      const declared = ownerContract.dlq_resolutions ?? [];
       expect(
-        contract.tables.filter((table) => table.endsWith("_dlq_resolutions")),
-      ).toEqual([]);
+        ownerContract.tables
+          .filter((table) => table.endsWith("_dlq_resolutions"))
+          .sort(),
+      ).toEqual(declared.map(({ resolution_table }) => resolution_table).sort());
       expect(
-        contract.function_signatures.filter(({ function_name }) =>
-          /^resolve_.*_dlq_v1$/u.test(function_name),
-        ),
-      ).toEqual([]);
+        ownerContract.function_signatures
+          .filter(({ function_name }) =>
+            /^resolve_.*_dlq_v1$/u.test(function_name),
+          )
+          .map(({ function_name }) => function_name)
+          .sort(),
+      ).toEqual(declared.map(({ resolve_writer }) => resolve_writer).sort());
     }
   });
 
   it("binds Trigger admission and progression to separate atomic writers", () => {
     const admit = signature(
       TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
-      "admit_trigger_v1",
+      "create_trigger_admission_v1",
     );
     expect(admit?.writes_tables).toContain("trigger_command_outbox");
+    expect(admit?.writes_tables).toContain("trigger_process_work_items");
     expect(admit?.writes_tables).not.toContain("trigger_confirmation_challenges");
     expect(admit?.writes_tables).not.toContain("trigger_event_inbox");
 
@@ -64,18 +81,18 @@ describe("owner permission manifest lifecycle boundaries", () => {
     for (const writer of [
       "advance_trigger_stage_v1",
       "schedule_trigger_stage_retry_v1",
-      "claim_trigger_stage_retry_v1",
       "create_trigger_confirmation_challenge_v1",
       "accept_trigger_confirmation_v1",
       "reject_trigger_confirmation_v1",
       "expire_trigger_confirmation_v1",
       "request_trigger_cancel_v1",
       "transition_trigger_cancel_request_v1",
-      "reserve_runtime_start_v1",
+      "create_runtime_start_reservation_v1",
       "record_runtime_started_v1",
+      "finalize_trigger_runtime_terminal_v1",
+      "apply_runtime_control_handled_v1",
       "record_runtime_start_uncertain_v1",
-      "request_runtime_start_recompose_v1",
-      "claim_runtime_recompose_v1",
+      "schedule_runtime_start_recompose_v1",
       "request_runtime_preempt_v1",
       "finalize_trigger_meta_projection_v1",
     ]) {
@@ -85,27 +102,26 @@ describe("owner permission manifest lifecycle boundaries", () => {
 
   it("cannot route coupled Trigger edges through an unrestricted process writer", () => {
     const coupledWriters = [
-      ["advance_trigger_stage_v1", "p_stage_progression_evidence"],
+      ["advance_trigger_stage_v1", "p_stage_result"],
       ["schedule_trigger_stage_retry_v1", "p_stage_retry_scheduled_evidence"],
-      ["claim_trigger_stage_retry_v1", "p_stage_retry_claimed_evidence"],
       [
         "create_trigger_confirmation_challenge_v1",
         "p_confirmation_challenge_created_evidence",
       ],
-      ["accept_trigger_confirmation_v1", "p_confirmation_accepted_evidence"],
-      ["reserve_runtime_start_v1", "p_runtime_start_reserved_evidence"],
-      ["record_runtime_started_v1", "p_runtime_started_evidence"],
+      ["create_runtime_start_reservation_v1", "p_reservation"],
+      ["record_runtime_started_v1", "p_source_event"],
+      ["finalize_trigger_runtime_terminal_v1", "p_source_event"],
+      ["apply_runtime_control_handled_v1", "p_source_event"],
       [
         "record_runtime_start_uncertain_v1",
         "p_runtime_start_uncertain_evidence",
       ],
       [
-        "request_runtime_start_recompose_v1",
+        "schedule_runtime_start_recompose_v1",
         "p_runtime_start_recompose_evidence",
       ],
-      ["claim_runtime_recompose_v1", "p_runtime_recompose_claimed_evidence"],
       ["request_runtime_preempt_v1", "p_runtime_control_requested_evidence"],
-      ["request_trigger_cancel_v1", "p_runtime_control_requested_evidence"],
+      ["request_trigger_cancel_v1", "p_cancel_request"],
       ["finalize_trigger_meta_projection_v1", "p_meta_finalization_evidence"],
     ] as const;
     for (const [writerName, evidenceArgument] of coupledWriters) {
@@ -113,14 +129,44 @@ describe("owner permission manifest lifecycle boundaries", () => {
       expect(writer?.arguments.map(({ argument_name }) => argument_name)).toContain(
         evidenceArgument,
       );
-      expect(writer?.effects).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ table_name: "trigger_processes" }),
-          expect.objectContaining({ table_name: "trigger_process_transitions" }),
-          expect.objectContaining({ table_name: "trigger_event_outbox" }),
-        ]),
-      );
+      const coupledTables = writer?.effects.map(({ table_name }) => table_name);
+      expect(coupledTables).toContain("trigger_processes");
+      if (writerName === "apply_runtime_control_handled_v1") {
+        expect(coupledTables).toEqual(
+          expect.arrayContaining([
+            "trigger_process_cancel_requests",
+            "trigger_process_event_projections",
+            "trigger_process_snapshots",
+          ]),
+        );
+      } else {
+        expect(coupledTables).toEqual(
+          expect.arrayContaining([
+            "trigger_process_transitions",
+            "trigger_event_outbox",
+          ]),
+        );
+      }
     }
+
+    const confirmationAccept = signature(
+      TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+      "accept_trigger_confirmation_v1",
+    );
+    expect(
+      confirmationAccept?.arguments.map(({ argument_name }) => argument_name),
+    ).toEqual([
+      "p_process_id",
+      "p_challenge_id",
+      "p_principal_type",
+      "p_principal_id",
+      "p_response",
+      "p_request_hash",
+      "p_trace_id",
+    ]);
+    expect(confirmationAccept?.writes_tables).not.toContain(
+      "trigger_command_outbox",
+    );
 
     expect(() =>
       assertTriggerProcessorLifecycleWriterSemanticsV1({
@@ -162,13 +208,37 @@ describe("owner permission manifest lifecycle boundaries", () => {
                     ...writer,
                     arguments: writer.arguments.filter(
                       ({ argument_name }) =>
-                        argument_name !== "p_runtime_started_evidence",
+                        argument_name !== "p_source_event",
                     ),
                   }
                 : writer,
           ),
       } as never),
     ).toThrow(/lifecycle (?:fence|edge)/u);
+
+    for (const missingArgument of [
+      "p_owner_event_read",
+      "p_expected_snapshot_retention_until",
+    ]) {
+      expect(() =>
+        assertTriggerProcessorLifecycleWriterSemanticsV1({
+          ...TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+          function_signatures:
+            TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.function_signatures.map(
+              (writer) =>
+                writer.function_name === "record_runtime_started_v1"
+                  ? {
+                      ...writer,
+                      arguments: writer.arguments.filter(
+                        ({ argument_name }) =>
+                          argument_name !== missingArgument,
+                      ),
+                    }
+                  : writer,
+            ),
+        } as never),
+      ).toThrow(/retention_arguments/u);
+    }
 
     expect(() =>
       assertTriggerProcessorLifecycleWriterSemanticsV1({
@@ -273,10 +343,172 @@ describe("owner permission manifest lifecycle boundaries", () => {
     ).toThrow(/lifecycle fence/u);
   });
 
+  it("pins Runtime Start writers to the validator's coarse-to-exact lock order", () => {
+    const reservationWriters =
+      TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.function_signatures.filter(
+        ({ writes_tables }) =>
+          writes_tables.includes("runtime_start_reservations"),
+      );
+    expect(
+      reservationWriters.map(({ function_name }) => function_name).sort(),
+    ).toEqual([
+      "claim_trigger_command_outbox_v1",
+      "create_runtime_start_reservation_v1",
+      "enter_trigger_cooldown_v1",
+      "finalize_trigger_runtime_terminal_v1",
+      "record_runtime_start_uncertain_v1",
+      "record_runtime_started_v1",
+      "schedule_runtime_start_recompose_v1",
+    ]);
+    const runtimeStartProcessLockWriters = [
+      "create_runtime_start_reservation_v1",
+      "request_trigger_cancel_v1",
+      "record_runtime_started_v1",
+      "record_runtime_start_uncertain_v1",
+      "schedule_runtime_start_recompose_v1",
+      "enter_trigger_cooldown_v1",
+      "finalize_trigger_runtime_terminal_v1",
+      "apply_runtime_control_handled_v1",
+      "append_trigger_snapshot_v1",
+    ] as const;
+    const create = signature(
+      TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+      "create_runtime_start_reservation_v1",
+    );
+    const cancel = signature(
+      TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+      "request_trigger_cancel_v1",
+    );
+    const commandClaim = signature(
+      TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+      "claim_trigger_command_outbox_v1",
+    );
+    expect(
+      create?.arguments.map(({ argument_name }) => argument_name),
+    ).toContain("p_start_attempt_no");
+    expect(
+      create?.effects
+        .filter(
+          ({ concurrency_control }) =>
+            concurrency_control === "advisory_identity_lock",
+        )
+        .map(({ advisory_lock }) => advisory_lock),
+    ).toEqual([
+      {
+        key_prefix:
+          "trigger_processor:runtime_start_reservation_process:",
+        identity_arguments: ["p_process_id"],
+        separator: ":",
+        order: 1,
+      },
+      {
+        key_prefix: "trigger_processor:runtime_start_reservation:",
+        identity_arguments: ["p_process_id", "p_start_attempt_no"],
+        separator: ":",
+        order: 2,
+      },
+      {
+        key_prefix: "trigger_processor:foreground_slot:",
+        identity_arguments: ["p_bot_id"],
+        separator: ":",
+        order: 3,
+      },
+    ]);
+    expect(
+      cancel?.effects
+        .filter(
+          ({ concurrency_control }) =>
+            concurrency_control === "advisory_identity_lock",
+        )
+        .map(({ advisory_lock }) => advisory_lock),
+    ).toEqual([
+      {
+        key_prefix:
+          "trigger_processor:runtime_start_reservation_process:",
+        identity_arguments: ["p_process_id"],
+        separator: ":",
+        order: 1,
+      },
+    ]);
+    expect(commandClaim?.reads_tables).toContain("runtime_start_reservations");
+    expect(commandClaim?.writes_tables).toContain("runtime_start_reservations");
+    expect(commandClaim?.effects).toContainEqual({
+      table_name: "runtime_start_reservations",
+      operation: "transition",
+      concurrency_control: "advisory_identity_lock",
+      advisory_lock: {
+        key_prefix:
+          "trigger_processor:runtime_start_reservation_process:",
+        identity_arguments: [],
+        identity_source: "claimed_outbox_aggregate_id",
+        separator: ":",
+        order: 1,
+      },
+    });
+    for (const writerName of runtimeStartProcessLockWriters) {
+      const writer = signature(
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        writerName,
+      );
+      expect(
+        writer?.effects
+          .filter(
+            ({ advisory_lock, concurrency_control }) =>
+              concurrency_control === "advisory_identity_lock" &&
+              advisory_lock?.key_prefix ===
+                "trigger_processor:runtime_start_reservation_process:",
+          )
+          .map(({ advisory_lock }) => advisory_lock),
+      ).toEqual([
+        {
+          key_prefix:
+            "trigger_processor:runtime_start_reservation_process:",
+          identity_arguments: ["p_process_id"],
+          separator: ":",
+          order: 1,
+        },
+      ]);
+    }
+
+    for (const writerName of runtimeStartProcessLockWriters) {
+      expect(() =>
+        assertTriggerProcessorLifecycleWriterSemanticsV1({
+          ...TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+          function_signatures:
+            TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.function_signatures.map(
+              (candidate) =>
+                candidate.function_name === writerName
+                  ? {
+                      ...candidate,
+                      effects: candidate.effects.map(
+                        (effect) =>
+                          effect.advisory_lock?.key_prefix ===
+                          "trigger_processor:runtime_start_reservation_process:"
+                            ? {
+                                ...effect,
+                                advisory_lock: {
+                                  ...effect.advisory_lock,
+                                  key_prefix:
+                                    "trigger_processor:runtime_start_reservation_other:",
+                                },
+                              }
+                            : effect,
+                      ),
+                    }
+                  : candidate,
+            ),
+        } as never),
+      ).toThrow(/coarse process lock/u);
+    }
+  });
+
   it("requires independent fenced writers for weak and strong queue progression", () => {
     const claim = signature(
       TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
       "claim_weak_trigger_queue_v1",
+    );
+    expect(claim?.arguments.map(({ argument_name }) => argument_name)).not.toContain(
+      "p_now",
     );
     expect(claim?.effects).toContainEqual({
       table_name: "weak_trigger_queue_items",
@@ -402,6 +634,60 @@ describe("owner permission manifest lifecycle boundaries", () => {
     });
   });
 
+  it("pins complete current ContextSnapshot identity tuples on the process and snapshot", () => {
+    for (const constraint_name of [
+      "trigger_processes_context_identity_complete_check",
+      "trigger_process_snapshots_context_identity_complete_check",
+    ]) {
+      const semanticConstraint =
+        TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks?.find(
+          (check) => check.constraint_name === constraint_name,
+        )?.semantic_constraint;
+      expect(semanticConstraint).toEqual({
+        kind: "nullable_versioned_identity",
+        column_name: "context_snapshot_ref",
+        version_column_name: "context_snapshot_version",
+        hash_column_name: "context_snapshot_hash",
+        min_version: 1,
+        max_version: Number.MAX_SAFE_INTEGER,
+      });
+    }
+    expect(
+      TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks?.find(
+        ({ constraint_name }) =>
+          constraint_name ===
+          "trigger_processes_context_retention_complete_check",
+      ),
+    ).toEqual(
+      expect.objectContaining({ table_name: "trigger_processes" }),
+    );
+  });
+
+  it("pins every snapshot JSON integer that crosses the JavaScript wire boundary", () => {
+    expect(
+      TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks?.map(
+        ({ constraint_name }) => constraint_name,
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        "trigger_process_snapshots_json_safe_integer_check",
+        "trigger_snapshot_overflow_refs_json_safe_integer_check",
+        "trigger_snapshot_pending_events_json_safe_integer_check",
+        "trigger_snapshot_append_audits_json_safe_integer_check",
+      ]),
+    );
+    expect(
+      TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks,
+    ).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          constraint_name:
+            "trigger_process_snapshots_snapshot_version_safe_check",
+        }),
+      ]),
+    );
+  });
+
   it("does not model mutable work records as append-only", () => {
     const cases = [
       [TIMER_REPOSITORY_CONTRACT_V1, "timer_command_requests"],
@@ -427,6 +713,38 @@ describe("owner permission manifest lifecycle boundaries", () => {
     ).toBe("projection_upsert");
   });
 
+  it("pins every recovery work kind and its payload schema at the database boundary", () => {
+    const workKind = TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks?.find(
+      ({ constraint_name }) =>
+        constraint_name === "trigger_process_work_items_work_kind_check",
+    );
+    expect(workKind?.semantic_constraint).toEqual({
+      kind: "text_enum",
+      column_name: "work_kind",
+      allowed_values: [
+        "stage_execute",
+        "stage_retry",
+        "runtime_start_recompose",
+        "snapshot_repair",
+        "meta_enqueue",
+      ],
+    });
+    expect(
+      TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.database_checks?.find(
+        ({ constraint_name }) =>
+          constraint_name === "trigger_process_work_items_payload_schema_check",
+      )?.required_definition_fragments,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("trigger_stage_execute_work.v1"),
+        expect.stringContaining("trigger_stage_retry_work.v1"),
+        expect.stringContaining("trigger_runtime_start_recompose_work.v1"),
+        expect.stringContaining("trigger_snapshot_repair_work.v1"),
+        expect.stringContaining("trigger_meta_enqueue_work.v1"),
+      ]),
+    );
+  });
+
   it("removes unrelated lifecycle tables from former mega writers", () => {
     expect(
       signature(META_COGNITION_REPOSITORY_CONTRACT_V1, "transition_meta_job_v1")
@@ -440,6 +758,7 @@ describe("owner permission manifest lifecycle boundaries", () => {
     ).toEqual([
       "skill_versions",
       "skill_security_state",
+      "skill_management_commands",
       "skill_audit_logs",
       "skill_event_outbox",
     ]);
@@ -482,6 +801,25 @@ describe("owner permission manifest lifecycle boundaries", () => {
           ),
       } as never),
     ).toThrow(/lifecycle (?:fence|edge)/u);
+
+    expect(() =>
+      assertTriggerProcessorLifecycleWriterSemanticsV1({
+        ...TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+        function_signatures:
+          TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1.function_signatures.map(
+            (writer) =>
+              writer.function_name === "claim_weak_trigger_queue_v1"
+                ? {
+                    ...writer,
+                    arguments: [
+                      ...writer.arguments,
+                      { argument_name: "p_now", data_type: "timestamptz" },
+                    ],
+                  }
+                : writer,
+          ),
+      } as never),
+    ).toThrow(/PostgreSQL clock_timestamp/u);
 
     expect(() =>
       assertTriggerProcessorLifecycleWriterSemanticsV1({

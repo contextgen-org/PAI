@@ -1,0 +1,1118 @@
+{
+  "$id": "urn:pai:memory:pre-promotion-check:v1",
+  "anyOf": [
+    {
+      "$id": "urn:pai:memory:pre-promotion-check-request:v1",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "bot_id",
+        "candidate_fact_id",
+        "memory_point_ids",
+        "idempotency_key",
+        "trace_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "memory.pre_promotion_check.v1",
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "candidate_fact_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "memory_point_ids": {
+          "minItems": 1,
+          "maxItems": 1000,
+          "uniqueItems": true,
+          "type": "array",
+          "items": {
+            "minLength": 1,
+            "maxUtf8Bytes": 256,
+            "type": "string"
+          }
+        },
+        "required_checks": {
+          "minItems": 1,
+          "maxItems": 7,
+          "uniqueItems": true,
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "const": "point_exists",
+                "type": "string"
+              },
+              {
+                "const": "state_allowed",
+                "type": "string"
+              },
+              {
+                "const": "no_unresolved_conflict",
+                "type": "string"
+              },
+              {
+                "const": "not_expired",
+                "type": "string"
+              },
+              {
+                "const": "provenance_integrity",
+                "type": "string"
+              },
+              {
+                "const": "independent_sources",
+                "type": "string"
+              },
+              {
+                "const": "user_confirmation",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxUtf8Bytes": 128,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "$id": "urn:pai:memory:pre-promotion-check-response:v1",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "check_id",
+        "check_generation",
+        "candidate_fact_id",
+        "overall_result",
+        "checked_at",
+        "expires_at",
+        "check_token",
+        "check_policy_version",
+        "required_checks",
+        "points",
+        "summary",
+        "duplicate_replayed"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "memory.pre_promotion_check.v1",
+          "type": "string"
+        },
+        "check_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "check_generation": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "candidate_fact_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "overall_result": {
+          "anyOf": [
+            {
+              "const": "passed",
+              "type": "string"
+            },
+            {
+              "const": "blocked",
+              "type": "string"
+            },
+            {
+              "const": "needs_review",
+              "type": "string"
+            }
+          ]
+        },
+        "checked_at": {
+          "format": "date-time",
+          "maxUtf8Bytes": 64,
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "maxUtf8Bytes": 64,
+          "type": "string"
+        },
+        "check_token": {
+          "minLength": 1,
+          "maxUtf8Bytes": 16384,
+          "type": "string"
+        },
+        "check_policy_version": {
+          "const": "memory.pre_promotion_policy.rev309",
+          "type": "string"
+        },
+        "required_checks": {
+          "minItems": 1,
+          "maxItems": 7,
+          "uniqueItems": true,
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "const": "point_exists",
+                "type": "string"
+              },
+              {
+                "const": "state_allowed",
+                "type": "string"
+              },
+              {
+                "const": "no_unresolved_conflict",
+                "type": "string"
+              },
+              {
+                "const": "not_expired",
+                "type": "string"
+              },
+              {
+                "const": "provenance_integrity",
+                "type": "string"
+              },
+              {
+                "const": "independent_sources",
+                "type": "string"
+              },
+              {
+                "const": "user_confirmation",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "points": {
+          "minItems": 1,
+          "maxItems": 1000,
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "memory_point_id",
+                  "exists",
+                  "state_version",
+                  "state_hash",
+                  "status",
+                  "evidence_valid_until",
+                  "unresolved_conflicts",
+                  "expired",
+                  "provenance_valid",
+                  "source_trigger_process_id",
+                  "confidence_score",
+                  "user_explicit_confirmation",
+                  "blocking_reasons"
+                ],
+                "properties": {
+                  "memory_point_id": {
+                    "minLength": 1,
+                    "maxUtf8Bytes": 256,
+                    "type": "string"
+                  },
+                  "exists": {
+                    "const": false,
+                    "type": "boolean"
+                  },
+                  "state_version": {
+                    "type": "null"
+                  },
+                  "state_hash": {
+                    "type": "null"
+                  },
+                  "status": {
+                    "type": "null"
+                  },
+                  "evidence_valid_until": {
+                    "type": "null"
+                  },
+                  "unresolved_conflicts": {
+                    "maxItems": 0,
+                    "type": "array",
+                    "items": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "conflict_id",
+                        "conflict_version"
+                      ],
+                      "properties": {
+                        "conflict_id": {
+                          "minLength": 1,
+                          "maxUtf8Bytes": 256,
+                          "type": "string"
+                        },
+                        "conflict_version": {
+                          "minimum": 1,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  },
+                  "expired": {
+                    "const": false,
+                    "type": "boolean"
+                  },
+                  "provenance_valid": {
+                    "const": false,
+                    "type": "boolean"
+                  },
+                  "source_trigger_process_id": {
+                    "type": "null"
+                  },
+                  "confidence_score": {
+                    "type": "null"
+                  },
+                  "user_explicit_confirmation": {
+                    "const": false,
+                    "type": "boolean"
+                  },
+                  "blocking_reasons": {
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "uniqueItems": true,
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "const": "point_missing",
+                          "type": "string"
+                        },
+                        {
+                          "const": "point_not_active",
+                          "type": "string"
+                        },
+                        {
+                          "const": "point_downgraded",
+                          "type": "string"
+                        },
+                        {
+                          "const": "point_archived",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unresolved_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "evidence_expired",
+                          "type": "string"
+                        },
+                        {
+                          "const": "provenance_invalid",
+                          "type": "string"
+                        },
+                        {
+                          "const": "insufficient_independent_sources",
+                          "type": "string"
+                        },
+                        {
+                          "const": "user_confirmation_missing",
+                          "type": "string"
+                        },
+                        {
+                          "const": "policy_mismatch",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "memory_point_id",
+                  "exists",
+                  "state_version",
+                  "state_hash",
+                  "status",
+                  "evidence_valid_until",
+                  "unresolved_conflicts",
+                  "expired",
+                  "provenance_valid",
+                  "source_trigger_process_id",
+                  "confidence_score",
+                  "user_explicit_confirmation",
+                  "blocking_reasons"
+                ],
+                "properties": {
+                  "memory_point_id": {
+                    "minLength": 1,
+                    "maxUtf8Bytes": 256,
+                    "type": "string"
+                  },
+                  "exists": {
+                    "const": true,
+                    "type": "boolean"
+                  },
+                  "state_version": {
+                    "minimum": 1,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "state_hash": {
+                    "pattern": "^sha256:[0-9a-f]{64}$",
+                    "maxUtf8Bytes": 71,
+                    "type": "string"
+                  },
+                  "status": {
+                    "anyOf": [
+                      {
+                        "const": "active",
+                        "type": "string"
+                      },
+                      {
+                        "const": "pending_conflict",
+                        "type": "string"
+                      },
+                      {
+                        "const": "superseded",
+                        "type": "string"
+                      },
+                      {
+                        "const": "downgraded",
+                        "type": "string"
+                      },
+                      {
+                        "const": "archived",
+                        "type": "string"
+                      },
+                      {
+                        "const": "rejected",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "evidence_valid_until": {
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "maxUtf8Bytes": 64,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "unresolved_conflicts": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "conflict_id",
+                        "conflict_version"
+                      ],
+                      "properties": {
+                        "conflict_id": {
+                          "minLength": 1,
+                          "maxUtf8Bytes": 256,
+                          "type": "string"
+                        },
+                        "conflict_version": {
+                          "minimum": 1,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  },
+                  "expired": {
+                    "type": "boolean"
+                  },
+                  "provenance_valid": {
+                    "type": "boolean"
+                  },
+                  "source_trigger_process_id": {
+                    "minLength": 1,
+                    "maxUtf8Bytes": 256,
+                    "type": "string"
+                  },
+                  "confidence_score": {
+                    "minimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  },
+                  "user_explicit_confirmation": {
+                    "type": "boolean"
+                  },
+                  "blocking_reasons": {
+                    "maxItems": 10,
+                    "uniqueItems": true,
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "const": "point_missing",
+                          "type": "string"
+                        },
+                        {
+                          "const": "point_not_active",
+                          "type": "string"
+                        },
+                        {
+                          "const": "point_downgraded",
+                          "type": "string"
+                        },
+                        {
+                          "const": "point_archived",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unresolved_conflict",
+                          "type": "string"
+                        },
+                        {
+                          "const": "evidence_expired",
+                          "type": "string"
+                        },
+                        {
+                          "const": "provenance_invalid",
+                          "type": "string"
+                        },
+                        {
+                          "const": "insufficient_independent_sources",
+                          "type": "string"
+                        },
+                        {
+                          "const": "user_confirmation_missing",
+                          "type": "string"
+                        },
+                        {
+                          "const": "policy_mismatch",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "summary": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "active_count",
+            "independent_trigger_process_count",
+            "has_user_explicit_confirmation",
+            "blocking_reasons"
+          ],
+          "properties": {
+            "active_count": {
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "independent_trigger_process_count": {
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "has_user_explicit_confirmation": {
+              "type": "boolean"
+            },
+            "blocking_reasons": {
+              "maxItems": 10,
+              "uniqueItems": true,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "const": "point_missing",
+                    "type": "string"
+                  },
+                  {
+                    "const": "point_not_active",
+                    "type": "string"
+                  },
+                  {
+                    "const": "point_downgraded",
+                    "type": "string"
+                  },
+                  {
+                    "const": "point_archived",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unresolved_conflict",
+                    "type": "string"
+                  },
+                  {
+                    "const": "evidence_expired",
+                    "type": "string"
+                  },
+                  {
+                    "const": "provenance_invalid",
+                    "type": "string"
+                  },
+                  {
+                    "const": "insufficient_independent_sources",
+                    "type": "string"
+                  },
+                  {
+                    "const": "user_confirmation_missing",
+                    "type": "string"
+                  },
+                  {
+                    "const": "policy_mismatch",
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "duplicate_replayed": {
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "$id": "urn:pai:memory:pre-promotion-validate-request:v1",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "bot_id",
+        "check_token",
+        "check_id",
+        "check_generation",
+        "candidate_fact_id",
+        "expected_point_versions",
+        "expected_conflict_versions",
+        "idempotency_key"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "memory.pre_promotion_validate.v1",
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "check_token": {
+          "minLength": 1,
+          "maxUtf8Bytes": 16384,
+          "type": "string"
+        },
+        "check_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "check_generation": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "candidate_fact_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "expected_point_versions": {
+          "minItems": 1,
+          "maxItems": 1000,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "memory_point_id",
+              "state_version",
+              "state_hash"
+            ],
+            "properties": {
+              "memory_point_id": {
+                "minLength": 1,
+                "maxUtf8Bytes": 256,
+                "type": "string"
+              },
+              "state_version": {
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "state_hash": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "maxUtf8Bytes": 71,
+                "type": "string"
+              }
+            }
+          }
+        },
+        "expected_conflict_versions": {
+          "maxItems": 1000,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "conflict_id",
+              "conflict_version"
+            ],
+            "properties": {
+              "conflict_id": {
+                "minLength": 1,
+                "maxUtf8Bytes": 256,
+                "type": "string"
+              },
+              "conflict_version": {
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxUtf8Bytes": 128,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "$id": "urn:pai:memory:promotion-reservation:v1",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "reservation_id",
+        "check_id",
+        "check_generation",
+        "candidate_fact_id",
+        "fencing_generation",
+        "reserved_points",
+        "reserved_conflicts",
+        "reservation_token",
+        "reserved_at",
+        "expires_at",
+        "status"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "memory.promotion_reservation.v1",
+          "type": "string"
+        },
+        "reservation_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "check_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "check_generation": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "candidate_fact_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "fencing_generation": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "reserved_points": {
+          "minItems": 1,
+          "maxItems": 1000,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "memory_point_id",
+              "state_version",
+              "state_hash"
+            ],
+            "properties": {
+              "memory_point_id": {
+                "minLength": 1,
+                "maxUtf8Bytes": 256,
+                "type": "string"
+              },
+              "state_version": {
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "state_hash": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "maxUtf8Bytes": 71,
+                "type": "string"
+              }
+            }
+          }
+        },
+        "reserved_conflicts": {
+          "maxItems": 1000,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "conflict_id",
+              "conflict_version"
+            ],
+            "properties": {
+              "conflict_id": {
+                "minLength": 1,
+                "maxUtf8Bytes": 256,
+                "type": "string"
+              },
+              "conflict_version": {
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "reservation_token": {
+          "minLength": 1,
+          "maxUtf8Bytes": 16384,
+          "type": "string"
+        },
+        "reserved_at": {
+          "format": "date-time",
+          "maxUtf8Bytes": 64,
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "maxUtf8Bytes": 64,
+          "type": "string"
+        },
+        "status": {
+          "const": "active",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "$id": "urn:pai:memory:promotion-reservation-ack-request:v1",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "bot_id",
+        "reservation_id",
+        "candidate_fact_id",
+        "fencing_generation",
+        "reservation_token_hash",
+        "promotion_revision_id",
+        "committed_at",
+        "idempotency_key",
+        "trace_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "memory.promotion_reservation_ack.v1",
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "reservation_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "candidate_fact_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "fencing_generation": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "reservation_token_hash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxUtf8Bytes": 71,
+          "type": "string"
+        },
+        "promotion_revision_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "committed_at": {
+          "format": "date-time",
+          "maxUtf8Bytes": 64,
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxUtf8Bytes": 128,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "$id": "urn:pai:memory:promotion-reservation-ack-response:v1",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "reservation_id",
+        "candidate_fact_id",
+        "fencing_generation",
+        "status",
+        "promotion_revision_id",
+        "committed_at",
+        "duplicate_replayed"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "memory.promotion_reservation_ack.v1",
+          "type": "string"
+        },
+        "reservation_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "candidate_fact_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "fencing_generation": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "status": {
+          "const": "committed",
+          "type": "string"
+        },
+        "promotion_revision_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "committed_at": {
+          "format": "date-time",
+          "maxUtf8Bytes": 64,
+          "type": "string"
+        },
+        "duplicate_replayed": {
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "$id": "urn:pai:memory:promotion-reservation-release-request:v1",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "bot_id",
+        "reservation_id",
+        "candidate_fact_id",
+        "fencing_generation",
+        "reservation_token_hash",
+        "release_reason",
+        "released_at",
+        "idempotency_key",
+        "trace_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "memory.promotion_reservation_release.v1",
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "reservation_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "candidate_fact_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "fencing_generation": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "reservation_token_hash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "maxUtf8Bytes": 71,
+          "type": "string"
+        },
+        "release_reason": {
+          "anyOf": [
+            {
+              "const": "promotion_commit_failed",
+              "type": "string"
+            },
+            {
+              "const": "reservation_expired",
+              "type": "string"
+            },
+            {
+              "const": "stale_fence",
+              "type": "string"
+            },
+            {
+              "const": "point_version_drift",
+              "type": "string"
+            },
+            {
+              "const": "conflict_version_drift",
+              "type": "string"
+            },
+            {
+              "const": "promotion_not_applied",
+              "type": "string"
+            }
+          ]
+        },
+        "released_at": {
+          "format": "date-time",
+          "maxUtf8Bytes": 64,
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxUtf8Bytes": 128,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "$id": "urn:pai:memory:promotion-reservation-release-response:v1",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "reservation_id",
+        "candidate_fact_id",
+        "fencing_generation",
+        "status",
+        "release_reason",
+        "released_at",
+        "duplicate_replayed"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "memory.promotion_reservation_release.v1",
+          "type": "string"
+        },
+        "reservation_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "candidate_fact_id": {
+          "minLength": 1,
+          "maxUtf8Bytes": 256,
+          "type": "string"
+        },
+        "fencing_generation": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "status": {
+          "const": "released",
+          "type": "string"
+        },
+        "release_reason": {
+          "anyOf": [
+            {
+              "const": "promotion_commit_failed",
+              "type": "string"
+            },
+            {
+              "const": "reservation_expired",
+              "type": "string"
+            },
+            {
+              "const": "stale_fence",
+              "type": "string"
+            },
+            {
+              "const": "point_version_drift",
+              "type": "string"
+            },
+            {
+              "const": "conflict_version_drift",
+              "type": "string"
+            },
+            {
+              "const": "promotion_not_applied",
+              "type": "string"
+            }
+          ]
+        },
+        "released_at": {
+          "format": "date-time",
+          "maxUtf8Bytes": 64,
+          "type": "string"
+        },
+        "duplicate_replayed": {
+          "type": "boolean"
+        }
+      }
+    }
+  ]
+}

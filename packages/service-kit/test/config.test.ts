@@ -81,7 +81,12 @@ describe("service runtime config", () => {
     expect(Object.isFrozen(loaded)).toBe(true);
   });
 
-  it("requires strong dependencies for either production authority signal", () => {
+  it("requires strong dependencies for every production-like authority signal", () => {
+    expect(
+      requiresProductionDependenciesV1({
+        PAI_DEPLOYMENT_ENVIRONMENT: "staging",
+      }),
+    ).toBe(true);
     expect(
       requiresProductionDependenciesV1({
         PAI_DEPLOYMENT_ENVIRONMENT: "prod",

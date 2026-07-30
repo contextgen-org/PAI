@@ -9,6 +9,8 @@ import {
 import {
   AdmitTriggerCommandV1Schema,
   AdmitTriggerWriterResponseV1Schema,
+  assertCanonicalTimerTriggerTimeV1,
+  assertTimerTriggerBusinessPayloadV1,
   type AdmitTriggerCommandV1,
   type AdmitTriggerWriterResponseV1,
   type TriggerSubmitRequestV1,
@@ -216,32 +218,81 @@ export interface TriggerPreAdmissionFailureV1 {
   readonly credential?: VerifiedTriggerIngressV1;
 }
 
+function canonicalAdmissionSnapshotV1<T>(
+  value: unknown,
+  message: string,
+  kind: InvalidAdmitTriggerCommandError["kind"],
+): T {
+  let snapshot: T;
+  try {
+    snapshot = JSON.parse(canonicalJsonV1(value)) as T;
+  } catch (error) {
+    throw new InvalidAdmitTriggerCommandError(message, kind, {
+      cause: error,
+    });
+  }
+  const pending: object[] = [];
+  if (typeof snapshot === "object" && snapshot !== null) {
+    pending.push(snapshot);
+  }
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    for (const entry of Object.values(current)) {
+      if (
+        typeof entry === "object" &&
+        entry !== null &&
+        !Object.isFrozen(entry)
+      ) {
+        pending.push(entry);
+      }
+    }
+    Object.freeze(current);
+  }
+  return snapshot;
+}
+
 function boundedClaim(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 && value.length <= 256
     ? value
     : null;
 }
 
+function validServerIdentity(value: string): boolean {
+  return (
+    value.trim().length > 0 &&
+    value.length <= 512 &&
+    !/[\r\n]/u.test(value)
+  );
+}
+
 function claimedRecord(value: unknown): Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Readonly<Record<string, unknown>>)
-    : {};
+  try {
+    const snapshot = JSON.parse(canonicalJsonV1(value)) as unknown;
+    return typeof snapshot === "object" &&
+      snapshot !== null &&
+      !Array.isArray(snapshot)
+      ? Object.freeze(snapshot as Readonly<Record<string, unknown>>)
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 function preAdmissionRequestHash(
   requestBody: unknown,
 ): string | null {
   try {
+    const snapshot = JSON.parse(canonicalJsonV1(requestBody)) as unknown;
     const canonicalValue =
-      typeof requestBody === "object" &&
-      requestBody !== null &&
-      !Array.isArray(requestBody)
+      typeof snapshot === "object" &&
+      snapshot !== null &&
+      !Array.isArray(snapshot)
         ? (() => {
-            const { trace_id: _serverTraceId, ...request } = requestBody as
+            const { trace_id: _serverTraceId, ...request } = snapshot as
               Readonly<Record<string, unknown>>;
             return request;
           })()
-        : requestBody;
+        : snapshot;
     const canonical = canonicalJsonV1(canonicalValue);
     return `sha256:${createHash("sha256").update(canonical).digest("hex")}`;
   } catch {
@@ -332,6 +383,19 @@ function botScope(command: AdmitTriggerCommandV1): BotAuthorizationScopeV1 {
 function assertCanonicalCommand(command: AdmitTriggerCommandV1): void {
   if (command.source !== "timer") return;
   const payload = command.payload;
+  try {
+    assertCanonicalTimerTriggerTimeV1(payload);
+    if (payload.trigger_payload !== undefined) {
+      assertTimerTriggerBusinessPayloadV1(payload.trigger_payload);
+    }
+  } catch (error) {
+    throw new InvalidAdmitTriggerCommandError(
+      "timer date/time, IANA timezone, and scheduled instant are inconsistent",
+      "invalid_request",
+      { cause: error },
+      command.source,
+    );
+  }
   const scopeMatches =
     payload.workspace_id === command.workspace_id &&
     payload.bot_id === command.bot_id &&
@@ -405,7 +469,13 @@ export function createTriggerAdmissionApplicationV1(
       failure: TriggerPreAdmissionFailureV1,
     ): Promise<string> {
       const attemptId = generateId();
-      if (attemptId.trim().length === 0 || failure.trace_id.trim().length === 0) {
+      const traceId = failure.trace_id;
+      const outcome = failure.outcome;
+      const resultCode = failure.result_code;
+      if (
+        !validServerIdentity(attemptId) ||
+        !validServerIdentity(traceId)
+      ) {
         throw new InvalidAdmitTriggerCommandError(
           "server-generated submit attempt identity is invalid",
           "server_invariant",
@@ -413,7 +483,14 @@ export function createTriggerAdmissionApplicationV1(
       }
       const body = claimedRecord(failure.request_body);
       const payload = claimedRecord(body.payload);
-      const credential = failure.credential;
+      const credential =
+        failure.credential === undefined
+          ? undefined
+          : canonicalAdmissionSnapshotV1<VerifiedTriggerIngressV1>(
+              failure.credential,
+              "verified pre-admission ingress is outside the bounded canonical JSON contract",
+              "authorization_denied",
+            );
       const source =
         body.source === "chat" ||
         body.source === "notification" ||
@@ -421,56 +498,65 @@ export function createTriggerAdmissionApplicationV1(
           ? body.source
           : undefined;
       const requestHash = preAdmissionRequestHash(failure.request_body);
+      const authenticatedContext =
+        preAdmissionAuthenticatedContext(credential, source);
+      const writerArguments = Object.freeze({
+        p_attempt_id: attemptId,
+        p_claimed_scope: Object.freeze({
+          workspace_id: boundedClaim(body.workspace_id),
+          bot_id: boundedClaim(body.bot_id),
+          owner_agent_id: boundedClaim(body.owner_agent_id),
+          deployment_environment: boundedClaim(
+            body.deployment_environment,
+          ),
+          release_channel: boundedClaim(body.release_channel),
+        }),
+        p_claimed_source: boundedClaim(body.source),
+        p_claimed_actor: Object.freeze({
+          actor_type: boundedClaim(body.actor_type),
+          actor_id: boundedClaim(body.actor_id),
+        }),
+        p_claimed_dedupe_key: boundedClaim(body.dedupe_key),
+        p_audit_request_hash: requestHash,
+        p_outcome: outcome,
+        p_result_code: resultCode,
+        p_retryable: false,
+        p_authenticated_context: authenticatedContext,
+        p_audit_payload: Object.freeze({
+          request_body_present:
+            typeof failure.request_body === "object" &&
+            failure.request_body !== null,
+          timer_payload_present:
+            body.source === "timer" && Object.keys(payload).length > 0,
+          request_hash_present: requestHash !== null,
+          authenticated: credential !== undefined,
+        }),
+        p_trace_id: traceId,
+      });
       return database.unit_of_work.withTransaction(
         {
           operation: "record_trigger_submit_attempt",
           idempotency_key: attemptId,
-          trace_id: failure.trace_id,
+          trace_id: traceId,
           isolation: "read_committed",
           retry: "none",
         },
         async (transaction, { owner }) => {
-          const result = await owner.executeWriter<
+          const resultValue = await owner.executeWriter<
             Readonly<{ acknowledged: true; submit_attempt_id: string }>,
             "record_trigger_submit_attempt_v1"
           >(transaction, {
             writer: "record_trigger_submit_attempt_v1",
-            arguments: {
-              p_attempt_id: attemptId,
-              p_claimed_scope: {
-                workspace_id: boundedClaim(body.workspace_id),
-                bot_id: boundedClaim(body.bot_id),
-                owner_agent_id: boundedClaim(body.owner_agent_id),
-                deployment_environment: boundedClaim(
-                  body.deployment_environment,
-                ),
-                release_channel: boundedClaim(body.release_channel),
-              },
-              p_claimed_source: boundedClaim(body.source),
-              p_claimed_actor: {
-                actor_type: boundedClaim(body.actor_type),
-                actor_id: boundedClaim(body.actor_id),
-              },
-              p_claimed_dedupe_key: boundedClaim(body.dedupe_key),
-              p_audit_request_hash: requestHash,
-              p_outcome: failure.outcome,
-              p_result_code: failure.result_code,
-              p_retryable: false,
-              p_authenticated_context:
-                preAdmissionAuthenticatedContext(credential, source),
-              p_audit_payload: {
-                request_body_present:
-                  typeof failure.request_body === "object" &&
-                  failure.request_body !== null,
-                timer_payload_present:
-                  body.source === "timer" && Object.keys(payload).length > 0,
-                request_hash_present: requestHash !== null,
-                authenticated: credential !== undefined,
-              },
-              p_trace_id: failure.trace_id,
-            },
+            arguments: writerArguments,
             expected_rows: 1,
           });
+          const result = canonicalAdmissionSnapshotV1<
+            Readonly<{ acknowledged: true; submit_attempt_id: string }>
+          >(
+            resultValue,
+            "record_trigger_submit_attempt_v1 returned a non-canonical response",
+            "server_invariant",
+          );
           if (!exactAttemptAck(result, attemptId)) {
             throw new InvalidAdmitTriggerCommandError(
               "record_trigger_submit_attempt_v1 returned a non-canonical response",
@@ -485,16 +571,27 @@ export function createTriggerAdmissionApplicationV1(
       ingress: VerifiedTriggerIngressV1,
       commandValue: unknown,
     ): Promise<AdmitTriggerWriterResponseV1> {
-      if (!Value.Check(AdmitTriggerCommandV1Schema, commandValue)) {
+      const commandSnapshot = canonicalAdmissionSnapshotV1<unknown>(
+        commandValue,
+        "admission command is outside the bounded canonical JSON contract",
+        "invalid_request",
+      );
+      if (!Value.Check(AdmitTriggerCommandV1Schema, commandSnapshot)) {
         throw new InvalidAdmitTriggerCommandError(
           "admission command violates AdmitTriggerCommandV1",
         );
       }
-      const command = commandValue as AdmitTriggerCommandV1;
+      const command = commandSnapshot as AdmitTriggerCommandV1;
       assertCanonicalCommand(command);
+      const ingressSnapshot =
+        canonicalAdmissionSnapshotV1<VerifiedTriggerIngressV1>(
+          ingress,
+          "verified admission ingress is outside the bounded canonical JSON contract",
+          "authorization_denied",
+        );
       const scope = botScope(command);
-      if (ingress.authentication_kind === "pai_workload_jwt") {
-        const { claims } = ingress.credential;
+      if (ingressSnapshot.authentication_kind === "pai_workload_jwt") {
+        const { claims } = ingressSnapshot.credential;
         if (
           claims.aud !== "trigger_processor" ||
           claims.scope_kind !== "bot" ||
@@ -508,11 +605,15 @@ export function createTriggerAdmissionApplicationV1(
           );
         }
       }
-      const identity = authenticatedIdentity(ingress, command);
+      const identity = authenticatedIdentity(ingressSnapshot, command);
       const requestHash = canonicalAdmissionRequestHash(command);
       const triggerId = generateId();
       const processId = generateId();
-      if (triggerId.trim().length === 0 || processId.trim().length === 0) {
+      if (
+        !validServerIdentity(triggerId) ||
+        !validServerIdentity(processId) ||
+        triggerId === processId
+      ) {
         throw new InvalidAdmitTriggerCommandError(
           "server-generated trigger identity is invalid",
           "server_invariant",
@@ -527,11 +628,11 @@ export function createTriggerAdmissionApplicationV1(
           retry: "serialization_failures",
         },
         async (transaction, { owner }) => {
-          const result = await owner.executeWriter<
+          const resultValue = await owner.executeWriter<
             AdmitTriggerWriterResponseV1,
-            "admit_trigger_v1"
+            "create_trigger_admission_v1"
           >(transaction, {
-            writer: "admit_trigger_v1",
+            writer: "create_trigger_admission_v1",
             arguments: {
               p_trigger_id: triggerId,
               p_process_id: processId,
@@ -548,12 +649,23 @@ export function createTriggerAdmissionApplicationV1(
             },
             expected_rows: 1,
           });
+          const result =
+            canonicalAdmissionSnapshotV1<AdmitTriggerWriterResponseV1>(
+              resultValue,
+              "create_trigger_admission_v1 returned non-canonical JSON",
+              "server_invariant",
+            );
           if (
             !Value.Check(AdmitTriggerWriterResponseV1Schema, result) ||
-            result.trace_id !== command.trace_id
+            result.trace_id !== command.trace_id ||
+            (result.code === "trigger_accepted" &&
+              (result.details.trigger_id !== triggerId ||
+                result.details.trigger_process_id !== processId)) ||
+            (result.code === "trigger_rejected" &&
+              result.details.trigger_id !== triggerId)
           ) {
             throw new InvalidAdmitTriggerCommandError(
-              "admit_trigger_v1 returned a non-canonical response",
+              "create_trigger_admission_v1 returned a non-canonical response",
               "server_invariant",
             );
           }

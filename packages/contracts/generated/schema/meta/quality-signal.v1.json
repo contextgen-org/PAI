@@ -1,0 +1,805 @@
+{
+  "$id": "urn:pai:meta:quality-signal:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "severity",
+        "source_ref",
+        "evidence_refs",
+        "recommended_action",
+        "signal_type",
+        "source_kind",
+        "source_service",
+        "payload"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "quality_signal.v1",
+          "type": "string"
+        },
+        "severity": {
+          "anyOf": [
+            {
+              "const": "info",
+              "type": "string"
+            },
+            {
+              "const": "warning",
+              "type": "string"
+            },
+            {
+              "const": "error",
+              "type": "string"
+            },
+            {
+              "const": "critical",
+              "type": "string"
+            }
+          ]
+        },
+        "source_ref": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "evidence_refs": {
+          "maxItems": 10000,
+          "uniqueItems": true,
+          "type": "array",
+          "items": {
+            "minLength": 3,
+            "maxLength": 2048,
+            "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+            "type": "string"
+          }
+        },
+        "recommended_action": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "signal_type": {
+          "const": "downstream_operation_failed",
+          "type": "string"
+        },
+        "source_kind": {
+          "const": "service",
+          "type": "string"
+        },
+        "source_service": {
+          "anyOf": [
+            {
+              "const": "trigger_processor",
+              "type": "string"
+            },
+            {
+              "const": "action_runtime",
+              "type": "string"
+            },
+            {
+              "const": "meta_cognition",
+              "type": "string"
+            },
+            {
+              "const": "memory",
+              "type": "string"
+            },
+            {
+              "const": "knowthat",
+              "type": "string"
+            },
+            {
+              "const": "skill_registry",
+              "type": "string"
+            },
+            {
+              "const": "timer_trigger_app",
+              "type": "string"
+            },
+            {
+              "const": "observation_gateway",
+              "type": "string"
+            }
+          ]
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "target_service",
+            "operation",
+            "failure_kind",
+            "retryable",
+            "blocking"
+          ],
+          "properties": {
+            "target_service": {
+              "anyOf": [
+                {
+                  "const": "trigger_processor",
+                  "type": "string"
+                },
+                {
+                  "const": "action_runtime",
+                  "type": "string"
+                },
+                {
+                  "const": "meta_cognition",
+                  "type": "string"
+                },
+                {
+                  "const": "memory",
+                  "type": "string"
+                },
+                {
+                  "const": "knowthat",
+                  "type": "string"
+                },
+                {
+                  "const": "skill_registry",
+                  "type": "string"
+                },
+                {
+                  "const": "timer_trigger_app",
+                  "type": "string"
+                },
+                {
+                  "const": "observation_gateway",
+                  "type": "string"
+                }
+              ]
+            },
+            "operation": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "failure_kind": {
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "blocking": {
+              "type": "boolean"
+            },
+            "owner_action": {
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+              "type": "string"
+            },
+            "downstream_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "severity",
+        "source_ref",
+        "evidence_refs",
+        "recommended_action",
+        "signal_type",
+        "source_kind",
+        "actor_principal",
+        "actor_role",
+        "payload"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "quality_signal.v1",
+          "type": "string"
+        },
+        "severity": {
+          "anyOf": [
+            {
+              "const": "info",
+              "type": "string"
+            },
+            {
+              "const": "warning",
+              "type": "string"
+            },
+            {
+              "const": "error",
+              "type": "string"
+            },
+            {
+              "const": "critical",
+              "type": "string"
+            }
+          ]
+        },
+        "source_ref": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "evidence_refs": {
+          "maxItems": 10000,
+          "uniqueItems": true,
+          "type": "array",
+          "items": {
+            "minLength": 3,
+            "maxLength": 2048,
+            "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+            "type": "string"
+          }
+        },
+        "recommended_action": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "signal_type": {
+          "const": "downstream_operation_failed",
+          "type": "string"
+        },
+        "source_kind": {
+          "anyOf": [
+            {
+              "const": "manual",
+              "type": "string"
+            },
+            {
+              "const": "operator",
+              "type": "string"
+            },
+            {
+              "const": "offline_repair",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_principal": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "actor_role": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "target_service",
+            "operation",
+            "failure_kind",
+            "retryable",
+            "blocking"
+          ],
+          "properties": {
+            "target_service": {
+              "anyOf": [
+                {
+                  "const": "trigger_processor",
+                  "type": "string"
+                },
+                {
+                  "const": "action_runtime",
+                  "type": "string"
+                },
+                {
+                  "const": "meta_cognition",
+                  "type": "string"
+                },
+                {
+                  "const": "memory",
+                  "type": "string"
+                },
+                {
+                  "const": "knowthat",
+                  "type": "string"
+                },
+                {
+                  "const": "skill_registry",
+                  "type": "string"
+                },
+                {
+                  "const": "timer_trigger_app",
+                  "type": "string"
+                },
+                {
+                  "const": "observation_gateway",
+                  "type": "string"
+                }
+              ]
+            },
+            "operation": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "failure_kind": {
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "blocking": {
+              "type": "boolean"
+            },
+            "owner_action": {
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+              "type": "string"
+            },
+            "downstream_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "severity",
+        "source_ref",
+        "evidence_refs",
+        "recommended_action",
+        "signal_type",
+        "source_kind",
+        "source_service",
+        "payload"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "quality_signal.v1",
+          "type": "string"
+        },
+        "severity": {
+          "anyOf": [
+            {
+              "const": "info",
+              "type": "string"
+            },
+            {
+              "const": "warning",
+              "type": "string"
+            },
+            {
+              "const": "error",
+              "type": "string"
+            },
+            {
+              "const": "critical",
+              "type": "string"
+            }
+          ]
+        },
+        "source_ref": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "evidence_refs": {
+          "maxItems": 10000,
+          "uniqueItems": true,
+          "type": "array",
+          "items": {
+            "minLength": 3,
+            "maxLength": 2048,
+            "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+            "type": "string"
+          }
+        },
+        "recommended_action": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "signal_type": {
+          "anyOf": [
+            {
+              "const": "snapshot_missing",
+              "type": "string"
+            },
+            {
+              "const": "snapshot_incomplete",
+              "type": "string"
+            },
+            {
+              "const": "snapshot_schema_incompatible",
+              "type": "string"
+            },
+            {
+              "const": "snapshot_hash_mismatch",
+              "type": "string"
+            },
+            {
+              "const": "artifact_unreadable",
+              "type": "string"
+            },
+            {
+              "const": "redaction_incomplete",
+              "type": "string"
+            },
+            {
+              "const": "llm_parse_failed",
+              "type": "string"
+            },
+            {
+              "const": "schema_validation_failed",
+              "type": "string"
+            },
+            {
+              "const": "memory_write_partial_failed",
+              "type": "string"
+            },
+            {
+              "const": "knowthat_conflict_detected",
+              "type": "string"
+            },
+            {
+              "const": "tool_execution_failed",
+              "type": "string"
+            },
+            {
+              "const": "user_dissatisfied",
+              "type": "string"
+            },
+            {
+              "const": "low_confidence_extraction",
+              "type": "string"
+            },
+            {
+              "const": "feedback_required",
+              "type": "string"
+            }
+          ]
+        },
+        "source_kind": {
+          "const": "service",
+          "type": "string"
+        },
+        "source_service": {
+          "anyOf": [
+            {
+              "const": "trigger_processor",
+              "type": "string"
+            },
+            {
+              "const": "action_runtime",
+              "type": "string"
+            },
+            {
+              "const": "meta_cognition",
+              "type": "string"
+            },
+            {
+              "const": "memory",
+              "type": "string"
+            },
+            {
+              "const": "knowthat",
+              "type": "string"
+            },
+            {
+              "const": "skill_registry",
+              "type": "string"
+            },
+            {
+              "const": "timer_trigger_app",
+              "type": "string"
+            },
+            {
+              "const": "observation_gateway",
+              "type": "string"
+            }
+          ]
+        },
+        "payload": {
+          "maxProperties": 1000,
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {
+              "$id": "T2",
+              "anyOf": [
+                {
+                  "maxLength": 65536,
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                },
+                {
+                  "maxItems": 10000,
+                  "type": "array",
+                  "items": {
+                    "$ref": "T2"
+                  }
+                },
+                {
+                  "maxProperties": 1000,
+                  "type": "object",
+                  "patternProperties": {
+                    "^(.*)$": {
+                      "$ref": "T2"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "severity",
+        "source_ref",
+        "evidence_refs",
+        "recommended_action",
+        "signal_type",
+        "source_kind",
+        "actor_principal",
+        "actor_role",
+        "payload"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "quality_signal.v1",
+          "type": "string"
+        },
+        "severity": {
+          "anyOf": [
+            {
+              "const": "info",
+              "type": "string"
+            },
+            {
+              "const": "warning",
+              "type": "string"
+            },
+            {
+              "const": "error",
+              "type": "string"
+            },
+            {
+              "const": "critical",
+              "type": "string"
+            }
+          ]
+        },
+        "source_ref": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "evidence_refs": {
+          "maxItems": 10000,
+          "uniqueItems": true,
+          "type": "array",
+          "items": {
+            "minLength": 3,
+            "maxLength": 2048,
+            "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+            "type": "string"
+          }
+        },
+        "recommended_action": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "signal_type": {
+          "anyOf": [
+            {
+              "const": "snapshot_missing",
+              "type": "string"
+            },
+            {
+              "const": "snapshot_incomplete",
+              "type": "string"
+            },
+            {
+              "const": "snapshot_schema_incompatible",
+              "type": "string"
+            },
+            {
+              "const": "snapshot_hash_mismatch",
+              "type": "string"
+            },
+            {
+              "const": "artifact_unreadable",
+              "type": "string"
+            },
+            {
+              "const": "redaction_incomplete",
+              "type": "string"
+            },
+            {
+              "const": "llm_parse_failed",
+              "type": "string"
+            },
+            {
+              "const": "schema_validation_failed",
+              "type": "string"
+            },
+            {
+              "const": "memory_write_partial_failed",
+              "type": "string"
+            },
+            {
+              "const": "knowthat_conflict_detected",
+              "type": "string"
+            },
+            {
+              "const": "tool_execution_failed",
+              "type": "string"
+            },
+            {
+              "const": "user_dissatisfied",
+              "type": "string"
+            },
+            {
+              "const": "low_confidence_extraction",
+              "type": "string"
+            },
+            {
+              "const": "feedback_required",
+              "type": "string"
+            }
+          ]
+        },
+        "source_kind": {
+          "anyOf": [
+            {
+              "const": "manual",
+              "type": "string"
+            },
+            {
+              "const": "operator",
+              "type": "string"
+            },
+            {
+              "const": "offline_repair",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_principal": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "actor_role": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "payload": {
+          "maxProperties": 1000,
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {
+              "$id": "T2",
+              "anyOf": [
+                {
+                  "maxLength": 65536,
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                },
+                {
+                  "maxItems": 10000,
+                  "type": "array",
+                  "items": {
+                    "$ref": "T2"
+                  }
+                },
+                {
+                  "maxProperties": 1000,
+                  "type": "object",
+                  "patternProperties": {
+                    "^(.*)$": {
+                      "$ref": "T2"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

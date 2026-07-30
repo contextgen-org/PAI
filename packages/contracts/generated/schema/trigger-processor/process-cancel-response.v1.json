@@ -1,0 +1,498 @@
+{
+  "$id": "urn:pai:trigger-processor:process-cancel-response:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "trace_id",
+        "details"
+      ],
+      "properties": {
+        "code": {
+          "const": "cancel_accepted",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "retryable": {
+          "const": false,
+          "type": "boolean"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "details": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "trigger_process_id",
+            "idempotency_key",
+            "duplicate_replayed",
+            "phase",
+            "status",
+            "cancellation_status",
+            "cancel_requested_at",
+            "runtime_signal_id"
+          ],
+          "properties": {
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "duplicate_replayed": {
+              "const": false,
+              "type": "boolean"
+            },
+            "phase": {
+              "const": "closed",
+              "type": "string"
+            },
+            "status": {
+              "const": "cancelled",
+              "type": "string"
+            },
+            "cancellation_status": {
+              "const": "completed",
+              "type": "string"
+            },
+            "cancel_requested_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "runtime_signal_id": {
+              "type": "null"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "trace_id",
+        "details"
+      ],
+      "properties": {
+        "code": {
+          "const": "cancel_replayed",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "retryable": {
+          "const": false,
+          "type": "boolean"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "details": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "trigger_process_id",
+            "idempotency_key",
+            "duplicate_replayed",
+            "phase",
+            "status",
+            "cancellation_status",
+            "cancel_requested_at",
+            "runtime_signal_id"
+          ],
+          "properties": {
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "duplicate_replayed": {
+              "const": true,
+              "type": "boolean"
+            },
+            "phase": {
+              "const": "closed",
+              "type": "string"
+            },
+            "status": {
+              "const": "cancelled",
+              "type": "string"
+            },
+            "cancellation_status": {
+              "const": "completed",
+              "type": "string"
+            },
+            "cancel_requested_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "runtime_signal_id": {
+              "type": "null"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "trace_id",
+        "details"
+      ],
+      "properties": {
+        "code": {
+          "const": "cancel_pending",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "retryable": {
+          "const": false,
+          "type": "boolean"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "details": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "trigger_process_id",
+            "idempotency_key",
+            "duplicate_replayed",
+            "phase",
+            "status",
+            "cancellation_status",
+            "cancel_requested_at",
+            "runtime_signal_id"
+          ],
+          "properties": {
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "duplicate_replayed": {
+              "const": false,
+              "type": "boolean"
+            },
+            "phase": {
+              "const": "execution",
+              "type": "string"
+            },
+            "status": {
+              "const": "cancelling",
+              "type": "string"
+            },
+            "cancellation_status": {
+              "const": "pending",
+              "type": "string"
+            },
+            "cancel_requested_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "runtime_signal_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "trace_id",
+        "details"
+      ],
+      "properties": {
+        "code": {
+          "const": "cancel_replayed",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "retryable": {
+          "const": false,
+          "type": "boolean"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "details": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "trigger_process_id",
+            "idempotency_key",
+            "duplicate_replayed",
+            "phase",
+            "status",
+            "cancellation_status",
+            "cancel_requested_at",
+            "runtime_signal_id"
+          ],
+          "properties": {
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "duplicate_replayed": {
+              "const": true,
+              "type": "boolean"
+            },
+            "phase": {
+              "const": "execution",
+              "type": "string"
+            },
+            "status": {
+              "const": "cancelling",
+              "type": "string"
+            },
+            "cancellation_status": {
+              "const": "pending",
+              "type": "string"
+            },
+            "cancel_requested_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "runtime_signal_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "trace_id",
+        "details"
+      ],
+      "properties": {
+        "code": {
+          "const": "not_cancellable",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "retryable": {
+          "const": false,
+          "type": "boolean"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "details": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "trigger_process_id",
+            "phase",
+            "status",
+            "terminal_reason",
+            "terminal_event_id"
+          ],
+          "properties": {
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "phase": {
+              "anyOf": [
+                {
+                  "const": "meta_enqueued",
+                  "type": "string"
+                },
+                {
+                  "const": "closed",
+                  "type": "string"
+                }
+              ]
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "const": "waiting",
+                  "type": "string"
+                },
+                {
+                  "const": "completed",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                },
+                {
+                  "const": "preempted",
+                  "type": "string"
+                },
+                {
+                  "const": "cancelled",
+                  "type": "string"
+                }
+              ]
+            },
+            "terminal_reason": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "terminal_event_id": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "trace_id",
+        "details"
+      ],
+      "properties": {
+        "code": {
+          "const": "idempotency_conflict",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "retryable": {
+          "const": false,
+          "type": "boolean"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "details": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "trigger_process_id",
+            "idempotency_key"
+          ],
+          "properties": {
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

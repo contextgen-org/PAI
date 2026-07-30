@@ -1,0 +1,174 @@
+{
+  "$id": "observation.tool-invocation.list",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "items",
+    "runtime_resolution",
+    "degraded_flags",
+    "redacted_field_count",
+    "trace_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0",
+      "type": "string"
+    },
+    "items": {
+      "maxItems": 200,
+      "type": "array",
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tool_invocation_id",
+          "tool_name",
+          "status",
+          "side_effect_status",
+          "failure_class",
+          "started_at",
+          "completed_at"
+        ],
+        "properties": {
+          "tool_invocation_id": {
+            "minLength": 1,
+            "maxLength": 512,
+            "type": "string"
+          },
+          "tool_name": {
+            "minLength": 1,
+            "maxLength": 512,
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "requested",
+                "type": "string"
+              },
+              {
+                "const": "running",
+                "type": "string"
+              },
+              {
+                "const": "completed",
+                "type": "string"
+              },
+              {
+                "const": "failed",
+                "type": "string"
+              },
+              {
+                "const": "cancelled",
+                "type": "string"
+              }
+            ]
+          },
+          "side_effect_status": {
+            "anyOf": [
+              {
+                "const": "none",
+                "type": "string"
+              },
+              {
+                "const": "produced",
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
+              }
+            ]
+          },
+          "failure_class": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "next_cursor": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "runtime_resolution": {
+      "anyOf": [
+        {
+          "const": "resolved",
+          "type": "string"
+        },
+        {
+          "const": "not_started",
+          "type": "string"
+        },
+        {
+          "const": "not_projected",
+          "type": "string"
+        }
+      ]
+    },
+    "degraded_flags": {
+      "uniqueItems": true,
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "const": "runtime_unavailable",
+            "type": "string"
+          },
+          {
+            "const": "meta_unavailable",
+            "type": "string"
+          },
+          {
+            "const": "meta_projection_lag",
+            "type": "string"
+          },
+          {
+            "const": "runtime_token_stream_unavailable",
+            "type": "string"
+          },
+          {
+            "const": "optional_detail_timeout",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "redacted_field_count": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "trace_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,2965 @@
+{
+  "$id": "urn:pai:meta:domain-event:v1",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "meta.job.created",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "meta_cognition_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "meta_cognition",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "meta_job_id",
+            "trigger_process_id",
+            "previous_meta_status",
+            "next_meta_status",
+            "projection_version",
+            "reason_code",
+            "snapshot_ref",
+            "snapshot_hash",
+            "snapshot_version",
+            "attempt_count"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "meta_job_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "previous_meta_status": {
+              "type": "null"
+            },
+            "next_meta_status": {
+              "const": "queued",
+              "type": "string"
+            },
+            "projection_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "reason_code": {
+              "const": "meta_job_created",
+              "type": "string"
+            },
+            "snapshot_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "snapshot_hash": {
+              "minLength": 71,
+              "maxLength": 71,
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "snapshot_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "attempt_count": {
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "meta.job.started",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "meta_cognition_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "meta_cognition",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "meta_job_id",
+            "trigger_process_id",
+            "previous_meta_status",
+            "next_meta_status",
+            "projection_version",
+            "reason_code",
+            "lease_id",
+            "lease_generation",
+            "attempt",
+            "started_at"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "meta_job_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "previous_meta_status": {
+              "anyOf": [
+                {
+                  "const": "queued",
+                  "type": "string"
+                },
+                {
+                  "const": "retry_wait",
+                  "type": "string"
+                },
+                {
+                  "const": "running",
+                  "type": "string"
+                }
+              ]
+            },
+            "next_meta_status": {
+              "const": "running",
+              "type": "string"
+            },
+            "projection_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "reason_code": {
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+              "type": "string"
+            },
+            "lease_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "lease_generation": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "attempt": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "started_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "meta.job.retry_wait",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "meta_cognition_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "meta_cognition",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "meta_job_id",
+            "trigger_process_id",
+            "previous_meta_status",
+            "next_meta_status",
+            "projection_version",
+            "reason_code",
+            "next_retry_at",
+            "attempt_count"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "meta_job_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "previous_meta_status": {
+              "const": "running",
+              "type": "string"
+            },
+            "next_meta_status": {
+              "const": "retry_wait",
+              "type": "string"
+            },
+            "projection_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "reason_code": {
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+              "type": "string"
+            },
+            "next_retry_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "attempt_count": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "error_code": {
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "meta.experience.created",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "meta_cognition_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "meta_cognition",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "meta_job_id",
+            "trigger_process_id",
+            "experience_record_id",
+            "solidified_event_range"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "meta_job_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "experience_record_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "solidified_event_range": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "first_append_sequence_no",
+                "last_append_sequence_no"
+              ],
+              "properties": {
+                "first_append_sequence_no": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "last_append_sequence_no": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                }
+              }
+            },
+            "quality_score": {
+              "type": "null"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "meta.memory.write_requested",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "meta_cognition_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "meta_cognition",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "meta_job_id",
+            "trigger_process_id",
+            "memory_write_request_id",
+            "split_plan_id",
+            "plan_version",
+            "chunk_no",
+            "chunk_hash",
+            "request_payload_ref",
+            "request_payload_hash",
+            "idempotency_key",
+            "source_meta_job_id",
+            "source_trigger_process_id"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "meta_job_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "memory_write_request_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "split_plan_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "plan_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "chunk_no": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "chunk_hash": {
+              "minLength": 71,
+              "maxLength": 71,
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "request_payload_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "request_payload_hash": {
+              "minLength": 71,
+              "maxLength": 71,
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "source_meta_job_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "source_trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "meta.knowthat.write_requested",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "meta_cognition_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "meta_cognition",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "meta_job_id",
+            "trigger_process_id",
+            "knowthat_write_request_id",
+            "request_payload_ref",
+            "request_payload_hash",
+            "idempotency_key",
+            "source_meta_job_id"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "meta_job_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "knowthat_write_request_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "request_payload_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "request_payload_hash": {
+              "minLength": 71,
+              "maxLength": 71,
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "source_meta_job_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "meta.candidate.review_requested",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "meta_cognition_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "meta_cognition",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "meta_job_id",
+            "trigger_process_id",
+            "candidate_id",
+            "suggestion_id",
+            "target_candidate_version",
+            "suggested_action",
+            "request_payload_ref",
+            "request_payload_hash",
+            "idempotency_key"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "meta_job_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "candidate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "suggestion_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "target_candidate_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "suggested_action": {
+              "anyOf": [
+                {
+                  "const": "promote",
+                  "type": "string"
+                },
+                {
+                  "const": "keep_candidate",
+                  "type": "string"
+                },
+                {
+                  "const": "reject",
+                  "type": "string"
+                },
+                {
+                  "const": "expire",
+                  "type": "string"
+                },
+                {
+                  "const": "request_feedback",
+                  "type": "string"
+                }
+              ]
+            },
+            "request_payload_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "request_payload_hash": {
+              "minLength": 71,
+              "maxLength": 71,
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "meta.candidate.reviewed",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "meta_cognition_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "meta_cognition",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "meta_job_id",
+            "trigger_process_id",
+            "candidate_id",
+            "suggestion_id",
+            "target_candidate_version",
+            "review_id",
+            "status",
+            "decision",
+            "reason_code"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "meta_job_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "candidate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "suggestion_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "target_candidate_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "review_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "status": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "decision": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "reason_code": {
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+              "type": "string"
+            },
+            "candidate_version_after": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "linkage_check_ids": {
+              "maxItems": 10000,
+              "uniqueItems": true,
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "meta.skill.candidate_application_requested",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "meta_cognition_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "meta_cognition",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "meta_job_id",
+            "trigger_process_id",
+            "candidate_id",
+            "review_version",
+            "application_id",
+            "candidate_type",
+            "skill_key",
+            "application_payload_ref",
+            "application_payload_hash",
+            "baseline_catalog_version",
+            "reviewer_principal_id",
+            "idempotency_key",
+            "trace_id",
+            "command_schema_version"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "meta_job_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "candidate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "review_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "application_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "candidate_type": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "skill_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "application_payload_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "application_payload_hash": {
+              "minLength": 71,
+              "maxLength": 71,
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "baseline_catalog_version": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "reviewer_principal_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "idempotency_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trace_id": {
+              "minLength": 1,
+              "maxLength": 256,
+              "type": "string"
+            },
+            "command_schema_version": {
+              "const": "skill_candidate_application.v1",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "meta.feedback.required",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "meta_cognition_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "meta_cognition",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "meta_job_id",
+            "trigger_process_id",
+            "feedback_request_id",
+            "dedupe_scope_ref",
+            "question_key",
+            "delivery_mode",
+            "delivery_version",
+            "question_payload_ref",
+            "question_payload_hash",
+            "expires_at",
+            "status"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "meta_job_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "feedback_request_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "dedupe_scope_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "question_key": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "candidate_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "conflict_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "delivery_mode": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "target_actor_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "target_binding_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "delivery_channel": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "delivery_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "question_payload_ref": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "question_payload_hash": {
+              "minLength": 71,
+              "maxLength": 71,
+              "pattern": "^sha256:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "expires_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "status": {
+              "const": "open",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "meta.result.updated",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "meta_cognition_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "meta_cognition",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "meta_job_id",
+            "trigger_process_id",
+            "meta_result_id",
+            "previous_result_version",
+            "result_version",
+            "previous_result_status",
+            "result_status",
+            "changed_failure_ids",
+            "active_compensation_count",
+            "active_repair_count",
+            "meta_summary_ref",
+            "updated_at"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "meta_job_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "meta_result_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "previous_result_version": {
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "result_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "previous_result_status": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "const": "complete",
+                      "type": "string"
+                    },
+                    {
+                      "const": "partial_pending",
+                      "type": "string"
+                    },
+                    {
+                      "const": "partial_failed",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "result_status": {
+              "anyOf": [
+                {
+                  "const": "complete",
+                  "type": "string"
+                },
+                {
+                  "const": "partial_pending",
+                  "type": "string"
+                },
+                {
+                  "const": "partial_failed",
+                  "type": "string"
+                }
+              ]
+            },
+            "changed_failure_ids": {
+              "maxItems": 10000,
+              "uniqueItems": true,
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "maxLength": 512,
+                "type": "string"
+              }
+            },
+            "active_compensation_count": {
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "active_repair_count": {
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "meta_summary_ref": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "updated_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "meta.result.finalized",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "meta_cognition_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "meta_cognition",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "meta_job_id",
+            "trigger_process_id",
+            "meta_result_id",
+            "result_version",
+            "result_status",
+            "finalized_at",
+            "previous_meta_status",
+            "next_meta_status",
+            "projection_version",
+            "meta_enqueue_reason",
+            "active_compensation_count",
+            "active_repair_count",
+            "meta_summary_ref"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "meta_job_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "meta_result_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "result_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "result_status": {
+              "anyOf": [
+                {
+                  "const": "complete",
+                  "type": "string"
+                },
+                {
+                  "const": "partial_failed",
+                  "type": "string"
+                }
+              ]
+            },
+            "finalized_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "previous_meta_status": {
+              "anyOf": [
+                {
+                  "const": "completed",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                }
+              ]
+            },
+            "next_meta_status": {
+              "anyOf": [
+                {
+                  "const": "completed",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                }
+              ]
+            },
+            "projection_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "meta_enqueue_reason": {
+              "anyOf": [
+                {
+                  "const": "cooldown_expired",
+                  "type": "string"
+                },
+                {
+                  "const": "user_retracted",
+                  "type": "string"
+                },
+                {
+                  "const": "system_interrupted",
+                  "type": "string"
+                },
+                {
+                  "const": "failed_with_learnable_snapshot",
+                  "type": "string"
+                }
+              ]
+            },
+            "active_compensation_count": {
+              "const": 0,
+              "type": "number"
+            },
+            "active_repair_count": {
+              "const": 0,
+              "type": "number"
+            },
+            "meta_summary_ref": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "meta.job.completed",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "meta_cognition_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "meta_cognition",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workspace_id",
+            "bot_id",
+            "owner_agent_id",
+            "deployment_environment",
+            "release_channel",
+            "meta_job_id",
+            "trigger_process_id",
+            "previous_meta_status",
+            "next_meta_status",
+            "projection_version",
+            "reason_code",
+            "meta_result_id",
+            "result_version",
+            "result_status",
+            "completed_at",
+            "partial_failures_count",
+            "meta_enqueue_reason",
+            "active_compensation_count",
+            "active_repair_count",
+            "meta_summary_ref",
+            "result_finalized_at"
+          ],
+          "properties": {
+            "workspace_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "bot_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "owner_agent_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "deployment_environment": {
+              "$id": "urn:pai:shared:deployment-environment:v1",
+              "anyOf": [
+                {
+                  "const": "local",
+                  "type": "string"
+                },
+                {
+                  "const": "dev",
+                  "type": "string"
+                },
+                {
+                  "const": "staging",
+                  "type": "string"
+                },
+                {
+                  "const": "prod",
+                  "type": "string"
+                }
+              ]
+            },
+            "release_channel": {
+              "$id": "urn:pai:shared:release-channel:v1",
+              "anyOf": [
+                {
+                  "const": "stable",
+                  "type": "string"
+                },
+                {
+                  "const": "canary",
+                  "type": "string"
+                }
+              ]
+            },
+            "meta_job_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "trigger_process_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "previous_meta_status": {
+              "anyOf": [
+                {
+                  "const": "running",
+                  "type": "string"
+                },
+                {
+                  "const": "retry_wait",
+                  "type": "string"
+                }
+              ]
+            },
+            "next_meta_status": {
+              "const": "completed",
+              "type": "string"
+            },
+            "projection_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "reason_code": {
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+              "type": "string"
+            },
+            "meta_result_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "result_version": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "result_status": {
+              "anyOf": [
+                {
+                  "const": "complete",
+                  "type": "string"
+                },
+                {
+                  "const": "partial_pending",
+                  "type": "string"
+                },
+                {
+                  "const": "partial_failed",
+                  "type": "string"
+                }
+              ]
+            },
+            "completed_at": {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            "partial_failures_count": {
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "meta_enqueue_reason": {
+              "anyOf": [
+                {
+                  "const": "cooldown_expired",
+                  "type": "string"
+                },
+                {
+                  "const": "user_retracted",
+                  "type": "string"
+                },
+                {
+                  "const": "system_interrupted",
+                  "type": "string"
+                },
+                {
+                  "const": "failed_with_learnable_snapshot",
+                  "type": "string"
+                }
+              ]
+            },
+            "active_compensation_count": {
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "active_repair_count": {
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "meta_summary_ref": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "result_finalized_at": {
+              "anyOf": [
+                {
+                  "minLength": 20,
+                  "maxLength": 35,
+                  "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "schema_version",
+        "producer",
+        "occurred_at",
+        "idempotency_key",
+        "trace_id",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "event_type": {
+          "const": "meta.job.failed",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "meta_cognition_event.v1",
+          "type": "string"
+        },
+        "producer": {
+          "const": "meta_cognition",
+          "type": "string"
+        },
+        "occurred_at": {
+          "minLength": 20,
+          "maxLength": 35,
+          "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "payload": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "workspace_id",
+                "bot_id",
+                "owner_agent_id",
+                "deployment_environment",
+                "release_channel",
+                "meta_job_id",
+                "trigger_process_id",
+                "previous_meta_status",
+                "next_meta_status",
+                "projection_version",
+                "reason_code",
+                "failed_at",
+                "attempt_count",
+                "error",
+                "result_disposition",
+                "failure_stage",
+                "no_result_reason",
+                "active_compensation",
+                "meta_enqueue_reason"
+              ],
+              "properties": {
+                "workspace_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "bot_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "owner_agent_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "deployment_environment": {
+                  "$id": "urn:pai:shared:deployment-environment:v1",
+                  "anyOf": [
+                    {
+                      "const": "local",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dev",
+                      "type": "string"
+                    },
+                    {
+                      "const": "staging",
+                      "type": "string"
+                    },
+                    {
+                      "const": "prod",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "release_channel": {
+                  "$id": "urn:pai:shared:release-channel:v1",
+                  "anyOf": [
+                    {
+                      "const": "stable",
+                      "type": "string"
+                    },
+                    {
+                      "const": "canary",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "meta_job_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "trigger_process_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "previous_meta_status": {
+                  "anyOf": [
+                    {
+                      "const": "queued",
+                      "type": "string"
+                    },
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "retry_wait",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "next_meta_status": {
+                  "const": "failed",
+                  "type": "string"
+                },
+                "projection_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "reason_code": {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                "failed_at": {
+                  "minLength": 20,
+                  "maxLength": 35,
+                  "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                  "type": "string"
+                },
+                "attempt_count": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "error": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "source"
+                  ],
+                  "properties": {
+                    "code": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                      "type": "string"
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "source": {
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "details_ref": {
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "type": "string"
+                    }
+                  }
+                },
+                "result_disposition": {
+                  "const": "not_created",
+                  "type": "string"
+                },
+                "failure_stage": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "no_result_reason": {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                "active_compensation": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "meta_enqueue_reason": {
+                  "anyOf": [
+                    {
+                      "const": "cooldown_expired",
+                      "type": "string"
+                    },
+                    {
+                      "const": "user_retracted",
+                      "type": "string"
+                    },
+                    {
+                      "const": "system_interrupted",
+                      "type": "string"
+                    },
+                    {
+                      "const": "failed_with_learnable_snapshot",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "dlq_ref": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "workspace_id",
+                "bot_id",
+                "owner_agent_id",
+                "deployment_environment",
+                "release_channel",
+                "meta_job_id",
+                "trigger_process_id",
+                "previous_meta_status",
+                "next_meta_status",
+                "projection_version",
+                "reason_code",
+                "failed_at",
+                "attempt_count",
+                "error",
+                "result_disposition",
+                "meta_result_id",
+                "result_version",
+                "result_status",
+                "result_finalized_at",
+                "active_compensation",
+                "meta_enqueue_reason"
+              ],
+              "properties": {
+                "workspace_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "bot_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "owner_agent_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "deployment_environment": {
+                  "$id": "urn:pai:shared:deployment-environment:v1",
+                  "anyOf": [
+                    {
+                      "const": "local",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dev",
+                      "type": "string"
+                    },
+                    {
+                      "const": "staging",
+                      "type": "string"
+                    },
+                    {
+                      "const": "prod",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "release_channel": {
+                  "$id": "urn:pai:shared:release-channel:v1",
+                  "anyOf": [
+                    {
+                      "const": "stable",
+                      "type": "string"
+                    },
+                    {
+                      "const": "canary",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "meta_job_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "trigger_process_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "previous_meta_status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "retry_wait",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "next_meta_status": {
+                  "const": "failed",
+                  "type": "string"
+                },
+                "projection_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "reason_code": {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                  "type": "string"
+                },
+                "failed_at": {
+                  "minLength": 20,
+                  "maxLength": 35,
+                  "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                  "type": "string"
+                },
+                "attempt_count": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "error": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable",
+                    "source"
+                  ],
+                  "properties": {
+                    "code": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+                      "type": "string"
+                    },
+                    "message": {
+                      "minLength": 1,
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    },
+                    "source": {
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "details_ref": {
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "type": "string"
+                    }
+                  }
+                },
+                "result_disposition": {
+                  "const": "finalized",
+                  "type": "string"
+                },
+                "meta_result_id": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "result_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "result_status": {
+                  "const": "partial_failed",
+                  "type": "string"
+                },
+                "result_finalized_at": {
+                  "minLength": 20,
+                  "maxLength": 35,
+                  "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+                  "type": "string"
+                },
+                "active_compensation": {
+                  "const": false,
+                  "type": "boolean"
+                },
+                "meta_enqueue_reason": {
+                  "anyOf": [
+                    {
+                      "const": "cooldown_expired",
+                      "type": "string"
+                    },
+                    {
+                      "const": "user_retracted",
+                      "type": "string"
+                    },
+                    {
+                      "const": "system_interrupted",
+                      "type": "string"
+                    },
+                    {
+                      "const": "failed_with_learnable_snapshot",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "dlq_ref": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

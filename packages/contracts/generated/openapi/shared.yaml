@@ -114,6 +114,80 @@
           }
         ]
       },
+      "DurableInboxIdentityV1": {
+        "$id": "urn:pai:shared:durable-inbox-identity:v1",
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source",
+          "event_id",
+          "idempotency_key",
+          "payload_hash",
+          "semantic_hash",
+          "scope_fingerprint"
+        ],
+        "properties": {
+          "source": {
+            "$id": "urn:pai:shared:service-id:v1",
+            "anyOf": [
+              {
+                "const": "trigger_processor",
+                "type": "string"
+              },
+              {
+                "const": "action_runtime",
+                "type": "string"
+              },
+              {
+                "const": "meta_cognition",
+                "type": "string"
+              },
+              {
+                "const": "memory",
+                "type": "string"
+              },
+              {
+                "const": "knowthat",
+                "type": "string"
+              },
+              {
+                "const": "skill_registry",
+                "type": "string"
+              },
+              {
+                "const": "timer_trigger_app",
+                "type": "string"
+              },
+              {
+                "const": "observation_gateway",
+                "type": "string"
+              }
+            ]
+          },
+          "event_id": {
+            "minLength": 1,
+            "maxLength": 256,
+            "type": "string"
+          },
+          "idempotency_key": {
+            "minLength": 1,
+            "maxLength": 512,
+            "type": "string"
+          },
+          "payload_hash": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "semantic_hash": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "scope_fingerprint": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          }
+        }
+      },
       "WorkloadCredentialClaimsV1": {
         "$id": "urn:pai:shared:workload-credential-claims:v1",
         "anyOf": [
@@ -153,14 +227,17 @@
               },
               "iat": {
                 "minimum": 0,
+                "maximum": 9007199254740991,
                 "type": "integer"
               },
               "nbf": {
                 "minimum": 0,
+                "maximum": 9007199254740991,
                 "type": "integer"
               },
               "exp": {
                 "minimum": 0,
+                "maximum": 9007199254740991,
                 "type": "integer"
               },
               "capability": {
@@ -230,14 +307,17 @@
               },
               "iat": {
                 "minimum": 0,
+                "maximum": 9007199254740991,
                 "type": "integer"
               },
               "nbf": {
                 "minimum": 0,
+                "maximum": 9007199254740991,
                 "type": "integer"
               },
               "exp": {
                 "minimum": 0,
+                "maximum": 9007199254740991,
                 "type": "integer"
               },
               "capability": {
@@ -319,6 +399,7 @@
               },
               "auth_time": {
                 "minimum": 0,
+                "maximum": 9007199254740991,
                 "type": "integer"
               },
               "scope_kind": {
@@ -396,6 +477,7 @@
               },
               "auth_time": {
                 "minimum": 0,
+                "maximum": 9007199254740991,
                 "type": "integer"
               },
               "scope_kind": {

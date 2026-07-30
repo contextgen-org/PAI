@@ -1,6 +1,13 @@
+import { randomUUID } from "node:crypto";
+
 import { Pool } from "pg";
 import { createClient } from "redis";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import type {
+  DurableEventEnvelopeV1,
+  DurableInboxIdentityV1,
+} from "@pai/contracts";
 
 import {
   assertOwnerOutboxAcknowledgeConfirmationV1,
@@ -13,8 +20,10 @@ import {
 } from "@pai/persistence";
 
 import {
+  canonicalDurableEventEnvelopePayloadHashV1,
   canonicalDurableEventEnvelopeSemanticHashV1,
   canonicalPayloadHashV1,
+  assertDurableSentOutboxPermanentFailureAckResultV1,
   durableEventScopeFingerprintV1,
   createDurableEventConsumerWorkerV1,
   createDurableInboxConsumerV1,
@@ -32,12 +41,17 @@ import {
   type DurableEventTransportPortV1,
 } from "../src/index.js";
 
-const databaseUrl = process.env.PAI_TEST_DATABASE_URL;
+const databaseUrl =
+  process.env.PAI_EVENTING_TEST_DATABASE_URL ??
+  process.env.PAI_PERSISTENCE_TEST_DATABASE_URL ??
+  process.env.PAI_TEST_DATABASE_URL;
 const redisUrl = process.env.PAI_TEST_REDIS_URL;
 const itPostgresRedis =
   databaseUrl === undefined || redisUrl === undefined ? it.skip : it;
 const EVENTING_TEST_SCHEMA = "trigger_processor" as const;
 const EVENTING_TEST_APP_ROLE = "pai_trigger_processor_app" as const;
+const EVENTING_TEST_MIGRATOR_ROLE = "pai_eventing_contract_migrator" as const;
+const EVENTING_TEST_RUNTIME_ROLE = "pai_eventing_contract_runtime" as const;
 const EVENTING_DLQ_RESOLUTION = ownerDlqResolutionContractV1(
   "trigger_processor",
   "eventing_dlq",
@@ -233,6 +247,7 @@ const EVENTING_CONTRACT_INPUT = {
     "claim_sent_eventing_outbox_redrive_v1",
     "activate_eventing_transport_epoch_v1",
     "ack_sent_eventing_outbox_redrive_v1",
+    "quarantine_sent_eventing_outbox_redrive_v1",
     ...EVENTING_DLQ_RESOLUTION.mutable_writers,
   ],
   function_signatures: [
@@ -458,6 +473,43 @@ const EVENTING_CONTRACT_INPUT = {
       ],
       returns: "jsonb",
     }),
+    ownerFunctionSignatureV1({
+      schema: "trigger_processor",
+      function_name: "quarantine_sent_eventing_outbox_redrive_v1",
+      primary_table: "eventing_outbox",
+      writer_kind: "outbox_claim_ack",
+      arguments: [
+        ["p_outbox_id", "text"],
+        ["p_claim_token", "text"],
+        ["p_previous_transport_ref", "text"],
+        ["p_previous_transport_epoch", "text"],
+        ["p_previous_transport_generation", "bigint", { nullable: true }],
+        ["p_current_transport_epoch", "text"],
+        ["p_current_transport_generation", "bigint"],
+        ["p_failure_code", "text"],
+        ["p_failure_message", "text"],
+        ["p_now", "timestamptz"],
+      ],
+      reads_tables: [
+        "eventing_outbox",
+        "eventing_transport_epochs",
+        "eventing_dlq",
+      ],
+      writes_tables: ["eventing_outbox", "eventing_dlq"],
+      effects: [
+        {
+          table_name: "eventing_outbox",
+          operation: "redrive_ack",
+          concurrency_control: "lease_fence",
+        },
+        {
+          table_name: "eventing_dlq",
+          operation: "append",
+          concurrency_control: "idempotency_key",
+        },
+      ],
+      returns: "jsonb",
+    }),
     ...EVENTING_DLQ_RESOLUTION.function_signatures,
   ],
   foreign_key_snapshot: {
@@ -610,6 +662,15 @@ const EVENTING_CONTRACT_INPUT = {
       validated: true,
     },
     {
+      constraint_name: "eventing_inbox_source_idempotency_key_key",
+      table_name: "eventing_inbox",
+      columns: ["source", "idempotency_key"],
+      kind: "unique",
+      deferrable: false,
+      initially_deferred: false,
+      validated: true,
+    },
+    {
       constraint_name: "eventing_outbox_idempotency_key_key",
       table_name: "eventing_outbox",
       columns: ["idempotency_key"],
@@ -680,6 +741,15 @@ const EVENTING_CONTRACT_INPUT = {
       table_name: "eventing_inbox",
       definition:
         "CREATE UNIQUE INDEX eventing_inbox_source_event_id_key ON trigger_processor.eventing_inbox USING btree (source, event_id)",
+      unique: true,
+      primary: false,
+      valid: true,
+    },
+    {
+      index_name: "eventing_inbox_source_idempotency_key_key",
+      table_name: "eventing_inbox",
+      definition:
+        "CREATE UNIQUE INDEX eventing_inbox_source_idempotency_key_key ON trigger_processor.eventing_inbox USING btree (source, idempotency_key)",
       unique: true,
       primary: false,
       valid: true,
@@ -802,7 +872,7 @@ const EVENTING_CONTRACT_INPUT = {
   object_metadata_tables: [],
 } as const;
 
-const setupSql = `
+const canonicalSetupSql = `
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_migrator') THEN
     CREATE ROLE pai_migrator NOLOGIN;
@@ -910,7 +980,8 @@ CREATE TABLE trigger_processor.eventing_inbox (
   semantic_hash text NOT NULL,
   processed_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL,
-  UNIQUE (source, event_id)
+  UNIQUE (source, event_id),
+  UNIQUE (source, idempotency_key)
 );
 CREATE TABLE trigger_processor.eventing_dlq (
   id text PRIMARY KEY,
@@ -1135,6 +1206,7 @@ AS $$
 DECLARE
   existing trigger_processor.eventing_inbox%ROWTYPE;
   applied_inbox_id text;
+  isolation_id text;
   projection_id text;
 BEGIN
   projection_id := (p_event->>'producer') || ':' || p_scope_fingerprint || ':' || p_idempotency_key;
@@ -1146,7 +1218,7 @@ BEGIN
     p_event->>'producer', p_event->>'event_id', p_scope_fingerprint,
     p_idempotency_key, p_payload_hash, p_semantic_hash,
     clock_timestamp(), clock_timestamp()
-  ) ON CONFLICT (source, event_id) DO NOTHING
+  ) ON CONFLICT DO NOTHING
   RETURNING id INTO applied_inbox_id;
   IF FOUND THEN
     INSERT INTO trigger_processor.eventing_projection(
@@ -1172,23 +1244,33 @@ BEGIN
   SELECT * INTO existing
     FROM trigger_processor.eventing_inbox
    WHERE source = p_event->>'producer'
-     AND event_id = p_event->>'event_id'
+     AND (
+       event_id = p_event->>'event_id'
+       OR idempotency_key = p_idempotency_key
+     )
+   ORDER BY CASE
+     WHEN event_id = p_event->>'event_id' THEN 0
+     ELSE 1
+   END
+   LIMIT 1
    FOR UPDATE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'inbox delivery identity missing';
   END IF;
-  IF existing.idempotency_key IS DISTINCT FROM p_idempotency_key
+  IF existing.event_id IS DISTINCT FROM p_event->>'event_id'
+     OR existing.idempotency_key IS DISTINCT FROM p_idempotency_key
      OR existing.payload_hash IS DISTINCT FROM p_payload_hash
      OR existing.semantic_hash IS DISTINCT FROM p_semantic_hash
      OR existing.scope_fingerprint IS DISTINCT FROM p_scope_fingerprint THEN
+    isolation_id := 'inbox-conflict:' || (p_event->>'producer') || ':' ||
+      (p_event->>'event_id') || ':' || md5(jsonb_build_array(
+        p_idempotency_key, p_payload_hash, p_semantic_hash,
+        p_scope_fingerprint
+      )::text);
     INSERT INTO trigger_processor.eventing_dlq(
       id, source_event_id, event_type, payload, last_error, failed_at
     ) VALUES (
-      'inbox-conflict:' || (p_event->>'producer') || ':' ||
-        (p_event->>'event_id') || ':' || md5(jsonb_build_array(
-          p_idempotency_key, p_payload_hash, p_semantic_hash,
-          p_scope_fingerprint
-        )::text),
+      isolation_id,
       p_event->>'event_id',
       'consumer.delivery.identity_conflict',
       p_event,
@@ -1201,7 +1283,11 @@ BEGIN
       ),
       clock_timestamp()
     ) ON CONFLICT (id) DO NOTHING;
-    RETURN jsonb_build_object('status', 'conflict');
+    RETURN jsonb_build_object(
+      'status', 'isolated',
+      'isolation_code', 'durable_inbox_identity_conflict',
+      'isolation_ref', 'trigger_processor.eventing_dlq/' || isolation_id
+    );
   END IF;
   RETURN jsonb_build_object('status', 'replayed');
 END;
@@ -1471,6 +1557,147 @@ BEGIN
   RETURN jsonb_build_object('acknowledged', true);
 END;
 $$;
+CREATE FUNCTION trigger_processor.quarantine_sent_eventing_outbox_redrive_v1(
+  p_outbox_id text,
+  p_claim_token text,
+  p_previous_transport_ref text,
+  p_previous_transport_epoch text,
+  p_previous_transport_generation bigint,
+  p_current_transport_epoch text,
+  p_current_transport_generation bigint,
+  p_failure_code text,
+  p_failure_message text,
+  p_now timestamptz
+) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = trigger_processor, pg_temp
+AS $$
+DECLARE
+  v_active_epoch text;
+  v_active_generation bigint;
+  v_updated_id text;
+  v_event_type text;
+  v_payload jsonb;
+  v_failure jsonb;
+  v_quarantine_id text;
+  v_quarantine_payload jsonb;
+  v_replayed boolean;
+BEGIN
+  IF p_outbox_id IS NULL OR btrim(p_outbox_id) = ''
+     OR p_claim_token IS NULL OR btrim(p_claim_token) = ''
+     OR p_previous_transport_ref IS NULL OR btrim(p_previous_transport_ref) = ''
+     OR p_previous_transport_epoch IS NULL OR btrim(p_previous_transport_epoch) = ''
+     OR p_current_transport_epoch IS NULL OR btrim(p_current_transport_epoch) = ''
+     OR p_current_transport_generation < 1
+     OR p_failure_code IS NULL
+     OR p_failure_code !~ '^[a-z][a-z0-9_]{0,63}$'
+     OR p_failure_message IS NULL OR btrim(p_failure_message) = '' THEN
+    RAISE EXCEPTION 'invalid sent outbox permanent failure acknowledgment';
+  END IF;
+
+  SELECT active.active_epoch, active.active_generation
+    INTO v_active_epoch, v_active_generation
+    FROM trigger_processor.eventing_transport_epochs active
+   WHERE active.transport_name = 'redis_stream'
+   FOR UPDATE;
+  IF v_active_epoch IS DISTINCT FROM p_current_transport_epoch
+     OR v_active_generation IS DISTINCT FROM p_current_transport_generation THEN
+    RAISE EXCEPTION 'stale active transport generation';
+  END IF;
+
+  v_failure := jsonb_build_object(
+    'code', p_failure_code,
+    'message', p_failure_message,
+    'retryable', false
+  );
+  v_quarantine_id :=
+    'sent_redrive_permanent:' || p_outbox_id || ':' || p_claim_token;
+  v_quarantine_payload := jsonb_build_object(
+    'kind', 'sent_outbox_redrive_permanent_failure',
+    'outbox_id', p_outbox_id,
+    'claim_token', p_claim_token,
+    'previous_transport_ref', p_previous_transport_ref,
+    'previous_transport_epoch', p_previous_transport_epoch,
+    'previous_transport_generation', p_previous_transport_generation,
+    'current_transport_epoch', p_current_transport_epoch,
+    'current_transport_generation', p_current_transport_generation,
+    'failure_code', p_failure_code
+  );
+
+  UPDATE trigger_processor.eventing_outbox
+     SET status = 'failed',
+         last_error = v_failure,
+         redrive_claimed_by = NULL,
+         redrive_claim_token = NULL,
+         redrive_locked_until = NULL,
+         updated_at = p_now
+   WHERE id = p_outbox_id
+     AND status = 'sent'
+     AND redrive_claim_token = p_claim_token
+     AND transport_ref = p_previous_transport_ref
+     AND transport_epoch IS NOT DISTINCT FROM p_previous_transport_epoch
+     AND transport_generation IS NOT DISTINCT FROM p_previous_transport_generation
+   RETURNING id, event_type, payload
+        INTO v_updated_id, v_event_type, v_payload;
+
+  IF v_updated_id IS NULL THEN
+    SELECT true
+      INTO v_replayed
+      FROM trigger_processor.eventing_outbox outbox
+      JOIN trigger_processor.eventing_dlq dlq
+        ON dlq.id = v_quarantine_id
+     WHERE outbox.id = p_outbox_id
+       AND outbox.status = 'failed'
+       AND outbox.transport_ref = p_previous_transport_ref
+       AND outbox.transport_epoch IS NOT DISTINCT FROM p_previous_transport_epoch
+       AND outbox.transport_generation IS NOT DISTINCT FROM p_previous_transport_generation
+       AND outbox.last_error = v_failure
+       AND dlq.source_event_id = p_outbox_id
+       AND dlq.payload = v_quarantine_payload
+       AND dlq.last_error = v_failure;
+    IF v_replayed IS TRUE THEN
+      RETURN jsonb_build_object(
+        'acknowledged', true,
+        'status', 'replayed'
+      );
+    END IF;
+    RAISE EXCEPTION 'stale sent outbox permanent failure claim';
+  END IF;
+
+  INSERT INTO trigger_processor.eventing_dlq(
+    id,
+    source_event_id,
+    event_type,
+    payload,
+    last_error,
+    failed_at
+  ) VALUES (
+    v_quarantine_id,
+    p_outbox_id,
+    v_event_type,
+    v_quarantine_payload,
+    v_failure,
+    p_now
+  )
+  ON CONFLICT (id) DO NOTHING;
+
+  PERFORM 1
+    FROM trigger_processor.eventing_dlq dlq
+   WHERE dlq.id = v_quarantine_id
+     AND dlq.source_event_id = p_outbox_id
+     AND dlq.event_type = v_event_type
+     AND dlq.payload = v_quarantine_payload
+     AND dlq.last_error = v_failure;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'sent outbox quarantine identity conflict';
+  END IF;
+
+  RETURN jsonb_build_object(
+    'acknowledged', true,
+    'status', 'quarantined'
+  );
+END;
+$$;
 RESET ROLE;
 REVOKE ALL ON ALL TABLES IN SCHEMA trigger_processor FROM PUBLIC, anon, authenticated, pai_trigger_processor_app, pai_eventing_recovery_runtime;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA trigger_processor FROM PUBLIC, anon, authenticated, pai_trigger_processor_app, pai_eventing_recovery_runtime;
@@ -1490,7 +1717,13 @@ GRANT EXECUTE ON FUNCTION trigger_processor.resolve_eventing_dlq_v1(text, text, 
 GRANT EXECUTE ON FUNCTION trigger_processor.activate_eventing_transport_epoch_v1(text, bigint, text, bigint, timestamptz) TO pai_trigger_processor_app;
 GRANT EXECUTE ON FUNCTION trigger_processor.claim_sent_eventing_outbox_redrive_v1(text, integer, integer, timestamptz, text, bigint) TO pai_trigger_processor_app;
 GRANT EXECUTE ON FUNCTION trigger_processor.ack_sent_eventing_outbox_redrive_v1(text, text, text, text, bigint, text, text, bigint, timestamptz) TO pai_trigger_processor_app;
+GRANT EXECUTE ON FUNCTION trigger_processor.quarantine_sent_eventing_outbox_redrive_v1(text, text, text, text, bigint, text, bigint, text, text, timestamptz) TO pai_trigger_processor_app;
 `;
+
+const setupSql = canonicalSetupSql
+  .replaceAll("pai_trigger_processor_app", EVENTING_TEST_APP_ROLE)
+  .replaceAll("pai_eventing_recovery_runtime", EVENTING_TEST_RUNTIME_ROLE)
+  .replaceAll("pai_migrator", EVENTING_TEST_MIGRATOR_ROLE);
 
 function generatedWriterBody(functionName: string): string {
   const functionStart = setupSql.indexOf(
@@ -1591,12 +1824,33 @@ describe("eventing deployment contract guard", () => {
 const describePostgres = databaseUrl === undefined ? describe.skip : describe;
 
 describePostgres("PostgreSQL durable outbox recovery", () => {
-  const admin = databaseUrl === undefined
+  const control = databaseUrl === undefined
     ? undefined
-    : new Pool({ connectionString: databaseUrl });
+    : new Pool({ connectionString: databaseUrl, max: 1 });
+  const isolatedDatabase =
+    `pai_eventing_${randomUUID().replaceAll("-", "")}`;
+  let isolatedDatabaseUrl: string | undefined;
+  let admin: Pool | undefined;
+
+  beforeAll(async () => {
+    if (control === undefined || databaseUrl === undefined) {
+      throw new Error("PAI_TEST_DATABASE_URL is required");
+    }
+    await control.query(`CREATE DATABASE "${isolatedDatabase}" TEMPLATE template0`);
+    const url = new URL(databaseUrl);
+    url.pathname = `/${isolatedDatabase}`;
+    isolatedDatabaseUrl = url.toString();
+    admin = new Pool({ connectionString: isolatedDatabaseUrl });
+  });
 
   afterAll(async () => {
     await admin?.end();
+    if (control !== undefined) {
+      await control.query(`DROP DATABASE IF EXISTS "${isolatedDatabase}" WITH (FORCE)`);
+      await control.query(`DROP ROLE IF EXISTS ${EVENTING_TEST_RUNTIME_ROLE}`);
+      await control.query(`DROP ROLE IF EXISTS ${EVENTING_TEST_MIGRATOR_ROLE}`);
+      await control.end();
+    }
   });
 
   async function reset(): Promise<void> {
@@ -1605,9 +1859,11 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
   }
 
   function runtimeUrl(): string {
-    if (databaseUrl === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
-    const url = new URL(databaseUrl);
-    url.username = "pai_eventing_recovery_runtime";
+    if (isolatedDatabaseUrl === undefined) {
+      throw new Error("isolated PostgreSQL database is not initialized");
+    }
+    const url = new URL(isolatedDatabaseUrl);
+    url.username = EVENTING_TEST_RUNTIME_ROLE;
     url.password = "eventing-runtime-test";
     return url.toString();
   }
@@ -1734,6 +1990,7 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     const firstProcess = await openVerifiedOwnerPostgresCompositionV1(
       EVENTING_CONTRACT,
       runtimeUrl(),
+      EVENTING_TEST_MIGRATOR_ROLE,
     );
     await firstProcess.unit_of_work.withTransaction(
       {
@@ -1759,6 +2016,7 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     const secondProcess = await openVerifiedOwnerPostgresCompositionV1(
       EVENTING_CONTRACT,
       runtimeUrl(),
+      EVENTING_TEST_MIGRATOR_ROLE,
     );
     const published: string[] = [];
     const transport: DurableEventTransportPortV1 = {
@@ -1827,7 +2085,11 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
         },
         async (transaction, repositories) =>
           repositories.owner.executeWriter<
-            Readonly<{ status: "processed" | "replayed" | "conflict" }>,
+            Readonly<{
+              status: "processed" | "replayed" | "isolated";
+              isolation_code?: "durable_inbox_identity_conflict";
+              isolation_ref?: string;
+            }>,
             "consume_eventing_inbox_v1"
           >(transaction, {
             writer: "consume_eventing_inbox_v1",
@@ -1836,7 +2098,8 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
               p_idempotency_key:
                 overrides.idempotency_key ?? envelope.idempotency_key,
               p_payload_hash:
-                overrides.payload_hash ?? canonicalPayloadHashV1(eventPayload),
+                overrides.payload_hash ??
+                canonicalDurableEventEnvelopePayloadHashV1(consumedEnvelope),
               p_semantic_hash:
                 overrides.semantic_hash ??
                 canonicalDurableEventEnvelopeSemanticHashV1(consumedEnvelope),
@@ -1847,31 +2110,32 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
             expected_rows: 1,
           }),
       );
-      if (result.status === "conflict") {
-        throw new Error("inbox delivery identity conflict");
-      }
       return result;
     };
     await expect(consume(envelope.payload)).resolves.toEqual({ status: "processed" });
     await expect(consume(envelope.payload)).resolves.toEqual({ status: "replayed" });
     await expect(
       consume(envelope.payload, { idempotency_key: "changed-business-key" }),
-    ).rejects.toThrow(/delivery identity conflict/);
+    ).resolves.toMatchObject({ status: "isolated" });
     await expect(
       consume(envelope.payload, { payload_hash: "changed-payload-hash" }),
-    ).rejects.toThrow(/delivery identity conflict/);
+    ).resolves.toMatchObject({ status: "isolated" });
     await expect(
       consume(envelope.payload, { semantic_hash: "changed-semantic-hash" }),
-    ).rejects.toThrow(/delivery identity conflict/);
+    ).resolves.toMatchObject({ status: "isolated" });
     await expect(
       consume(envelope.payload, { scope_fingerprint: "changed-scope" }),
-    ).rejects.toThrow(/delivery identity conflict/);
+    ).resolves.toMatchObject({ status: "isolated" });
+    const nextEventId = `${envelope.event_id}_next`;
     await expect(
       consume(envelope.payload, {
-        event_id: `${envelope.event_id}_next`,
+        event_id: nextEventId,
         idempotency_key: envelope.idempotency_key,
       }),
-    ).resolves.toEqual({ status: "processed" });
+    ).resolves.toMatchObject({
+      status: "isolated",
+      isolation_code: "durable_inbox_identity_conflict",
+    });
 
     if (admin === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
     const projection = await admin.query<{
@@ -1885,20 +2149,20 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     );
     expect(projection.rows).toEqual([
       {
-        applied_count: 2,
+        applied_count: 1,
         semantic_hash: canonicalDurableEventEnvelopeSemanticHashV1(envelope),
       },
     ]);
     const audit = await admin.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM trigger_processor.eventing_audit",
     );
-    expect(audit.rows).toEqual([{ count: "2" }]);
+    expect(audit.rows).toEqual([{ count: "1" }]);
     const conflicts = await admin.query<{ count: string }>(
       `SELECT count(*)::text AS count
          FROM trigger_processor.eventing_dlq
         WHERE event_type = 'consumer.delivery.identity_conflict'`,
     );
-    expect(conflicts.rows).toEqual([{ count: "4" }]);
+    expect(conflicts.rows).toEqual([{ count: "5" }]);
     const persisted = await admin.query<{
       status: string;
       attempt_count: number;
@@ -1922,11 +2186,172 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     await secondProcess.close();
   });
 
+  it("commits an inbox identity isolation before the worker XACKs exactly once", async () => {
+    await reset();
+    const composition = await openVerifiedOwnerPostgresCompositionV1(
+      EVENTING_CONTRACT,
+      runtimeUrl(),
+      EVENTING_TEST_MIGRATOR_ROLE,
+    );
+    const canonical = triggerRejectedEvent({
+      event_id: "evt_worker_identity_conflict_001",
+      idempotency_key: "submit_attempt_worker_conflict_001:rejected",
+      trace_id: "trace_worker_identity_conflict_001",
+      submit_attempt_id: "submit_attempt_worker_conflict_001",
+    });
+    let returnedIsolationRef: string | undefined;
+    const apply = async (
+      request: Readonly<
+        DurableInboxIdentityV1 & { envelope: DurableEventEnvelopeV1 }
+      >,
+    ) => {
+      const result = await composition.unit_of_work.withTransaction(
+        {
+          operation: "consume_worker_identity_conflict",
+          idempotency_key: request.idempotency_key,
+          trace_id: request.envelope.trace_id,
+          isolation: "read_committed",
+          retry: "none",
+        },
+        async (transaction, repositories) =>
+          repositories.owner.executeWriter<
+            | Readonly<{ status: "processed" | "replayed" }>
+            | Readonly<{
+                status: "isolated";
+                isolation_code: "durable_inbox_identity_conflict";
+                isolation_ref: string;
+              }>,
+            "consume_eventing_inbox_v1"
+          >(transaction, {
+            writer: "consume_eventing_inbox_v1",
+            arguments: {
+              p_event: request.envelope,
+              p_idempotency_key: request.idempotency_key,
+              p_payload_hash: request.payload_hash,
+              p_semantic_hash: request.semantic_hash,
+              p_scope_fingerprint: request.scope_fingerprint,
+            },
+            expected_rows: 1,
+          }),
+      );
+      if (result.status === "isolated") {
+        returnedIsolationRef = result.isolation_ref;
+      }
+      return result;
+    };
+    const inbox = createDurableInboxConsumerV1(
+      { apply },
+      { consumer_service: "trigger_processor" },
+    );
+    await expect(inbox.consume(canonical)).resolves.toEqual({
+      status: "processed",
+    });
+
+    const conflicting = {
+      ...canonical,
+      idempotency_key: "submit_attempt_worker_conflict_001:changed",
+    };
+    let acknowledged = 0;
+    let deadLetterCalls = 0;
+    let isolationRef: string | undefined;
+    const worker = createDurableEventConsumerWorkerV1(
+      {
+        async readNew() {
+          return [
+            {
+              kind: "event",
+              delivery_id: "worker-conflict-1-0",
+              delivery_ref: "stream:worker-conflict#worker-conflict-1-0",
+              envelope: conflicting,
+            },
+          ];
+        },
+        async reclaimPending() {
+          return {
+            next_start_id: "0-0",
+            deliveries: [],
+            deleted_ids: [],
+          };
+        },
+        async acknowledge(request) {
+          if (admin === undefined) {
+            throw new Error("PAI_TEST_DATABASE_URL is required");
+          }
+          const durable = await admin.query<{
+            projection_count: string;
+            audit_count: string;
+            conflict_count: string;
+            isolation_id: string;
+          }>(
+            `SELECT
+               (SELECT count(*)::text
+                  FROM trigger_processor.eventing_projection) AS projection_count,
+               (SELECT count(*)::text
+                  FROM trigger_processor.eventing_audit
+                 WHERE event_id = $1) AS audit_count,
+               (SELECT count(*)::text
+                  FROM trigger_processor.eventing_dlq
+                 WHERE source_event_id = $1
+                   AND event_type = 'consumer.delivery.identity_conflict')
+                 AS conflict_count,
+               (SELECT id
+                  FROM trigger_processor.eventing_dlq
+                 WHERE source_event_id = $1
+                   AND event_type = 'consumer.delivery.identity_conflict')
+                 AS isolation_id`,
+            [canonical.event_id],
+          );
+          expect(durable.rows).toHaveLength(1);
+          const persisted = durable.rows[0];
+          expect(persisted).toMatchObject({
+            projection_count: "1",
+            audit_count: "1",
+            conflict_count: "1",
+          });
+          isolationRef = `trigger_processor.eventing_dlq/${persisted?.isolation_id}`;
+          expect(returnedIsolationRef).toBe(isolationRef);
+          acknowledged += request.delivery_ids.length;
+          return { acknowledged: request.delivery_ids.length };
+        },
+      },
+      { apply },
+      {
+        consumer_service: "trigger_processor",
+        dead_letter: {
+          async recordPermanentFailure() {
+            deadLetterCalls += 1;
+            return { status: "recorded" };
+          },
+        },
+      },
+    );
+    try {
+      await expect(
+        worker.consumeNewBatch({ count: 1, block_ms: 0 }),
+      ).resolves.toMatchObject({
+        received: 1,
+        processed: 0,
+        replayed: 0,
+        failed: 0,
+        dead_lettered: 1,
+        acknowledged: 1,
+      });
+      expect(acknowledged).toBe(1);
+      expect(deadLetterCalls).toBe(0);
+      expect(isolationRef).toMatch(
+        /^trigger_processor\.eventing_dlq\/inbox-conflict:/u,
+      );
+    } finally {
+      await composition.close();
+    }
+  });
+
   it("does not let an old normal dispatcher claim a pending row after transport cutover", async () => {
     await reset();
     const composition = await openVerifiedOwnerPostgresCompositionV1(
       EVENTING_CONTRACT,
       runtimeUrl(),
+      EVENTING_TEST_MIGRATOR_ROLE,
     );
     try {
       const envelope = triggerRejectedEvent({
@@ -2064,6 +2489,7 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     const composition = await openVerifiedOwnerPostgresCompositionV1(
       EVENTING_CONTRACT,
       runtimeUrl(),
+      EVENTING_TEST_MIGRATOR_ROLE,
     );
     if (redisUrl === undefined) throw new Error("PAI_TEST_REDIS_URL is required");
     const reader = createClient({ url: redisUrl });
@@ -2294,10 +2720,42 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
         );
         assertOwnerOutboxAcknowledgeConfirmationV1(confirmation);
       },
-      async acknowledgeSentRedrivePermanentFailure() {
-        throw new Error(
-          "the PostgreSQL quarantine writer is an explicit pai-infra boundary",
+      async acknowledgeSentRedrivePermanentFailure(request) {
+        const result = await composition.unit_of_work.withTransaction(
+          {
+            operation: "quarantine_sent_redrive",
+            idempotency_key: `${request.outbox_id}:${request.claim_token}`,
+            trace_id: "trace_quarantine_sent_redrive",
+            isolation: "read_committed",
+            retry: "none",
+          },
+          async (transaction, repositories) =>
+            repositories.owner.executeWriter<
+              unknown,
+              "quarantine_sent_eventing_outbox_redrive_v1"
+            >(transaction, {
+              writer: "quarantine_sent_eventing_outbox_redrive_v1",
+              arguments: {
+                p_outbox_id: request.outbox_id,
+                p_claim_token: request.claim_token,
+                p_previous_transport_ref: request.previous_transport_ref,
+                p_previous_transport_epoch: request.previous_transport_epoch,
+                p_previous_transport_generation:
+                  request.previous_transport_generation === null
+                    ? null
+                    : String(request.previous_transport_generation),
+                p_current_transport_epoch: request.current_transport_epoch,
+                p_current_transport_generation:
+                  String(request.current_transport_generation),
+                p_failure_code: request.failure_code,
+                p_failure_message: request.failure_message,
+                p_now: request.now,
+              },
+              expected_rows: 1,
+            }),
         );
+        assertDurableSentOutboxPermanentFailureAckResultV1(result);
+        return result;
       },
     };
     const redriveClaimTokens: string[] = [];
@@ -2492,6 +2950,98 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
       transport_epoch: "epoch_new",
       transport_generation: "2",
     }]);
+
+    const [quarantineClaim] =
+      await postgresRedriveStore.claimSentForRedrive({
+        worker_id: "redrive_quarantine",
+        limit: 1,
+        lease_seconds: 30,
+        now: "2026-07-22T04:04:00.000Z",
+        current_transport_epoch: "epoch_ref_cas",
+        current_transport_generation: 3,
+      });
+    if (
+      quarantineClaim === undefined ||
+      typeof quarantineClaim.transport_ref !== "string" ||
+      typeof quarantineClaim.transport_epoch !== "string" ||
+      (quarantineClaim.transport_generation !== null &&
+        !Number.isSafeInteger(quarantineClaim.transport_generation))
+    ) {
+      throw new Error("expected a valid sent outbox quarantine claim");
+    }
+    const quarantineRequest = {
+      outbox_id: quarantineClaim.outbox_id,
+      claim_token: quarantineClaim.claim_token,
+      previous_transport_ref: quarantineClaim.transport_ref,
+      previous_transport_epoch: quarantineClaim.transport_epoch,
+      previous_transport_generation:
+        quarantineClaim.transport_generation === null
+          ? null
+          : (quarantineClaim.transport_generation as number),
+      current_transport_epoch: "epoch_ref_cas",
+      current_transport_generation: 3,
+      failure_code: "outbox_contract_violation",
+      failure_message:
+        "durable event delivery failed closed (outbox_contract_violation)",
+      now: "2026-07-22T04:04:01.000Z",
+    } as const;
+    await expect(
+      postgresRedriveStore.acknowledgeSentRedrivePermanentFailure(
+        quarantineRequest,
+      ),
+    ).resolves.toEqual({ acknowledged: true, status: "quarantined" });
+    await expect(
+      postgresRedriveStore.acknowledgeSentRedrivePermanentFailure(
+        quarantineRequest,
+      ),
+    ).resolves.toEqual({ acknowledged: true, status: "replayed" });
+    await expect(
+      postgresRedriveStore.acknowledgeSentRedrivePermanentFailure({
+        ...quarantineRequest,
+        claim_token: `${quarantineRequest.claim_token}:stale`,
+      }),
+    ).rejects.toThrow(/stale sent outbox permanent failure claim/u);
+
+    const quarantineState = await admin.query<{
+      status: string;
+      redrive_claim_token: string | null;
+      last_error: unknown;
+      dlq_count: number;
+      dlq_payload: unknown;
+    }>(
+      `SELECT outbox.status,
+              outbox.redrive_claim_token,
+              outbox.last_error,
+              pg_catalog.count(dlq.id)::integer AS dlq_count,
+              pg_catalog.min(dlq.payload::text)::jsonb AS dlq_payload
+         FROM trigger_processor.eventing_outbox outbox
+         LEFT JOIN trigger_processor.eventing_dlq dlq
+           ON dlq.source_event_id = outbox.id
+          AND dlq.payload->>'kind' =
+            'sent_outbox_redrive_permanent_failure'
+        WHERE outbox.id = $1
+        GROUP BY outbox.id`,
+      [quarantineClaim.outbox_id],
+    );
+    expect(quarantineState.rows).toEqual([{
+      status: "failed",
+      redrive_claim_token: null,
+      last_error: {
+        code: "outbox_contract_violation",
+        message:
+          "durable event delivery failed closed (outbox_contract_violation)",
+        retryable: false,
+      },
+      dlq_count: 1,
+      dlq_payload: expect.objectContaining({
+        kind: "sent_outbox_redrive_permanent_failure",
+        outbox_id: quarantineClaim.outbox_id,
+        claim_token: quarantineClaim.claim_token,
+        previous_transport_ref: quarantineClaim.transport_ref,
+        current_transport_epoch: "epoch_ref_cas",
+        current_transport_generation: 3,
+      }),
+    }]);
     } finally {
       await oldRedis?.close();
       await newRedis?.close();
@@ -2508,6 +3058,7 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
     const composition = await openVerifiedOwnerPostgresCompositionV1(
       EVENTING_CONTRACT,
       runtimeUrl(),
+      EVENTING_TEST_MIGRATOR_ROLE,
     );
     const acknowledged: string[] = [];
     const delivery: DurableEventDeliveryConsumerPortV1 = {
@@ -2609,7 +3160,11 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
         );
     `);
     await expect(
-      openVerifiedOwnerPostgresCompositionV1(EVENTING_CONTRACT, runtimeUrl()),
+      openVerifiedOwnerPostgresCompositionV1(
+        EVENTING_CONTRACT,
+        runtimeUrl(),
+        EVENTING_TEST_MIGRATOR_ROLE,
+      ),
     ).rejects.toThrow(/CHECK constraint drift/);
   });
 
@@ -2625,7 +3180,11 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
         );
     `);
     await expect(
-      openVerifiedOwnerPostgresCompositionV1(EVENTING_CONTRACT, runtimeUrl()),
+      openVerifiedOwnerPostgresCompositionV1(
+        EVENTING_CONTRACT,
+        runtimeUrl(),
+        EVENTING_TEST_MIGRATOR_ROLE,
+      ),
     ).rejects.toThrow(/CHECK constraint drift/);
   });
 });

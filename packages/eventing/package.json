@@ -18,6 +18,7 @@
   "dependencies": {
     "@pai/contracts": "workspace:*",
     "@pai/persistence": "workspace:*",
+    "@sinclair/typebox": "catalog:",
     "redis": "catalog:"
   },
   "devDependencies": {

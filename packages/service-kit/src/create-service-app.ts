@@ -1,5 +1,8 @@
 import {
   ServiceIdV1Schema,
+  CanonicalJsonViolationV1,
+  assertCanonicalJsonBoundaryV1,
+  canonicalJsonV1,
   type ResponseEnvelopeV1,
   type ServiceIdV1,
 } from "@pai/contracts";
@@ -10,6 +13,11 @@ import {
   trace,
   type Span,
 } from "@opentelemetry/api";
+import { Ajv, type AnySchema, type ValidateFunction } from "ajv";
+import formatsPluginModule, {
+  type FormatsPlugin,
+} from "ajv-formats";
+import { isProxy } from "node:util/types";
 import Fastify, {
   LogController,
   type FastifyBaseLogger,
@@ -78,6 +86,172 @@ interface ReadinessExecutionState {
 const lifecycleStates = new WeakMap<FastifyInstance, ServiceLifecycleState>();
 const securedLoggers = new WeakSet<object>();
 const serviceTracer = trace.getTracer("@pai/service-kit", "0.1.0");
+
+function installPaiContractKeywordsV1(
+  ajv: Readonly<{ addKeyword(definition: unknown): unknown }>,
+): void {
+  ajv.addKeyword({
+    keyword: "maxUtf8Bytes",
+    type: "string",
+    schemaType: "number",
+    errors: false,
+    validate: (maximum: number, value: string) =>
+      Buffer.byteLength(value, "utf8") <= maximum,
+  });
+  ajv.addKeyword({
+    keyword: "maxCanonicalJsonBytes",
+    schemaType: "number",
+    errors: false,
+    validate: (maximum: number, value: unknown) => {
+      try {
+        return (
+          Buffer.byteLength(
+            canonicalJsonV1(value),
+            "utf8",
+          ) <= maximum
+        );
+      } catch {
+        return false;
+      }
+    },
+  });
+  ajv.addKeyword({
+    keyword: "uniqueByCanonicalIdentity",
+    type: "array",
+    schemaType: ["boolean", "string"],
+    errors: false,
+    validate: (
+      selector: boolean | string,
+      values: readonly unknown[],
+    ): boolean => {
+      try {
+        const identities = values.map((value) => {
+          canonicalJsonV1(value);
+          const selected =
+            typeof selector === "string" &&
+            typeof value === "object" &&
+            value !== null
+              ? (value as Readonly<Record<string, unknown>>)[selector]
+              : value;
+          return canonicalJsonV1(selected);
+        });
+        return new Set(identities).size === identities.length;
+      } catch {
+        return false;
+      }
+    },
+  });
+  ajv.addKeyword({
+    keyword: "atLeastOneOf",
+    type: "object",
+    schemaType: "array",
+    errors: false,
+    validate: (keys: readonly string[], value: Readonly<Record<string, unknown>>) =>
+      keys.some(
+        (key) => Object.hasOwn(value, key) && value[key] !== undefined,
+      ),
+  });
+  ajv.addKeyword({
+    keyword: "exactlyOnePrimary",
+    type: "array",
+    schemaType: "string",
+    errors: false,
+    validate: (
+      mode: string,
+      values: readonly unknown[],
+      _parentSchema: unknown,
+      context?: Readonly<{ rootData?: unknown }>,
+    ) => {
+      if (mode !== "required_when_multiple" || values.length <= 1) return true;
+      const count = values.filter(
+        (value) =>
+          typeof value === "object" &&
+          value !== null &&
+          (value as Readonly<Record<string, unknown>>).primary === true,
+      ).length;
+      if (count === 1) return true;
+      const root =
+        typeof context?.rootData === "object" && context.rootData !== null
+          ? (context.rootData as Readonly<Record<string, unknown>>)
+          : undefined;
+      return (
+        count === 0 &&
+        root?.compatibility_mode === "legacy_subject_order"
+      );
+    },
+  });
+}
+
+function createRouteValidatorV1(
+  coerceTransportScalars: boolean,
+): Ajv {
+  const validator = new Ajv({
+    addUsedSchema: false,
+    allErrors: false,
+    coerceTypes: coerceTransportScalars ? "array" : false,
+    removeAdditional: false,
+    useDefaults: coerceTransportScalars,
+  });
+  const addFormats = formatsPluginModule as unknown as FormatsPlugin;
+  addFormats(validator);
+  installPaiContractKeywordsV1(validator);
+  return validator;
+}
+
+function compileRouteSchemaV1(
+  validator: Ajv,
+  schema: unknown,
+): ValidateFunction {
+  if (typeof schema !== "object" || schema === null) {
+    throw new Error("route validation schema must be an object");
+  }
+  const schemaId =
+    "$id" in schema && typeof schema.$id === "string"
+      ? schema.$id
+      : undefined;
+  return (
+    (schemaId === undefined ? undefined : validator.getSchema(schemaId)) ??
+    validator.compile(schema as AnySchema)
+  );
+}
+
+function materializeParsedRouteBoundaryV1(value: unknown): unknown {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    return value;
+  }
+  if (isProxy(value)) {
+    throw new Error("parsed route value cannot be a Proxy");
+  }
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    throw new Error("parsed route value cannot be inspected");
+  }
+  const keys = Reflect.ownKeys(descriptors);
+  if (keys.some((key) => typeof key !== "string")) {
+    throw new Error("parsed route value contains symbol properties");
+  }
+  const snapshot = Object.create(null) as Record<string, unknown>;
+  for (const key of keys as string[]) {
+    const descriptor = descriptors[key];
+    if (
+      descriptor === undefined ||
+      !("value" in descriptor) ||
+      descriptor.enumerable !== true
+    ) {
+      throw new Error(
+        "parsed route value must contain only enumerable data properties",
+      );
+    }
+    snapshot[key] = descriptor.value;
+  }
+  return snapshot;
+}
 
 function secureChildLoggerBindings(logger: FastifyBaseLogger): void {
   if (securedLoggers.has(logger)) return;
@@ -249,7 +423,12 @@ export function beginServiceShutdown(app: FastifyInstance): void {
 }
 
 function snapshotServiceAppOptions(value: unknown): ServiceAppOptions {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    isProxy(value)
+  ) {
     throw new Error("service app options must contain only own data properties");
   }
   let prototype: object | null;
@@ -335,7 +514,7 @@ function snapshotServiceAppOptions(value: unknown): ServiceAppOptions {
 
 function snapshotReadinessChecks(value: unknown): readonly ReadinessCheck[] {
   if (value === undefined) return Object.freeze([]);
-  if (!Array.isArray(value)) {
+  if (!Array.isArray(value) || isProxy(value)) {
     throw new Error(
       "readiness check names must be unique low-cardinality identifiers",
     );
@@ -386,7 +565,8 @@ function snapshotReadinessChecks(value: unknown): readonly ReadinessCheck[] {
     if (
       typeof checkValue !== "object" ||
       checkValue === null ||
-      Array.isArray(checkValue)
+      Array.isArray(checkValue) ||
+      isProxy(checkValue)
     ) {
       throw new Error(
         "readiness check names must be unique low-cardinality identifiers",
@@ -466,6 +646,16 @@ export function createServiceApp(
     requestTimeout: appOptions.runtimeConfig?.request_timeout_ms ?? 30_000,
     genReqId: (request) => extractInboundTraceId(request.headers),
   });
+  const strictJsonValidator = createRouteValidatorV1(false);
+  const transportScalarValidator = createRouteValidatorV1(true);
+  app.setValidatorCompiler(({ schema, httpPart }) =>
+    compileRouteSchemaV1(
+      httpPart === "body"
+        ? strictJsonValidator
+        : transportScalarValidator,
+      schema,
+    ),
+  );
   if (logger !== false) secureChildLoggerBindings(app.log);
   const lifecycle: ServiceLifecycleState = { acceptingTraffic: true };
   const requestSpans = new WeakMap<object, Span>();
@@ -505,6 +695,38 @@ export function createServiceApp(
         : undefined;
     const requestContext = trace.setSpan(parentContext, span);
     context.with(requestContext, () => done(shutdownError));
+  });
+
+  app.addHook("preValidation", async (request) => {
+    for (const [source, value] of [
+      ["body", request.body],
+      ["query", request.query],
+      ["params", request.params],
+    ] as const) {
+      if (value !== undefined) {
+        try {
+          const boundaryValue = materializeParsedRouteBoundaryV1(value);
+          assertCanonicalJsonBoundaryV1(boundaryValue);
+          (request as unknown as Record<string, unknown>)[source] =
+            boundaryValue;
+        } catch (error) {
+          throw new ServiceError({
+            code: "invalid_canonical_json",
+            message: "request is outside the bounded canonical JSON contract",
+            statusCode: 400,
+            retryable: false,
+            details: {
+              source,
+              reason:
+                error instanceof CanonicalJsonViolationV1
+                  ? error.reason
+                  : "invalid_value",
+            },
+            cause: error,
+          });
+        }
+      }
+    }
   });
 
   installWorkloadAuth(app, serviceId, appOptions.auth);

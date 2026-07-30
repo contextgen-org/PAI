@@ -1,0 +1,151 @@
+{
+  "$id": "urn:pai:trigger-processor:snapshot-overflow-ref:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "source_service",
+    "store_type",
+    "object_ref",
+    "first_append_sequence_no",
+    "last_append_sequence_no",
+    "checksum_algorithm",
+    "checksum",
+    "retention_until",
+    "redaction_state"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "snapshot_overflow_ref.v1",
+      "type": "string"
+    },
+    "source_service": {
+      "$id": "urn:pai:shared:service-id:v1",
+      "anyOf": [
+        {
+          "const": "trigger_processor",
+          "type": "string"
+        },
+        {
+          "const": "action_runtime",
+          "type": "string"
+        },
+        {
+          "const": "meta_cognition",
+          "type": "string"
+        },
+        {
+          "const": "memory",
+          "type": "string"
+        },
+        {
+          "const": "knowthat",
+          "type": "string"
+        },
+        {
+          "const": "skill_registry",
+          "type": "string"
+        },
+        {
+          "const": "timer_trigger_app",
+          "type": "string"
+        },
+        {
+          "const": "observation_gateway",
+          "type": "string"
+        }
+      ]
+    },
+    "store_type": {
+      "anyOf": [
+        {
+          "const": "runtime_events",
+          "type": "string"
+        },
+        {
+          "const": "artifact_store",
+          "type": "string"
+        },
+        {
+          "const": "tp_transition_audit",
+          "type": "string"
+        },
+        {
+          "const": "tp_event_projection",
+          "type": "string"
+        },
+        {
+          "const": "tp_meta_projection",
+          "type": "string"
+        },
+        {
+          "const": "meta_durable_event",
+          "type": "string"
+        }
+      ]
+    },
+    "object_ref": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "first_append_sequence_no": {
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "last_append_sequence_no": {
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "source_sequence_range": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "first_source_sequence_no",
+        "last_source_sequence_no"
+      ],
+      "properties": {
+        "first_source_sequence_no": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "last_source_sequence_no": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        }
+      }
+    },
+    "checksum_algorithm": {
+      "const": "sha256",
+      "type": "string"
+    },
+    "checksum": {
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "retention_until": {
+      "minLength": 20,
+      "maxLength": 35,
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+      "type": "string"
+    },
+    "redaction_state": {
+      "anyOf": [
+        {
+          "const": "not_required",
+          "type": "string"
+        },
+        {
+          "const": "complete",
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,263 @@
+{
+  "$id": "observation.event",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_type",
+    "producer",
+    "trigger_process_id",
+    "append_sequence_no",
+    "durable",
+    "occurred_at",
+    "trace_id",
+    "payload_summary",
+    "redacted_field_count"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0",
+      "type": "string"
+    },
+    "event_type": {
+      "anyOf": [
+        {
+          "const": "runtime.run.started",
+          "type": "string"
+        },
+        {
+          "const": "runtime.run.completed",
+          "type": "string"
+        },
+        {
+          "const": "runtime.run.failed",
+          "type": "string"
+        },
+        {
+          "const": "runtime.run.cancelled",
+          "type": "string"
+        },
+        {
+          "const": "runtime.run.preempted",
+          "type": "string"
+        },
+        {
+          "const": "runtime.tool.requested",
+          "type": "string"
+        },
+        {
+          "const": "runtime.tool.completed",
+          "type": "string"
+        },
+        {
+          "const": "runtime.tool.failed",
+          "type": "string"
+        },
+        {
+          "const": "runtime.tool.cancelled",
+          "type": "string"
+        },
+        {
+          "const": "runtime.artifact.created",
+          "type": "string"
+        },
+        {
+          "const": "runtime.artifact.failed",
+          "type": "string"
+        },
+        {
+          "const": "runtime.control_signal.received",
+          "type": "string"
+        },
+        {
+          "const": "runtime.control_signal.handled",
+          "type": "string"
+        },
+        {
+          "const": "runtime.skill.load.requested",
+          "type": "string"
+        },
+        {
+          "const": "runtime.skill.load.resolved",
+          "type": "string"
+        },
+        {
+          "const": "runtime.skill.load.materialized",
+          "type": "string"
+        },
+        {
+          "const": "runtime.skill.load.failed",
+          "type": "string"
+        },
+        {
+          "const": "trigger.accepted",
+          "type": "string"
+        },
+        {
+          "const": "trigger_process.phase_changed",
+          "type": "string"
+        },
+        {
+          "const": "trigger_process.user_message_retracted",
+          "type": "string"
+        },
+        {
+          "const": "weak_trigger.merged",
+          "type": "string"
+        },
+        {
+          "const": "trigger_process.system_interrupted",
+          "type": "string"
+        },
+        {
+          "const": "trigger_process.outcome_finalized",
+          "type": "string"
+        },
+        {
+          "const": "snapshot_gap_skipped",
+          "type": "string"
+        },
+        {
+          "const": "trigger_process.summary",
+          "type": "string"
+        }
+      ]
+    },
+    "producer": {
+      "anyOf": [
+        {
+          "const": "trigger_processor",
+          "type": "string"
+        },
+        {
+          "const": "action_runtime",
+          "type": "string"
+        }
+      ]
+    },
+    "trigger_process_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "append_sequence_no": {
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "durable": {
+      "const": true,
+      "type": "boolean"
+    },
+    "occurred_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "trace_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "payload_summary": {
+      "maxProperties": 64,
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            {
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "maxLength": 1024,
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            {
+              "maxProperties": 64,
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "maxLength": 1024,
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    {
+                      "maxItems": 64,
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "maxLength": 1024,
+                            "type": "string"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "redacted_field_count": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    }
+  }
+}

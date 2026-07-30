@@ -1,0 +1,151 @@
+{
+  "$id": "urn:pai:skill-registry:publish:v1",
+  "anyOf": [
+    {
+      "$id": "urn:pai:skill-registry:publish-request:v1",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "skill_name",
+        "semver",
+        "validation_id",
+        "package_digest",
+        "manifest_digest",
+        "artifact_ref",
+        "idempotency_key",
+        "trace_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "skill_publish_request.v1",
+          "type": "string"
+        },
+        "skill_name": {
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$",
+          "maxLength": 64,
+          "type": "string"
+        },
+        "semver": {
+          "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
+          "maxLength": 128,
+          "type": "string"
+        },
+        "validation_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "package_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "manifest_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "artifact_ref": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "trace_id"
+      ],
+      "properties": {
+        "code": {
+          "const": "skill_version_published",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "retryable": {
+          "const": false,
+          "type": "boolean"
+        },
+        "details": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "skill_version_id",
+            "skill_name",
+            "version",
+            "state",
+            "package_digest",
+            "manifest_digest",
+            "runtime_target",
+            "created_at",
+            "duplicate_replayed"
+          ],
+          "properties": {
+            "skill_version_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "skill_name": {
+              "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$",
+              "maxLength": 64,
+              "type": "string"
+            },
+            "version": {
+              "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
+              "maxLength": 128,
+              "type": "string"
+            },
+            "state": {
+              "const": "published",
+              "type": "string"
+            },
+            "package_digest": {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "manifest_digest": {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "runtime_target": {
+              "const": "filesystem_bundle.v1",
+              "type": "string"
+            },
+            "created_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "duplicate_replayed": {
+              "type": "boolean"
+            }
+          }
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

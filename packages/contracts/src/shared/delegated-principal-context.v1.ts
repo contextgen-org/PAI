@@ -15,7 +15,10 @@ const principalProperties = {
   }),
   source_issuer: Type.String({ minLength: 1 }),
   source_subject: Type.String({ minLength: 1 }),
-  auth_time: Type.Integer({ minimum: 0 }),
+  auth_time: Type.Integer({
+    minimum: 0,
+    maximum: Number.MAX_SAFE_INTEGER,
+  }),
 };
 
 const botScopeProperties = {

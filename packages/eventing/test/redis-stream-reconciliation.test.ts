@@ -1,4 +1,5 @@
 import type { DurableEventEnvelopeV1 } from "@pai/contracts";
+import { ownerEventingReconciliationContractV1 } from "@pai/persistence";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -6,6 +7,7 @@ import {
   canonicalPayloadHashV1,
   createDurableEventConsumerWorkerV1,
   createDurableSentOutboxReconcilerV1,
+  createPostgresOwnerSentOutboxRedriverStoreV1,
   createPostgresSentOutboxReconciliationStoreV1,
   createRedisNamespaceV1,
   createRedisStreamReferenceProbeV1,
@@ -283,7 +285,7 @@ class DurableReconciliationStoreFake
   }) {
     const row = this.assertedRow(request);
     expect(request.failure_code).toMatch(/^[a-z][a-z0-9_]{0,63}$/u);
-    expect(request.failure_message.length).toBeGreaterThan(0);
+    expect(request.failure_message).toBe(request.failure_code);
     row.quarantined = true;
     row.quarantine_code = request.failure_code;
     row.claim_token = null;
@@ -358,7 +360,7 @@ function reconciler(
 }
 
 describe("durable Redis Stream reconciliation", () => {
-  it("rejects a pending owner before claiming or probing retained rows", () => {
+  it("rejects a service without an owner event contract before reconciliation side effects", () => {
     let claims = 0;
     let probes = 0;
     let publishes = 0;
@@ -384,7 +386,7 @@ describe("durable Redis Stream reconciliation", () => {
           },
         },
         {
-          owner_service: "memory",
+          owner_service: "observation_gateway",
           worker_id: "redriver_001",
           batch_size: 10,
           lease_seconds: 30,
@@ -673,6 +675,175 @@ describe("durable Redis Stream reconciliation", () => {
     void _probeIntervalMs;
   });
 
+  it("maps verified owner writers into a redriver-only PostgreSQL store", async () => {
+    const reconciliation = ownerEventingReconciliationContractV1(
+      "trigger",
+      "trigger_event_outbox",
+    );
+    const contract = {
+      owner_service: "trigger_processor",
+      schema: "trigger",
+      outbox_tables: ["trigger_event_outbox"],
+      function_signatures: reconciliation.function_signatures,
+    } as never;
+    const rowEnvelope = envelope("evt_owner_redriver_adapter");
+    const calls: Array<{
+      writer: string;
+      arguments: Readonly<Record<string, unknown>>;
+      expected_rows: 1 | "zero_or_more";
+    }> = [];
+    const transactions: Array<{
+      operation: string;
+      idempotency_key: string;
+      trace_id: string;
+      isolation: string;
+      retry: string;
+    }> = [];
+    const repository = {
+      contract,
+      async executeWriter(_transaction: unknown, request: {
+        writer: string;
+        arguments: Readonly<Record<string, unknown>>;
+        expected_rows: 1 | "zero_or_more";
+      }) {
+        calls.push(request);
+        if (request.writer === "claim_trigger_event_outbox_reconciliation_v1") {
+          return [
+            {
+              outbox_id: "outbox-owner-redriver",
+              claim_token: "claim-owner-redriver",
+              attempt_count: 1,
+              target: "action_runtime",
+              envelope: rowEnvelope,
+              payload_hash: canonicalPayloadHashV1(rowEnvelope.payload),
+              sent_at: "2026-07-22T06:00:00.000Z",
+              transport_ref: "redis_stream:trigger:1-0",
+              transport_epoch: "epoch-current",
+              transport_generation: 6,
+              active_transport_epoch: "epoch-current",
+              active_transport_generation: 7,
+              reconciliation_reason: "generation_mismatch",
+            },
+          ];
+        }
+        if (
+          request.writer ===
+          "ack_trigger_event_outbox_permanent_failure_v1"
+        ) {
+          return { acknowledged: true, status: "quarantined" };
+        }
+        return { acknowledged: true };
+      },
+    };
+    const unitOfWork = {
+      owner_service: "trigger_processor",
+      async withTransaction(request: {
+        operation: string;
+        idempotency_key: string;
+        trace_id: string;
+        isolation: string;
+        retry: string;
+      }, work: (transaction: unknown, repositories: {
+        owner: typeof repository;
+      }) => Promise<unknown>) {
+        transactions.push(request);
+        return work(Object.freeze({ owner_service: "trigger_processor" }), {
+          owner: repository,
+        });
+      },
+    };
+    const store = createPostgresOwnerSentOutboxRedriverStoreV1(
+      repository as never,
+      unitOfWork as never,
+      "trigger_event_outbox",
+    );
+    expect("recordDeletedTransportRefs" in store).toBe(false);
+    expect("verifyPeriodicFullAuditActive" in store).toBe(false);
+
+    await expect(
+      store.claimSentForReconciliation({
+        worker_id: "redriver_001",
+        limit: 1,
+        lease_seconds: 30,
+        current_transport_epoch: "epoch-current",
+        current_transport_generation: 7,
+      }),
+    ).resolves.toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      writer: "claim_trigger_event_outbox_reconciliation_v1",
+      expected_rows: "zero_or_more",
+      arguments: {
+        p_worker_id: "redriver_001",
+        p_limit: 1,
+        p_lease_seconds: 30,
+        p_current_transport_epoch: "epoch-current",
+        p_current_transport_generation: "7",
+      },
+    });
+    await expect(
+      store.acknowledgeTransportPresent({
+        outbox_id: "outbox-owner-redriver",
+        claim_token: "claim-owner-redriver",
+        previous_transport_ref: "redis_stream:trigger:1-0",
+        previous_transport_epoch: "epoch-current",
+        previous_transport_generation: 6,
+        current_transport_epoch: "epoch-current",
+        current_transport_generation: 7,
+        probe_interval_ms: 60_000,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      store.acknowledgeRematerialized({
+        outbox_id: "outbox-owner-redriver",
+        claim_token: "claim-owner-redriver",
+        previous_transport_ref: "redis_stream:trigger:1-0",
+        previous_transport_epoch: "epoch-current",
+        previous_transport_generation: 6,
+        transport_ref: "redis_stream:trigger:2-0",
+        transport_epoch: "epoch-current",
+        transport_generation: 7,
+        current_transport_epoch: "epoch-current",
+        current_transport_generation: 7,
+        probe_interval_ms: 60_000,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      store.acknowledgePermanentFailure({
+        outbox_id: "outbox-owner-redriver",
+        claim_token: "claim-owner-redriver",
+        previous_transport_ref: "redis_stream:trigger:1-0",
+        previous_transport_epoch: "epoch-current",
+        previous_transport_generation: 6,
+        current_transport_epoch: "epoch-current",
+        current_transport_generation: 7,
+        failure_code: "outbox_contract_violation",
+        failure_message: "poisoned retained row",
+        now: "2026-07-22T06:02:00.000Z",
+      }),
+    ).resolves.toEqual({ acknowledged: true, status: "quarantined" });
+    expect(calls.map(({ writer }) => writer)).toEqual([
+      "claim_trigger_event_outbox_reconciliation_v1",
+      "ack_trigger_event_outbox_transport_present_v1",
+      "ack_trigger_event_outbox_rematerialized_v1",
+      "ack_trigger_event_outbox_permanent_failure_v1",
+    ]);
+    expect(calls.at(-1)?.arguments).toMatchObject({
+      p_previous_transport_generation: "6",
+      p_current_transport_generation: "7",
+      p_failure_code: "outbox_contract_violation",
+    });
+    expect(transactions).toHaveLength(4);
+    expect(
+      transactions.every(
+        ({ idempotency_key, isolation, retry, trace_id }) =>
+          /^sha256:[0-9a-f]{64}$/u.test(idempotency_key) &&
+          isolation === "read_committed" &&
+          retry === "none" &&
+          trace_id.length <= 256,
+      ),
+    ).toBe(true);
+  });
+
   it("snapshots PostgreSQL guard and deleted-reference requests across awaits", async () => {
     let releaseGuard!: () => void;
     const guardGate = new Promise<void>((resolve) => { releaseGuard = resolve; });
@@ -859,6 +1030,63 @@ describe("durable Redis Stream reconciliation", () => {
     });
     expect(valid.next_probe_at).toBe("2026-07-22T06:03:00.000Z");
     expect(published).toEqual([]);
+  });
+
+  it("does not start a late rematerialization ACK after batch abort", async () => {
+    const stored = row("evt_abort_late_publish");
+    const store = new DurableReconciliationStoreFake([stored]);
+    let publishEntered!: () => void;
+    let releasePublish!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      publishEntered = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      releasePublish = resolve;
+    });
+    let observedSignal: AbortSignal | undefined;
+    const worker = createDurableSentOutboxReconcilerV1(
+      store,
+      {
+        async probe() {
+          return { status: "missing" };
+        },
+      },
+      {
+        async publish(_request, signal) {
+          observedSignal = signal;
+          publishEntered();
+          await blocked;
+          return {
+            transport_ref: "redis_stream:stream:trigger_events:late-1-0",
+            transport_epoch: store.activeEpoch,
+            transport_generation: store.activeGeneration,
+          };
+        },
+      },
+      {
+        owner_service: "trigger_processor",
+        worker_id: "redriver_abort_late",
+        batch_size: 1,
+        lease_seconds: 30,
+        probe_interval_ms: 60_000,
+        current_transport_epoch: store.activeEpoch,
+        current_transport_generation: store.activeGeneration,
+      },
+      { now: () => new Date(store.databaseNow) },
+    );
+    const controller = new AbortController();
+    const run = worker.reconcileBatch(controller.signal);
+    await entered;
+
+    controller.abort(new Error("reconciliation deadline exceeded"));
+    releasePublish();
+
+    await expect(run).rejects.toThrow("reconciliation deadline exceeded");
+    expect(observedSignal).toBe(controller.signal);
+    expect(stored.transport_ref).toBe(
+      "redis_stream:stream:trigger_events:1-0",
+    );
+    expect(stored.claim_token).not.toBeNull();
   });
 
   it("survives a crash after publish, leases restart work, and tolerates duplicate delivery", async () => {

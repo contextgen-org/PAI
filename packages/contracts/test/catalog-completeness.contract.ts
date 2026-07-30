@@ -5,7 +5,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   PENDING_OWNER_SCHEMA_GENERATION,
+  REGISTERED_OWNER_SCHEMA_CATALOG,
   SHARED_SCHEMA_CATALOG,
+  TRIGGER_PROCESSOR_SCHEMA_CATALOG,
 } from "../src/catalog.js";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -16,6 +18,7 @@ const architectureSharedSummary = [
   "TypedEvidenceRefV1",
   "ConflictPolicyV1",
   "DirectActivePolicyV1",
+  "DurableInboxIdentityV1",
   "ServiceIdV1",
   "DeploymentEnvironmentV1",
   "ReleaseChannelV1",
@@ -80,6 +83,33 @@ describe("Shared Architecture Contracts catalog", () => {
       expect(entry.version).toBe("1.0.0");
       expect(entry.owner_service).toBe("architecture-contracts");
       expect(entry.source_file).not.toHaveLength(0);
+      expect(entry.generated_outputs.length).toBeGreaterThan(0);
+      expect(entry.contract_tests.length).toBeGreaterThan(0);
+      expect(existsSync(resolve(repositoryRoot, entry.source_file))).toBe(true);
+      for (const output of entry.generated_outputs) {
+        expect(existsSync(resolve(packageRoot, output))).toBe(true);
+      }
+      for (const contractTest of entry.contract_tests) {
+        expect(existsSync(resolve(repositoryRoot, contractTest))).toBe(true);
+      }
+    }
+  });
+});
+
+describe("active owner schema catalogs", () => {
+  it("keeps every registered owner row backed by source, generated outputs, and tests", () => {
+    const entries = [
+      ...TRIGGER_PROCESSOR_SCHEMA_CATALOG,
+      ...REGISTERED_OWNER_SCHEMA_CATALOG,
+    ];
+    const ids = new Set<string>();
+    const names = new Set<string>();
+    for (const entry of entries) {
+      expect(ids.has(entry.schema_id)).toBe(false);
+      expect(names.has(`${entry.owner_service}:${entry.schema_name}`)).toBe(false);
+      ids.add(entry.schema_id);
+      names.add(`${entry.owner_service}:${entry.schema_name}`);
+      expect(entry.schema_id).toBe(entry.schema.$id);
       expect(entry.generated_outputs.length).toBeGreaterThan(0);
       expect(entry.contract_tests.length).toBeGreaterThan(0);
       expect(existsSync(resolve(repositoryRoot, entry.source_file))).toBe(true);

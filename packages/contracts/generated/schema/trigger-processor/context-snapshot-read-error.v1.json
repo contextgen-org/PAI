@@ -1,0 +1,83 @@
+{
+  "$id": "urn:pai:trigger-processor:context-snapshot-read-error:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "code",
+    "message",
+    "retryable",
+    "trace_id",
+    "details"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "context_snapshot_read_error.v1",
+      "type": "string"
+    },
+    "code": {
+      "anyOf": [
+        {
+          "const": "context_not_found",
+          "type": "string"
+        },
+        {
+          "const": "expired",
+          "type": "string"
+        },
+        {
+          "const": "hash_mismatch",
+          "type": "string"
+        },
+        {
+          "const": "scope_mismatch",
+          "type": "string"
+        },
+        {
+          "const": "schema_incompatible",
+          "type": "string"
+        }
+      ]
+    },
+    "message": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "retryable": {
+      "const": false,
+      "type": "boolean"
+    },
+    "trace_id": {
+      "minLength": 1,
+      "maxLength": 256,
+      "type": "string"
+    },
+    "details": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "trigger_process_id",
+        "context_snapshot_ref",
+        "context_snapshot_version"
+      ],
+      "properties": {
+        "trigger_process_id": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "context_snapshot_ref": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "context_snapshot_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        }
+      }
+    }
+  }
+}

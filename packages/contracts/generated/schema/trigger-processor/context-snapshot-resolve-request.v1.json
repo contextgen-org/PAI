@@ -1,0 +1,133 @@
+{
+  "$id": "urn:pai:trigger-processor:context-snapshot-resolve-request:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "consumer_service",
+    "trigger_process_id",
+    "workspace_id",
+    "bot_id",
+    "owner_agent_id",
+    "deployment_environment",
+    "release_channel",
+    "context_snapshot_ref",
+    "context_snapshot_version",
+    "context_snapshot_hash",
+    "purpose",
+    "trace_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "context_snapshot_resolve_request.v1",
+      "type": "string"
+    },
+    "consumer_service": {
+      "anyOf": [
+        {
+          "const": "trigger_processor",
+          "type": "string"
+        },
+        {
+          "const": "action_runtime",
+          "type": "string"
+        },
+        {
+          "const": "observation_gateway",
+          "type": "string"
+        }
+      ]
+    },
+    "trigger_process_id": {
+      "minLength": 1,
+      "maxLength": 256,
+      "type": "string"
+    },
+    "workspace_id": {
+      "minLength": 1,
+      "maxLength": 256,
+      "type": "string"
+    },
+    "bot_id": {
+      "minLength": 1,
+      "maxLength": 256,
+      "type": "string"
+    },
+    "owner_agent_id": {
+      "minLength": 1,
+      "maxLength": 256,
+      "type": "string"
+    },
+    "deployment_environment": {
+      "$id": "urn:pai:shared:deployment-environment:v1",
+      "anyOf": [
+        {
+          "const": "local",
+          "type": "string"
+        },
+        {
+          "const": "dev",
+          "type": "string"
+        },
+        {
+          "const": "staging",
+          "type": "string"
+        },
+        {
+          "const": "prod",
+          "type": "string"
+        }
+      ]
+    },
+    "release_channel": {
+      "$id": "urn:pai:shared:release-channel:v1",
+      "anyOf": [
+        {
+          "const": "stable",
+          "type": "string"
+        },
+        {
+          "const": "canary",
+          "type": "string"
+        }
+      ]
+    },
+    "context_snapshot_ref": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "context_snapshot_version": {
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "context_snapshot_hash": {
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "purpose": {
+      "anyOf": [
+        {
+          "const": "intent_synthesis",
+          "type": "string"
+        },
+        {
+          "const": "runtime_start",
+          "type": "string"
+        },
+        {
+          "const": "audit_replay",
+          "type": "string"
+        }
+      ]
+    },
+    "trace_id": {
+      "minLength": 1,
+      "maxLength": 256,
+      "type": "string"
+    }
+  }
+}

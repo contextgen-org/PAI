@@ -1,0 +1,96 @@
+{
+  "$id": "urn:pai:meta:snapshot-repair-request:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "repair_id",
+    "meta_job_id",
+    "trigger_process_id",
+    "previous_snapshot_ref",
+    "previous_snapshot_version",
+    "previous_snapshot_hash",
+    "next_snapshot_ref",
+    "next_snapshot_version",
+    "next_snapshot_hash",
+    "snapshot_retention_until",
+    "reason_code",
+    "idempotency_key",
+    "trace_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "meta_snapshot_repair.v1",
+      "type": "string"
+    },
+    "repair_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "meta_job_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "trigger_process_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "previous_snapshot_ref": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "previous_snapshot_version": {
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "previous_snapshot_hash": {
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "next_snapshot_ref": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "next_snapshot_version": {
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "next_snapshot_hash": {
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "snapshot_retention_until": {
+      "minLength": 20,
+      "maxLength": 30,
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+      "type": "string"
+    },
+    "reason_code": {
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+      "type": "string"
+    },
+    "idempotency_key": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "trace_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    }
+  }
+}

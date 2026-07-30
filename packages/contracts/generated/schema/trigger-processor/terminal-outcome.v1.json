@@ -1,0 +1,41 @@
+{
+  "$id": "urn:pai:trigger-processor:terminal-outcome:v1",
+  "anyOf": [
+    {
+      "const": "executed",
+      "type": "string"
+    },
+    {
+      "const": "merged_and_executed",
+      "type": "string"
+    },
+    {
+      "const": "superseded_by_later_trigger",
+      "type": "string"
+    },
+    {
+      "const": "deferred_then_executed",
+      "type": "string"
+    },
+    {
+      "const": "expired_with_audit_record",
+      "type": "string"
+    },
+    {
+      "const": "cancelled_with_reason",
+      "type": "string"
+    },
+    {
+      "const": "failed_with_reason",
+      "type": "string"
+    },
+    {
+      "const": "preempted_and_handed_off",
+      "type": "string"
+    },
+    {
+      "const": "interrupted_with_reason",
+      "type": "string"
+    }
+  ]
+}

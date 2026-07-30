@@ -15,6 +15,7 @@
     "smoke:services": "node scripts/smoke-service-probes.mjs",
     "smoke:auth": "node scripts/smoke-auth-boundaries.mjs",
     "smoke:shutdown": "node scripts/smoke-graceful-shutdown.mjs",
+    "start:local": "node scripts/start-local-runtime.mjs",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --workspace-concurrency=1 --if-present test",
     "check": "pnpm verify:toolchain && pnpm check:links && pnpm typecheck && pnpm contracts:check && pnpm test && pnpm build && pnpm smoke:invalid-config && pnpm smoke:services && pnpm smoke:auth && pnpm smoke:shutdown"

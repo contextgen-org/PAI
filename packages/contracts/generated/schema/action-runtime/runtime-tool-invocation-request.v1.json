@@ -1,0 +1,73 @@
+{
+  "$id": "urn:pai:action-runtime:runtime-tool-invocation-request:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "runtime_run_id",
+    "adapter_tool_call_id",
+    "tool_name",
+    "normalized_args"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "runtime_tool_invocation_request.v1",
+      "type": "string"
+    },
+    "runtime_run_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "adapter_tool_call_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "tool_name": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "normalized_args": {
+      "maxProperties": 10000,
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {
+          "$id": "T3",
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "maxLength": 1048576,
+              "type": "string"
+            },
+            {
+              "maxItems": 10000,
+              "type": "array",
+              "items": {
+                "$ref": "T3"
+              }
+            },
+            {
+              "maxProperties": 10000,
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {
+                  "$ref": "T3"
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

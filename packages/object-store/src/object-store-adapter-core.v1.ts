@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { isProxy } from "node:util/types";
+import { assertCanonicalJsonBoundaryV1 } from "@pai/contracts";
 
 import type {
   DeleteFinalizationV1,
@@ -51,6 +53,32 @@ const tokenPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const mediaTypePattern = /^[^\s/]+\/[^\s/]+$/;
 const foregroundUploadLeaseMs = 5 * 60_000;
 const expiredUploadCleanupGraceMs = 5 * 60_000;
+const maxBackendReadGrantLength = 8 * 1024;
+const backendReadGrantCharacterPattern = /^[\x21-\x7e]+$/u;
+const typedArrayPrototypeV1 = Object.getPrototypeOf(
+  Uint8Array.prototype,
+) as object;
+const typedArrayBufferGetterV1 = Object.getOwnPropertyDescriptor(
+  typedArrayPrototypeV1,
+  "buffer",
+)!.get!;
+const typedArrayByteLengthGetterV1 = Object.getOwnPropertyDescriptor(
+  typedArrayPrototypeV1,
+  "byteLength",
+)!.get!;
+const typedArrayByteOffsetGetterV1 = Object.getOwnPropertyDescriptor(
+  typedArrayPrototypeV1,
+  "byteOffset",
+)!.get!;
+const typedArrayTagGetterV1 = Object.getOwnPropertyDescriptor(
+  typedArrayPrototypeV1,
+  Symbol.toStringTag,
+)!.get!;
+const arrayBufferByteLengthGetterV1 = Object.getOwnPropertyDescriptor(
+  ArrayBuffer.prototype,
+  "byteLength",
+)!.get!;
+const typedArraySetV1 = Uint8Array.prototype.set;
 
 function boundedIdentity(value: unknown, maxLength = 512): value is string {
   return (
@@ -67,8 +95,114 @@ function fail(
   throw new ObjectStoreErrorV1(code, message, retryable, details);
 }
 
+/**
+ * Detaches an untrusted byte chunk from its producer before hashing or handing
+ * it to another component. All observations and the copy use captured
+ * intrinsics, so Proxy/accessor-backed lookalikes cannot substitute a different
+ * view between the size check and the copy.
+ */
+function detachedBoundedByteChunkV1(
+  value: unknown,
+  maxBytes: number,
+  code: ObjectStoreErrorV1["code"],
+  message: string,
+  overflowCode = code,
+  overflowMessage = message,
+): Uint8Array {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    isProxy(value) ||
+    !Number.isSafeInteger(maxBytes) ||
+    maxBytes < 0
+  ) {
+    fail(code, message);
+  }
+
+  let buffer: unknown;
+  let byteLength: number;
+  let byteOffset: number;
+  let tag: unknown;
+  try {
+    for (const key of [
+      "buffer",
+      "byteLength",
+      "byteOffset",
+      Symbol.toStringTag,
+    ] as const) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (
+        descriptor !== undefined &&
+        (!("value" in descriptor) ||
+          typeof descriptor.get === "function" ||
+          typeof descriptor.set === "function")
+      ) {
+        fail(code, message);
+      }
+    }
+    buffer = typedArrayBufferGetterV1.call(value);
+    byteLength = typedArrayByteLengthGetterV1.call(value);
+    byteOffset = typedArrayByteOffsetGetterV1.call(value);
+    tag = typedArrayTagGetterV1.call(value);
+  } catch (error) {
+    if (error instanceof ObjectStoreErrorV1) throw error;
+    fail(code, message);
+  }
+
+  if (
+    tag !== "Uint8Array" ||
+    !Number.isSafeInteger(byteLength) ||
+    !Number.isSafeInteger(byteOffset) ||
+    byteLength < 1 ||
+    byteOffset < 0
+  ) {
+    fail(code, message);
+  }
+  if (byteLength > maxBytes) {
+    fail(overflowCode, overflowMessage);
+  }
+
+  let bufferByteLength: number;
+  try {
+    // The ArrayBuffer intrinsic rejects SharedArrayBuffer and forged buffers.
+    bufferByteLength = arrayBufferByteLengthGetterV1.call(buffer);
+  } catch {
+    fail(code, message);
+  }
+  if (
+    !Number.isSafeInteger(bufferByteLength) ||
+    byteOffset > bufferByteLength ||
+    byteLength > bufferByteLength - byteOffset
+  ) {
+    fail(code, message);
+  }
+
+  const detached = new Uint8Array(byteLength);
+  try {
+    typedArraySetV1.call(detached, value as Uint8Array);
+  } catch {
+    fail(code, message);
+  }
+  return detached;
+}
+
+function closedObjectReconciliationFailureV1(error: unknown): string {
+  if (error instanceof ObjectStorageBackendErrorV1) {
+    return `object_storage_backend_${error.code}`;
+  }
+  if (error instanceof ObjectStoreErrorV1) {
+    return `object_store_${error.code}`;
+  }
+  return "object_reconciliation_failed";
+}
+
 function plainObject(value: unknown): value is Readonly<Record<string, unknown>> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    isProxy(value)
+  ) {
     return false;
   }
   let prototype: object | null;
@@ -188,7 +322,7 @@ function snapshotObjectScopeV1(value: unknown): ObjectScopeV1 {
 }
 
 function snapshotByteStreamV1(value: unknown): AsyncIterable<Uint8Array> {
-  if (typeof value !== "object" || value === null) {
+  if (typeof value !== "object" || value === null || isProxy(value)) {
     fail("precondition_failed", "object body must be an async byte stream");
   }
   const iterable = value as AsyncIterable<Uint8Array>;
@@ -207,7 +341,7 @@ function snapshotByteStreamV1(value: unknown): AsyncIterable<Uint8Array> {
   });
 }
 
-function snapshotPutRequestV1(value: unknown): PutImmutableRequestV1 {
+export function snapshotPutRequestV1(value: unknown): PutImmutableRequestV1 {
   const data = ownDataRecordV1(value, [
     "body",
     "capability",
@@ -215,12 +349,16 @@ function snapshotPutRequestV1(value: unknown): PutImmutableRequestV1 {
     "idempotency_key",
     "media_type",
     "object_class",
+    "owner_object_id",
     "owner_service",
+    "owner_state_version",
     "retention_until",
     "scope",
     "size_bytes",
   ]);
   const ownerService = data?.owner_service;
+  const ownerObjectId = data?.owner_object_id;
+  const ownerStateVersion = data?.owner_state_version;
   const objectClass = data?.object_class;
   const capability = data?.capability;
   const idempotencyKey = data?.idempotency_key;
@@ -231,6 +369,9 @@ function snapshotPutRequestV1(value: unknown): PutImmutableRequestV1 {
   if (
     data === undefined ||
     typeof ownerService !== "string" ||
+    !boundedIdentity(ownerObjectId) ||
+    !Number.isSafeInteger(ownerStateVersion) ||
+    (ownerStateVersion as number) < 1 ||
     typeof objectClass !== "string" ||
     typeof capability !== "string" ||
     typeof idempotencyKey !== "string" ||
@@ -241,10 +382,33 @@ function snapshotPutRequestV1(value: unknown): PutImmutableRequestV1 {
   ) {
     fail("precondition_failed", "put request is invalid");
   }
+  const scope = snapshotObjectScopeV1(data.scope);
+  try {
+    assertCanonicalJsonBoundaryV1({
+      owner_service: ownerService,
+      owner_object_id: ownerObjectId,
+      owner_state_version: ownerStateVersion,
+      object_class: objectClass,
+      scope,
+      capability,
+      idempotency_key: idempotencyKey,
+      expected_sha256: expectedSha256,
+      size_bytes: sizeBytes,
+      media_type: mediaType,
+      retention_until: retentionUntil,
+    });
+  } catch {
+    fail(
+      "precondition_failed",
+      "put request metadata is outside the bounded canonical JSON contract",
+    );
+  }
   return Object.freeze({
     owner_service: ownerService as PutImmutableRequestV1["owner_service"],
+    owner_object_id: ownerObjectId,
+    owner_state_version: ownerStateVersion as number,
     object_class: objectClass,
-    scope: snapshotObjectScopeV1(data.scope),
+    scope,
     capability,
     idempotency_key: idempotencyKey,
     expected_sha256: expectedSha256,
@@ -259,7 +423,9 @@ const readRequestKeys = [
   "access_decision_ref",
   "capability",
   "object_ref",
+  "owner_object_id",
   "owner_service",
+  "owner_state_version",
   "redaction_policy_version",
   "retention_policy_version",
   "scope",
@@ -269,6 +435,8 @@ function readRequestFromDataV1(
   data: Readonly<Record<string, unknown>> | undefined,
 ): ObjectReadRequestV1 {
   const ownerService = data?.owner_service;
+  const ownerObjectId = data?.owner_object_id;
+  const ownerStateVersion = data?.owner_state_version;
   const capability = data?.capability;
   const objectRef = data?.object_ref;
   const accessDecisionRef = data?.access_decision_ref;
@@ -277,6 +445,9 @@ function readRequestFromDataV1(
   if (
     data === undefined ||
     typeof ownerService !== "string" ||
+    !boundedIdentity(ownerObjectId) ||
+    !Number.isSafeInteger(ownerStateVersion) ||
+    (ownerStateVersion as number) < 1 ||
     typeof capability !== "string" ||
     !boundedIdentity(objectRef) ||
     typeof accessDecisionRef !== "string" ||
@@ -285,8 +456,10 @@ function readRequestFromDataV1(
   ) {
     fail("precondition_failed", "object read request is invalid");
   }
-  return Object.freeze({
+  const request = Object.freeze({
     owner_service: ownerService as ObjectReadRequestV1["owner_service"],
+    owner_object_id: ownerObjectId,
+    owner_state_version: ownerStateVersion as number,
     scope: snapshotObjectScopeV1(data.scope),
     capability,
     object_ref: objectRef as ObjectRefV1,
@@ -294,13 +467,22 @@ function readRequestFromDataV1(
     retention_policy_version: retentionPolicyVersion,
     redaction_policy_version: redactionPolicyVersion,
   });
+  try {
+    assertCanonicalJsonBoundaryV1(request);
+  } catch {
+    fail(
+      "precondition_failed",
+      "object read request is outside the bounded canonical JSON contract",
+    );
+  }
+  return request;
 }
 
-function snapshotReadRequestV1(value: unknown): ObjectReadRequestV1 {
+export function snapshotReadRequestV1(value: unknown): ObjectReadRequestV1 {
   return readRequestFromDataV1(ownDataRecordV1(value, readRequestKeys));
 }
 
-function snapshotRangeReadRequestV1(value: unknown): ObjectRangeReadRequestV1 {
+export function snapshotRangeReadRequestV1(value: unknown): ObjectRangeReadRequestV1 {
   const data = ownDataRecordV1(value, readRequestKeys, ["range"]);
   const request = readRequestFromDataV1(data);
   const range = data?.range;
@@ -311,26 +493,44 @@ function snapshotRangeReadRequestV1(value: unknown): ObjectRangeReadRequestV1 {
   if (typeof offset !== "number" || typeof length !== "number") {
     fail("precondition_failed", "invalid object byte range");
   }
-  return Object.freeze({
+  const snapshot = Object.freeze({
     ...request,
     range: Object.freeze({ offset, length }),
   });
+  try {
+    assertCanonicalJsonBoundaryV1(snapshot);
+  } catch {
+    fail(
+      "precondition_failed",
+      "object range request is outside the bounded canonical JSON contract",
+    );
+  }
+  return snapshot;
 }
 
-function snapshotGrantRequestV1(value: unknown): IssueReadGrantRequestV1 {
+export function snapshotGrantRequestV1(value: unknown): IssueReadGrantRequestV1 {
   const data = ownDataRecordV1(value, [...readRequestKeys, "ttl_seconds"]);
   const request = readRequestFromDataV1(data);
   const ttlSeconds = data?.ttl_seconds;
   if (typeof ttlSeconds !== "number") {
     fail("precondition_failed", "invalid read grant constraints");
   }
-  return Object.freeze({
+  const snapshot = Object.freeze({
     ...request,
     ttl_seconds: ttlSeconds,
   });
+  try {
+    assertCanonicalJsonBoundaryV1(snapshot);
+  } catch {
+    fail(
+      "precondition_failed",
+      "read grant request is outside the bounded canonical JSON contract",
+    );
+  }
+  return snapshot;
 }
 
-function snapshotDeleteRequestV1(value: unknown): DeleteIfEligibleRequestV1 {
+export function snapshotDeleteRequestV1(value: unknown): DeleteIfEligibleRequestV1 {
   const data = ownDataRecordV1(value, [
     ...readRequestKeys,
     "deletion_decision_version",
@@ -340,16 +540,25 @@ function snapshotDeleteRequestV1(value: unknown): DeleteIfEligibleRequestV1 {
   const deletionDecisionVersion = data?.deletion_decision_version;
   const idempotencyKey = data?.idempotency_key;
   if (
-    typeof deletionDecisionVersion !== "string" ||
+    typeof deletionDecisionVersion !== "number" ||
     typeof idempotencyKey !== "string"
   ) {
     fail("precondition_failed", "invalid deletion decision identity");
   }
-  return Object.freeze({
+  const snapshot = Object.freeze({
     ...request,
     deletion_decision_version: deletionDecisionVersion,
     idempotency_key: idempotencyKey,
   });
+  try {
+    assertCanonicalJsonBoundaryV1(snapshot);
+  } catch {
+    fail(
+      "precondition_failed",
+      "delete request is outside the bounded canonical JSON contract",
+    );
+  }
+  return snapshot;
 }
 
 function snapshotReconcileRequestV1(value: unknown): ReconcileObjectStoreRequestV1 {
@@ -371,12 +580,21 @@ function snapshotReconcileRequestV1(value: unknown): ReconcileObjectStoreRequest
   ) {
     fail("precondition_failed", "invalid reconciliation claim request");
   }
-  return Object.freeze({
+  const snapshot = Object.freeze({
     worker_id: workerId,
     limit,
     lease_seconds: leaseSeconds,
     ...(reservationId === undefined ? {} : { reservation_id: reservationId }),
   });
+  try {
+    assertCanonicalJsonBoundaryV1(snapshot);
+  } catch {
+    fail(
+      "precondition_failed",
+      "reconciliation request is outside the bounded canonical JSON contract",
+    );
+  }
+  return snapshot;
 }
 
 function snapshotMetadataRecordV1(value: unknown): ObjectMetadataRecordV1 {
@@ -386,7 +604,9 @@ function snapshotMetadataRecordV1(value: unknown): ObjectMetadataRecordV1 {
     "media_type",
     "object_class",
     "object_ref",
+    "owner_object_id",
     "owner_service",
+    "owner_state_version",
     "request_fingerprint",
     "retention_until",
     "scope",
@@ -403,6 +623,8 @@ function snapshotMetadataRecordV1(value: unknown): ObjectMetadataRecordV1 {
   const data = ownDataRecordV1(value, requiredKeys, [...optionalKeys]);
   const objectRef = data?.object_ref;
   const ownerService = data?.owner_service;
+  const ownerObjectId = data?.owner_object_id;
+  const ownerStateVersion = data?.owner_state_version;
   const objectClass = data?.object_class;
   const scopeFingerprint = data?.scope_fingerprint;
   const idempotencyKey = data?.idempotency_key;
@@ -420,6 +642,9 @@ function snapshotMetadataRecordV1(value: unknown): ObjectMetadataRecordV1 {
     data === undefined ||
     !boundedIdentity(objectRef) ||
     typeof ownerService !== "string" ||
+    !boundedIdentity(ownerObjectId) ||
+    !Number.isSafeInteger(ownerStateVersion) ||
+    (ownerStateVersion as number) < 1 ||
     typeof objectClass !== "string" ||
     typeof scopeFingerprint !== "string" ||
     typeof idempotencyKey !== "string" ||
@@ -439,7 +664,8 @@ function snapshotMetadataRecordV1(value: unknown): ObjectMetadataRecordV1 {
       state !== "deleted") ||
     typeof legalHold !== "boolean" ||
     (deletionDecisionVersion !== undefined &&
-      typeof deletionDecisionVersion !== "string") ||
+      (!Number.isSafeInteger(deletionDecisionVersion) ||
+        (deletionDecisionVersion as number) < 1)) ||
     (deletionIdempotencyKey !== undefined &&
       typeof deletionIdempotencyKey !== "string")
   ) {
@@ -454,6 +680,8 @@ function snapshotMetadataRecordV1(value: unknown): ObjectMetadataRecordV1 {
   return Object.freeze({
     object_ref: objectRef as ObjectRefV1,
     owner_service: ownerService as ObjectMetadataRecordV1["owner_service"],
+    owner_object_id: ownerObjectId,
+    owner_state_version: ownerStateVersion as number,
     object_class: objectClass,
     scope,
     scope_fingerprint: scopeFingerprint,
@@ -468,7 +696,7 @@ function snapshotMetadataRecordV1(value: unknown): ObjectMetadataRecordV1 {
     legal_hold: legalHold,
     ...(deletionDecisionVersion === undefined
       ? {}
-      : { deletion_decision_version: deletionDecisionVersion }),
+      : { deletion_decision_version: deletionDecisionVersion as number }),
     ...(deletionIdempotencyKey === undefined
       ? {}
       : { deletion_idempotency_key: deletionIdempotencyKey }),
@@ -659,7 +887,7 @@ function snapshotDeleteFinalizationV1(value: unknown): DeleteFinalizationV1 {
   throw new Error("delete finalization result is malformed");
 }
 
-function snapshotAccessDecisionV1(
+export function snapshotAccessDecisionV1(
   value: unknown,
 ): VerifiedObjectAccessDecisionV1 {
   const keys = [
@@ -668,7 +896,9 @@ function snapshotAccessDecisionV1(
     "capability",
     "object_ref",
     "operation",
+    "owner_object_id",
     "owner_service",
+    "owner_state_version",
     "redaction_policy_version",
     "retention_policy_version",
     "retention_until",
@@ -682,6 +912,8 @@ function snapshotAccessDecisionV1(
   const capability = data?.capability;
   const objectRef = data?.object_ref;
   const ownerService = data?.owner_service;
+  const ownerObjectId = data?.owner_object_id;
+  const ownerStateVersion = data?.owner_state_version;
   const redactionPolicyVersion = data?.redaction_policy_version;
   const retentionPolicyVersion = data?.retention_policy_version;
   const retentionUntil = data?.retention_until;
@@ -697,13 +929,17 @@ function snapshotAccessDecisionV1(
       accessDecisionRef,
       capability,
       objectRef,
+      ownerObjectId,
       ownerService,
       redactionPolicyVersion,
       retentionPolicyVersion,
       retentionUntil,
       scopeFingerprint,
     ].some((entry) => typeof entry !== "string") ||
-    !boundedIdentity(objectRef)
+    !boundedIdentity(objectRef) ||
+    !boundedIdentity(ownerObjectId) ||
+    !Number.isSafeInteger(ownerStateVersion) ||
+    (ownerStateVersion as number) < 1
   ) {
     throw new Error("object access decision is malformed");
   }
@@ -714,7 +950,9 @@ function snapshotAccessDecisionV1(
     capability: capability as string,
     object_ref: objectRef as ObjectRefV1,
     operation,
+    owner_object_id: ownerObjectId as string,
     owner_service: ownerService as VerifiedObjectAccessDecisionV1["owner_service"],
+    owner_state_version: ownerStateVersion as number,
     redaction_policy_version: redactionPolicyVersion as string,
     retention_policy_version: retentionPolicyVersion as string,
     retention_until: retentionUntil as string,
@@ -775,6 +1013,18 @@ function snapshotBackendStreamV1(value: unknown): BackendObjectStreamV1 {
     length: length as number,
     total_size_bytes: totalSizeBytes as number,
   });
+}
+
+function snapshotBackendReadGrantV1(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > maxBackendReadGrantLength ||
+    !backendReadGrantCharacterPattern.test(value)
+  ) {
+    fail("integrity_mismatch", "object storage returned a malformed read grant");
+  }
+  return value;
 }
 
 function snapshotFinalizeAbandonedPutAttemptResultV1(
@@ -920,6 +1170,8 @@ function requestFingerprint(
   return sha256(
     JSON.stringify([
       request.owner_service,
+      request.owner_object_id,
+      request.owner_state_version,
       request.object_class,
       scopeFingerprint,
       request.idempotency_key,
@@ -958,6 +1210,8 @@ function assertPutRecordBindingV1(
 ): void {
   if (
     record.owner_service !== request.owner_service ||
+    record.owner_object_id !== request.owner_object_id ||
+    record.owner_state_version !== request.owner_state_version ||
     record.object_class !== request.object_class ||
     record.scope_fingerprint !== scopeFingerprint ||
     objectScopeFingerprintV1(record.scope) !== scopeFingerprint ||
@@ -984,6 +1238,8 @@ function assertDeleteRecordBindingV1(
   if (
     deletedRecord.object_ref !== authorizedRecord.object_ref ||
     deletedRecord.owner_service !== authorizedRecord.owner_service ||
+    deletedRecord.owner_object_id !== authorizedRecord.owner_object_id ||
+    deletedRecord.owner_state_version !== authorizedRecord.owner_state_version ||
     deletedRecord.object_class !== authorizedRecord.object_class ||
     deletedRecord.scope_fingerprint !== authorizedRecord.scope_fingerprint ||
     objectScopeFingerprintV1(deletedRecord.scope) !==
@@ -1014,6 +1270,8 @@ function assertReconciliationRecordBindingV1(
   if (
     completedRecord.object_ref !== claimedRecord.object_ref ||
     completedRecord.owner_service !== claimedRecord.owner_service ||
+    completedRecord.owner_object_id !== claimedRecord.owner_object_id ||
+    completedRecord.owner_state_version !== claimedRecord.owner_state_version ||
     completedRecord.object_class !== claimedRecord.object_class ||
     completedRecord.scope_fingerprint !== claimedRecord.scope_fingerprint ||
     objectScopeFingerprintV1(completedRecord.scope) !==
@@ -1056,15 +1314,17 @@ function verifyingUploadStream(
   const stream = async function* (): AsyncIterable<Uint8Array> {
     try {
       for await (const chunk of body) {
-        if (!(chunk instanceof Uint8Array)) {
-          fail("precondition_failed", "object body must yield Uint8Array chunks");
-        }
-        total += chunk.byteLength;
-        if (total > expectedSize) {
-          fail("integrity_mismatch", "object body is larger than declared size");
-        }
-        digest.update(chunk);
-        yield chunk;
+        const detached = detachedBoundedByteChunkV1(
+          chunk,
+          expectedSize - total,
+          "precondition_failed",
+          "object body must yield bounded Uint8Array chunks",
+          "integrity_mismatch",
+          "object body is larger than declared size",
+        );
+        total += detached.byteLength;
+        digest.update(detached);
+        yield detached;
       }
       completed = true;
     } catch (error) {
@@ -1102,12 +1362,15 @@ async function* verifiedReadStream(
   let total = 0;
   try {
     for await (const chunk of body) {
-      total += chunk.byteLength;
-      if (total > expectedLength) {
-        fail("integrity_mismatch", "object storage returned too many bytes");
-      }
-      digest?.update(chunk);
-      yield chunk;
+      const detached = detachedBoundedByteChunkV1(
+        chunk,
+        expectedLength - total,
+        "integrity_mismatch",
+        "object storage returned a malformed or oversized byte chunk",
+      );
+      total += detached.byteLength;
+      digest?.update(detached);
+      yield detached;
     }
   } catch (error) {
     if (error instanceof ObjectStoreErrorV1) throw error;
@@ -1122,6 +1385,13 @@ async function* verifiedReadStream(
 }
 
 function validatePutRequest(request: PutImmutableRequestV1, now: Date): void {
+  if (
+    !boundedIdentity(request.owner_object_id) ||
+    !Number.isSafeInteger(request.owner_state_version) ||
+    request.owner_state_version < 1
+  ) {
+    fail("precondition_failed", "invalid owner object identity");
+  }
   if (!tokenPattern.test(request.idempotency_key)) {
     fail("precondition_failed", "invalid idempotency key");
   }
@@ -1170,7 +1440,9 @@ function snapshotDenseArrayV1(
   label: string,
   maxLength: number,
 ): readonly unknown[] {
-  if (!Array.isArray(value)) throw new Error(`${label} must be an array`);
+  if (!Array.isArray(value) || isProxy(value)) {
+    throw new Error(`${label} must be an array`);
+  }
   const descriptors = Object.getOwnPropertyDescriptors(value);
   const lengthDescriptor = Object.getOwnPropertyDescriptor(
     descriptors,
@@ -1360,6 +1632,8 @@ export class ObjectStoreAdapterCoreV1
           operation,
           object_ref: request.object_ref,
           owner_service: request.owner_service,
+          owner_object_id: request.owner_object_id,
+          owner_state_version: request.owner_state_version,
           scope: request.scope,
           scope_fingerprint: scopeFingerprint,
           capability: request.capability,
@@ -1376,6 +1650,8 @@ export class ObjectStoreAdapterCoreV1
       accessDecision.operation !== operation ||
       accessDecision.object_ref !== request.object_ref ||
       accessDecision.owner_service !== request.owner_service ||
+      accessDecision.owner_object_id !== request.owner_object_id ||
+      accessDecision.owner_state_version !== request.owner_state_version ||
       accessDecision.scope_fingerprint !== scopeFingerprint ||
       objectScopeFingerprintV1(accessDecision.scope) !== scopeFingerprint ||
       accessDecision.capability !== request.capability ||
@@ -1417,6 +1693,8 @@ export class ObjectStoreAdapterCoreV1
       fail("authorization_scope_mismatch", "object scope does not match caller");
     }
     if (
+      record.owner_object_id !== request.owner_object_id ||
+      record.owner_state_version !== request.owner_state_version ||
       accessDecision.retention_until !== record.retention_until ||
       !Number.isFinite(Date.parse(accessDecision.retention_until))
     ) {
@@ -1468,11 +1746,14 @@ export class ObjectStoreAdapterCoreV1
     const digest = createHash("sha256");
     let total = 0;
     for await (const chunk of streamed.body) {
-      total += chunk.byteLength;
-      if (total > record.size_bytes) {
-        fail("integrity_mismatch", "stored object returned too many bytes");
-      }
-      digest.update(chunk);
+      const detached = detachedBoundedByteChunkV1(
+        chunk,
+        record.size_bytes - total,
+        "integrity_mismatch",
+        "stored object returned a malformed or oversized byte chunk",
+      );
+      total += detached.byteLength;
+      digest.update(detached);
     }
     const actualSha256 = `sha256:${digest.digest("hex")}`;
     if (total !== record.size_bytes || actualSha256 !== record.sha256) {
@@ -1684,7 +1965,7 @@ export class ObjectStoreAdapterCoreV1
                 claim_token: claim.claim_token,
                 claim_generation: claim.claim_generation,
                 operation: "put_cleanup",
-                last_error: "pending put was not visible after foreground handoff",
+                last_error: "pending_put_not_visible",
                 ...(claim.foreground_upload_may_still_arrive
                   ? {
                       next_retry_at: new Date(
@@ -1705,7 +1986,7 @@ export class ObjectStoreAdapterCoreV1
                 claim_token: claim.claim_token,
                 claim_generation: claim.claim_generation,
                 operation: "put_cleanup",
-                last_error: error.message,
+                last_error: "pending_put_integrity_mismatch",
                 ...(claim.foreground_upload_may_still_arrive
                   ? {
                       next_retry_at: new Date(
@@ -1730,7 +2011,7 @@ export class ObjectStoreAdapterCoreV1
               claim_token: claim.claim_token,
               claim_generation: claim.claim_generation,
               operation: "put_cleanup",
-              last_error: "pending put physical metadata mismatch",
+              last_error: "pending_put_integrity_mismatch",
               ...(claim.foreground_upload_may_still_arrive
                 ? {
                     next_retry_at: new Date(
@@ -1775,8 +2056,7 @@ export class ObjectStoreAdapterCoreV1
                 reservation_id: claim.reservation_id,
                 claim_token: claim.claim_token,
                 claim_generation: claim.claim_generation,
-                last_error:
-                  "cleanup retained a tombstone until the foreground upload terminal horizon",
+                last_error: "foreground_upload_not_terminal",
                 next_retry_at: new Date(
                   Math.max(
                     now.getTime() + expiredUploadCleanupGraceMs,
@@ -1795,8 +2075,7 @@ export class ObjectStoreAdapterCoreV1
                 reservation_id: claim.reservation_id,
                 claim_token: claim.claim_token,
                 claim_generation: claim.claim_generation,
-                last_error:
-                  "cleanup retained tombstone because backend cannot prove the foreground upload attempt is terminal",
+                last_error: "foreground_upload_terminality_unavailable",
                 next_retry_at: new Date(
                   now.getTime() + expiredUploadCleanupGraceMs,
                 ),
@@ -1816,8 +2095,7 @@ export class ObjectStoreAdapterCoreV1
                 reservation_id: claim.reservation_id,
                 claim_token: claim.claim_token,
                 claim_generation: claim.claim_generation,
-                last_error:
-                  "cleanup retained tombstone because the foreground upload attempt is still active or unknown",
+                last_error: "foreground_upload_not_terminal",
                 next_retry_at: new Date(
                   now.getTime() + expiredUploadCleanupGraceMs,
                 ),
@@ -1897,8 +2175,7 @@ export class ObjectStoreAdapterCoreV1
           reservation_id: claim.reservation_id,
           claim_token: claim.claim_token,
           claim_generation: claim.claim_generation,
-          last_error:
-            error instanceof Error ? error.message.slice(0, 1_024) : "unknown",
+          last_error: closedObjectReconciliationFailureV1(error),
           next_retry_at: new Date(
             now.getTime() + Math.min(60_000, retryAttempt * 1_000),
           ),
@@ -1939,6 +2216,8 @@ export class ObjectStoreAdapterCoreV1
       snapshotReservePutResultV1(
         await this.#metadata.reservePut({
           owner_service: request.owner_service,
+          owner_object_id: request.owner_object_id,
+          owner_state_version: request.owner_state_version,
           object_class: request.object_class,
           scope: request.scope,
           scope_fingerprint: scopeFingerprint,
@@ -2106,12 +2385,22 @@ export class ObjectStoreAdapterCoreV1
         error.code === "already_exists"
       ) {
         await this.#metadata
-          .abortPut(
+          .handoffPutReconciliation(
             reservation.reservation_id,
+            "put_finalize",
             reservation.foreground_lease_token,
           )
           .catch(() => undefined);
-        fail("precondition_failed", "physical object identity already exists");
+        fail(
+          "storage_unavailable",
+          "pre-existing physical object requires reconciliation",
+          true,
+          {
+            reconciliation_required: true,
+            reservation_id: reservation.reservation_id,
+            reconciliation_operation: "put_finalize",
+          },
+        );
       }
       await this.#metadata
         .handoffPutReconciliation(
@@ -2274,9 +2563,13 @@ export class ObjectStoreAdapterCoreV1
     const { record, policy } = await this.#authorizedRecord(request, "grant");
     await this.#backendHead(record, policy);
     const issuedAt = this.#currentTime();
-    let grant: string;
+    const objectRef = record.object_ref;
+    const expiresAt = new Date(
+      issuedAt.getTime() + request.ttl_seconds * 1_000,
+    ).toISOString();
+    let backendGrant: unknown;
     try {
-      grant = await this.#backend.issueReadGrant(
+      backendGrant = await this.#backend.issueReadGrant(
         policy.bucket,
         physicalObjectKey(record),
         request.ttl_seconds,
@@ -2284,11 +2577,12 @@ export class ObjectStoreAdapterCoreV1
     } catch {
       fail("storage_unavailable", "object storage is unavailable", true);
     }
-    return {
+    const grant = snapshotBackendReadGrantV1(backendGrant);
+    return Object.freeze({
       grant,
-      object_ref: record.object_ref,
-      expires_at: new Date(issuedAt.getTime() + request.ttl_seconds * 1_000).toISOString(),
-    };
+      object_ref: objectRef,
+      expires_at: expiresAt,
+    });
   }
 
   public async deleteIfEligible(
@@ -2296,7 +2590,8 @@ export class ObjectStoreAdapterCoreV1
   ): Promise<DeleteIfEligibleResultV1> {
     request = snapshotDeleteRequestV1(request);
     if (
-      !tokenPattern.test(request.deletion_decision_version) ||
+      !Number.isSafeInteger(request.deletion_decision_version) ||
+      request.deletion_decision_version < 1 ||
       !tokenPattern.test(request.idempotency_key)
     ) {
       fail("precondition_failed", "invalid deletion decision identity");
@@ -2310,6 +2605,13 @@ export class ObjectStoreAdapterCoreV1
       snapshotReserveDeleteResultV1(
         await this.#metadata.reserveDelete({
           object_ref: record.object_ref,
+          owner_service: request.owner_service,
+          owner_object_id: request.owner_object_id,
+          owner_state_version: request.owner_state_version,
+          object_class: record.object_class,
+          scope: request.scope,
+          scope_fingerprint: record.scope_fingerprint,
+          request_fingerprint: record.request_fingerprint,
           deletion_decision_version: request.deletion_decision_version,
           idempotency_key: request.idempotency_key,
           now: this.#currentTime(),

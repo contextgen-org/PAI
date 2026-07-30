@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { Pool, type PoolClient } from "pg";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it as baseIt } from "vitest";
 import { TRIGGER_PROCESS_STATE_V1_DATABASE_CHECK } from "@pai/contracts";
 
 import {
@@ -20,12 +20,132 @@ import {
   ownerEventingTransportEpochActivationSignatureV1,
   ownerEventingTransportEpochTablePermissionV1,
   ownerFunctionSignatureV1,
+  ownerImmutableTriggerV1,
   ownerWriterArtifactV1,
   verifyOwnerRepositoryDeploymentFromPostgresV1,
 } from "../src/index.js";
 import { checkOwnerPostgresReadinessV1 } from "../src/owner-postgres-readiness.v1.js";
 
-const databaseUrl = process.env.PAI_TEST_DATABASE_URL;
+// The verifier drops and rebuilds its `timer` schema by design. Keep that
+// destructive fixture in a dedicated database when the workspace gate also
+// runs Timer service integration tests against the shared test database.
+const configuredDatabaseUrl =
+  process.env.PAI_PERSISTENCE_TEST_DATABASE_URL ?? process.env.PAI_TEST_DATABASE_URL;
+let databaseUrl = configuredDatabaseUrl;
+const it = baseIt.sequential;
+
+function quotePostgresIdentifier(value: string): string {
+  if (!/^[a-z_][a-z0-9_]{0,62}$/u.test(value)) {
+    throw new Error(`unsafe PostgreSQL identifier: ${value}`);
+  }
+  return `"${value}"`;
+}
+
+function databaseUrlForDatabase(baseUrl: string, databaseName: string): string {
+  const value = new URL(baseUrl);
+  value.pathname = `/${databaseName}`;
+  return value.toString();
+}
+
+function databaseUrlForRuntime(baseUrl: string): string {
+  const value = new URL(baseUrl);
+  value.username = "pai_timer_runtime";
+  value.password = "timer-runtime-test";
+  return value.toString();
+}
+
+async function waitForDatabaseConnectionsToClose(
+  adminPool: Pool,
+  databaseName: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const result = await adminPool.query<{
+      active_connections: string;
+      connection_states: string | null;
+    }>(
+      `SELECT count(*)::text AS active_connections,
+              string_agg(
+                coalesce(usename, 'unknown') || ':' || coalesce(state, 'unknown') ||
+                ':' || left(coalesce(query, ''), 160),
+                ',' ORDER BY pid
+              ) AS connection_states
+         FROM pg_catalog.pg_stat_activity
+        WHERE datname = $1
+          AND backend_type = 'client backend'
+          AND pid <> pg_catalog.pg_backend_pid()`,
+      [databaseName],
+    );
+    if (result.rows[0]?.active_connections === "0") return;
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 20);
+    });
+  }
+  const result = await adminPool.query<{
+    connection_states: string | null;
+  }>(
+    `SELECT string_agg(
+              coalesce(usename, 'unknown') || ':' || coalesce(state, 'unknown') ||
+              ':' || left(coalesce(query, ''), 160),
+              ',' ORDER BY pid
+            ) AS connection_states
+       FROM pg_catalog.pg_stat_activity
+      WHERE datname = $1
+        AND backend_type = 'client backend'
+        AND pid <> pg_catalog.pg_backend_pid()`,
+    [databaseName],
+  );
+  throw new Error(
+    `test database ${databaseName} still has active connections: ${
+      result.rows[0]?.connection_states ?? "unknown"
+    }`,
+  );
+}
+
+const transientRoleCleanupSql = `
+DO $cleanup$
+DECLARE
+  role_name text;
+BEGIN
+  FOREACH role_name IN ARRAY ARRAY[
+    'pai_contract_deployer',
+    'pai_contract_rogue_deployer',
+    'pai_memory_runtime_test',
+    'pai_owner_rogue',
+    'pai_timer_intruder',
+    'pai_timer_runtime_test'
+  ] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
+      EXECUTE format('DROP OWNED BY %I', role_name);
+    END IF;
+  END LOOP;
+
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_contract_deployer') THEN
+    REVOKE pai_migrator FROM pai_contract_deployer;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_contract_rogue_deployer') THEN
+    REVOKE pai_migrator FROM pai_contract_rogue_deployer;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_memory_runtime_test') THEN
+    REVOKE pai_memory_app FROM pai_memory_runtime_test;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_owner_rogue') THEN
+    REVOKE pai_migrator FROM pai_owner_rogue;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_timer_intruder') THEN
+    REVOKE pai_timer_app FROM pai_timer_intruder;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pai_timer_runtime_test') THEN
+    REVOKE pai_timer_app FROM pai_timer_runtime_test;
+  END IF;
+END
+$cleanup$;
+DROP ROLE IF EXISTS pai_contract_rogue_deployer;
+DROP ROLE IF EXISTS pai_contract_deployer;
+DROP ROLE IF EXISTS pai_memory_runtime_test;
+DROP ROLE IF EXISTS pai_owner_rogue;
+DROP ROLE IF EXISTS pai_timer_intruder;
+DROP ROLE IF EXISTS pai_timer_runtime_test;
+`;
 
 const POSTGRES_WRITER_SIGNATURE = ownerFunctionSignatureV1({
   schema: "timer",
@@ -248,6 +368,20 @@ BEGIN
 END;
 `;
 
+const POSTGRES_IMMUTABLE_TRIGGER_BODY = `
+BEGIN
+  RAISE EXCEPTION 'contract_audits is immutable'
+    USING ERRCODE = '55000';
+END;
+`;
+
+const POSTGRES_IMMUTABLE_TRIGGER = ownerImmutableTriggerV1({
+  trigger_name: "contract_audits_immutable",
+  table_name: "contract_audits",
+  function_name: "reject_contract_audit_mutation_v1",
+  function_body: POSTGRES_IMMUTABLE_TRIGGER_BODY,
+});
+
 const POSTGRES_CONTRACT = defineOwnerRepositoryContractV1({
   contract_version: "owner_repository_contract.v1",
   owner_service: "timer_trigger_app",
@@ -350,6 +484,7 @@ const POSTGRES_CONTRACT = defineOwnerRepositoryContractV1({
       function_body: POSTGRES_OUTBOX_ACK_BODY,
     }),
   ],
+  immutable_triggers: [POSTGRES_IMMUTABLE_TRIGGER],
   foreign_key_snapshot: {
     status: "complete",
     source: "postgres deployment contract fixture",
@@ -624,9 +759,14 @@ DO $$ BEGIN
     CREATE ROLE authenticated NOLOGIN;
   END IF;
 END $$;
+${transientRoleCleanupSql}
 ALTER ROLE pai_migrator NOLOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
 ALTER ROLE pai_timer_app NOLOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
 ALTER ROLE pai_timer_runtime LOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD 'timer-runtime-test';
+ALTER ROLE pai_timer_app RESET ALL;
+ALTER ROLE pai_timer_runtime RESET ALL;
+REVOKE SET, ALTER SYSTEM ON PARAMETER session_replication_role
+  FROM PUBLIC, pai_timer_app, pai_timer_runtime;
 ALTER DEFAULT PRIVILEGES FOR ROLE pai_migrator
   REVOKE ALL ON TABLES FROM PUBLIC, anon, authenticated, pai_timer_app, pai_timer_runtime, pai_runtime_bridge, pai_memory_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE pai_migrator
@@ -648,8 +788,11 @@ DO $$ BEGIN
 END $$;
 GRANT pai_timer_app TO pai_timer_runtime WITH INHERIT TRUE, SET FALSE, ADMIN FALSE;
 DROP SCHEMA IF EXISTS timer_shadow CASCADE;
-DROP SCHEMA IF EXISTS memory CASCADE;
+DROP SCHEMA IF EXISTS timer_rogue CASCADE;
 DROP SCHEMA IF EXISTS timer CASCADE;
+DROP FUNCTION IF EXISTS memory.read_owner_secret_v1();
+DROP SEQUENCE IF EXISTS memory.owner_secret_sequence;
+DROP TABLE IF EXISTS memory.owner_secrets;
 CREATE SCHEMA timer AUTHORIZATION pai_migrator;
 REVOKE ALL ON SCHEMA timer FROM PUBLIC, anon, authenticated, pai_timer_runtime, pai_runtime_bridge, pai_memory_app;
 GRANT USAGE ON SCHEMA timer TO pai_timer_app;
@@ -698,6 +841,20 @@ CREATE TABLE timer.contract_outbox (
   updated_at timestamptz NOT NULL
 );
 CREATE SEQUENCE timer.contract_owner_sequence;
+CREATE FUNCTION timer.reject_contract_audit_mutation_v1()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+VOLATILE
+PARALLEL UNSAFE
+SET search_path = timer, pg_temp
+AS $immutable$
+${POSTGRES_IMMUTABLE_TRIGGER_BODY}
+$immutable$;
+CREATE TRIGGER contract_audits_immutable
+BEFORE UPDATE OR DELETE ON timer.contract_audits
+FOR EACH ROW
+EXECUTE FUNCTION timer.reject_contract_audit_mutation_v1();
 CREATE FUNCTION timer.write_contract_child_v1(
   p_parent_key text,
   p_expected_parent_version bigint,
@@ -814,30 +971,69 @@ function replacementWriterSql(options: Readonly<{
   $body$`;
 }
 
-const describePostgres = databaseUrl === undefined ? describe.skip : describe;
+const describePostgres =
+  configuredDatabaseUrl === undefined ? describe.skip : describe.sequential;
 
 describePostgres("PostgreSQL owner deployment verification", () => {
-  const pool = databaseUrl === undefined ? undefined : new Pool({ connectionString: databaseUrl });
-  const runtimePool =
-    databaseUrl === undefined
-      ? undefined
-      : new Pool({
-          connectionString: (() => {
-            const value = new URL(databaseUrl);
-            value.username = "pai_timer_runtime";
-            value.password = "timer-runtime-test";
-            return value.toString();
-          })(),
-        });
+  let adminPool: Pool | undefined;
+  let pool: Pool | undefined;
+  let runtimePool: Pool | undefined;
+  let testDatabaseName: string | undefined;
+  let resetChain: Promise<void> = Promise.resolve();
+
+  beforeAll(async () => {
+    if (configuredDatabaseUrl === undefined) return;
+    adminPool = new Pool({ connectionString: configuredDatabaseUrl });
+    testDatabaseName = `pai_persistence_contract_${process.pid}_${randomUUID()
+      .replaceAll("-", "")
+      .slice(0, 12)}`.toLowerCase();
+    const quotedDatabase = quotePostgresIdentifier(testDatabaseName);
+    await adminPool.query(`CREATE DATABASE ${quotedDatabase}`);
+    databaseUrl = databaseUrlForDatabase(configuredDatabaseUrl, testDatabaseName);
+    pool = new Pool({ connectionString: databaseUrl });
+    runtimePool = new Pool({
+      connectionString: databaseUrlForRuntime(databaseUrl),
+    });
+  });
 
   afterAll(async () => {
-    await Promise.all([pool?.end(), runtimePool?.end()]);
+    await runtimePool?.end();
+    if (pool !== undefined) {
+      await pool.query(transientRoleCleanupSql);
+      await pool.query(`
+        DROP SCHEMA IF EXISTS timer_shadow CASCADE;
+        DROP SCHEMA IF EXISTS timer_rogue CASCADE;
+        DROP SCHEMA IF EXISTS timer CASCADE;
+        DROP FUNCTION IF EXISTS memory.read_owner_secret_v1();
+        DROP SEQUENCE IF EXISTS memory.owner_secret_sequence;
+        DROP TABLE IF EXISTS memory.owner_secrets;
+      `);
+      await pool.end();
+    }
+    if (adminPool !== undefined && testDatabaseName !== undefined) {
+      try {
+        await waitForDatabaseConnectionsToClose(adminPool, testDatabaseName);
+        await adminPool.query(
+          `DROP DATABASE IF EXISTS ${quotePostgresIdentifier(testDatabaseName)} WITH (FORCE)`,
+        );
+      } finally {
+        await adminPool.end();
+      }
+    }
   });
 
   async function reset(): Promise<Pool> {
     if (pool === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
-    await pool.query(setupSql);
-    return pool;
+    const postgres = pool;
+    const resetTask = resetChain.then(async () => {
+      await postgres.query(setupSql);
+    });
+    resetChain = resetTask.then(
+      () => undefined,
+      () => undefined,
+    );
+    await resetTask;
+    return postgres;
   }
 
   function runtime(): Pool {
@@ -847,7 +1043,7 @@ describePostgres("PostgreSQL owner deployment verification", () => {
 
   async function createCrossOwnerFixture(postgres: Pool): Promise<void> {
     await postgres.query(`
-      CREATE SCHEMA memory AUTHORIZATION pai_migrator;
+      CREATE SCHEMA IF NOT EXISTS memory AUTHORIZATION pai_migrator;
       SET ROLE pai_migrator;
       CREATE TABLE memory.owner_secrets (
         secret_id text PRIMARY KEY,
@@ -880,6 +1076,468 @@ describePostgres("PostgreSQL owner deployment verification", () => {
     expect(verified).toMatchObject({ owner_service: "timer_trigger_app" });
     expect(verified.contract_fingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(verified.database_fingerprint).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("enforces the declared immutable trigger for UPDATE and DELETE", async () => {
+    const postgres = await reset();
+    await postgres.query(
+      `INSERT INTO timer.contract_audits(audit_id, child_id, created_at)
+       VALUES ('immutable-audit', 'immutable-child', clock_timestamp())`,
+    );
+    await expect(
+      postgres.query(
+        `UPDATE timer.contract_audits
+            SET child_id = 'mutated'
+          WHERE audit_id = 'immutable-audit'`,
+      ),
+    ).rejects.toThrow(/contract_audits is immutable/u);
+    await expect(
+      postgres.query(
+        `DELETE FROM timer.contract_audits
+          WHERE audit_id = 'immutable-audit'`,
+      ),
+    ).rejects.toThrow(/contract_audits is immutable/u);
+    await expect(
+      postgres.query<{ child_id: string }>(
+        `SELECT child_id FROM timer.contract_audits
+          WHERE audit_id = 'immutable-audit'`,
+      ),
+    ).resolves.toMatchObject({
+      rows: [{ child_id: "immutable-child" }],
+    });
+  });
+
+  it.each([
+    [
+      "disabled trigger",
+      "ALTER TABLE timer.contract_audits DISABLE TRIGGER contract_audits_immutable",
+    ],
+    [
+      "incomplete trigger event set",
+      `DROP TRIGGER contract_audits_immutable ON timer.contract_audits;
+       CREATE TRIGGER contract_audits_immutable
+       BEFORE DELETE ON timer.contract_audits
+       FOR EACH ROW EXECUTE FUNCTION timer.reject_contract_audit_mutation_v1()`,
+    ],
+    [
+      "trigger function source",
+      `CREATE OR REPLACE FUNCTION timer.reject_contract_audit_mutation_v1()
+       RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER VOLATILE PARALLEL UNSAFE
+       SET search_path = timer, pg_temp AS $body$
+       BEGIN RAISE EXCEPTION 'changed immutable error'; END;
+       $body$`,
+    ],
+    [
+      "trigger function search_path",
+      "ALTER FUNCTION timer.reject_contract_audit_mutation_v1() SET search_path = pg_temp",
+    ],
+    [
+      "trigger function owner",
+      "ALTER FUNCTION timer.reject_contract_audit_mutation_v1() OWNER TO pai_timer_app",
+    ],
+    [
+      "PUBLIC trigger function execute",
+      "GRANT EXECUTE ON FUNCTION timer.reject_contract_audit_mutation_v1() TO PUBLIC",
+    ],
+  ] as const)(
+    "fails closed on immutable %s drift",
+    async (_label, driftSql) => {
+      const postgres = await reset();
+      await postgres.query(driftSql);
+      await expect(
+        verifyOwnerRepositoryDeploymentFromPostgresV1(
+          POSTGRES_CONTRACT,
+          postgres,
+          {
+            expected_schema_owner: "pai_migrator",
+            runtime_postgres: runtime(),
+          },
+        ),
+      ).rejects.toThrow(/drift|cross-owner/u);
+    },
+  );
+
+  it.each([
+    ["synchronous_commit", "off"],
+    ["session_replication_role", "replica"],
+  ] as const)(
+    "rejects an unsafe runtime role default for %s",
+    async (parameter, value) => {
+      const postgres = await reset();
+      if (databaseUrl === undefined) {
+        throw new Error("PAI_TEST_DATABASE_URL is required");
+      }
+      await postgres.query(
+        `ALTER ROLE pai_timer_runtime SET ${parameter} TO '${value}'`,
+      );
+      const runtimeUrl = new URL(databaseUrl);
+      runtimeUrl.username = "pai_timer_runtime";
+      runtimeUrl.password = "timer-runtime-test";
+      const driftRuntime = new Pool({ connectionString: runtimeUrl.toString() });
+      try {
+        await expect(
+          verifyOwnerRepositoryDeploymentFromPostgresV1(
+            POSTGRES_CONTRACT,
+            postgres,
+            {
+              expected_schema_owner: "pai_migrator",
+              runtime_postgres: driftRuntime,
+            },
+          ),
+        ).rejects.toThrow(/GUC (?:default )?drift/u);
+      } finally {
+        await driftRuntime.end();
+        await postgres.query(`ALTER ROLE pai_timer_runtime RESET ${parameter}`);
+      }
+    },
+  );
+
+  it("rejects parameter privileges that can disable trigger enforcement", async () => {
+    const postgres = await reset();
+    await postgres.query(
+      "GRANT SET ON PARAMETER session_replication_role TO pai_timer_runtime",
+    );
+    try {
+      await expect(
+        verifyOwnerRepositoryDeploymentFromPostgresV1(
+          POSTGRES_CONTRACT,
+          postgres,
+          {
+            expected_schema_owner: "pai_migrator",
+            runtime_postgres: runtime(),
+          },
+        ),
+      ).rejects.toThrow(/durability GUC drift|parameter ACL drift/u);
+    } finally {
+      await postgres.query(
+        "REVOKE SET ON PARAMETER session_replication_role FROM pai_timer_runtime",
+      );
+    }
+  });
+
+  it("rechecks durability GUCs after BEGIN before invoking owner work", async () => {
+    const postgres = await reset();
+    if (databaseUrl === undefined) {
+      throw new Error("PAI_TEST_DATABASE_URL is required");
+    }
+    const runtimeUrl = new URL(databaseUrl);
+    runtimeUrl.username = "pai_timer_runtime";
+    runtimeUrl.password = "timer-runtime-test";
+    const composition = await openVerifiedOwnerPostgresCompositionV1(
+      POSTGRES_CONTRACT,
+      runtimeUrl.toString(),
+    );
+    let workInvoked = false;
+    try {
+      await composition.postgres.query("SET synchronous_commit = off");
+      await expect(
+        composition.unit_of_work.withTransaction(
+          {
+            operation: "reject-unsafe-runtime-guc",
+            idempotency_key: "reject-unsafe-runtime-guc",
+            trace_id: "trace-reject-unsafe-runtime-guc",
+            isolation: "read_committed",
+            retry: "none",
+          },
+          async () => {
+            workInvoked = true;
+            return "must-not-run";
+          },
+        ),
+      ).rejects.toThrow(/runtime durability GUC drift/u);
+      expect(workInvoked).toBe(false);
+    } finally {
+      await composition.postgres
+        .query("RESET synchronous_commit")
+        .catch(() => undefined);
+      await composition.close();
+    }
+  });
+
+  it("uses a new READ COMMITTED statement snapshot after an advisory-lock wait", async () => {
+    const postgres = await reset();
+    if (databaseUrl === undefined) {
+      throw new Error("PAI_TEST_DATABASE_URL is required");
+    }
+    const runtimeUrl = new URL(databaseUrl);
+    runtimeUrl.username = "pai_timer_runtime";
+    runtimeUrl.password = "timer-runtime-test";
+    const composition = await openVerifiedOwnerPostgresCompositionV1(
+      POSTGRES_CONTRACT,
+      runtimeUrl.toString(),
+    );
+    const writer = await postgres.connect();
+    const parentKey = `read-snapshot-${randomUUID()}`;
+    let releasePid!: (pid: number) => void;
+    const readerPid = new Promise<number>((resolve) => {
+      releasePid = resolve;
+    });
+    try {
+      await postgres.query(
+        `INSERT INTO timer.contract_parents(parent_key, parent_version)
+         VALUES ($1::text, 1::bigint)`,
+        [parentKey],
+      );
+      await writer.query("BEGIN");
+      await writer.query(
+        `SELECT pg_catalog.pg_advisory_xact_lock(
+           pg_catalog.hashtextextended($1::text, 0)
+         )`,
+        [parentKey],
+      );
+      await writer.query(
+        `DELETE FROM timer.contract_parents
+          WHERE parent_key = $1::text
+            AND parent_version = 1::bigint`,
+        [parentKey],
+      );
+      await writer.query(
+        `INSERT INTO timer.contract_parents(parent_key, parent_version)
+         VALUES ($1::text, 2::bigint)`,
+        [parentKey],
+      );
+      const read = composition.read_committed_postgres
+        .withReadCommittedTransaction(async (transaction) => {
+          const pid = await transaction.query<{ pid: number }>(
+            "SELECT pg_catalog.pg_backend_pid() AS pid",
+          );
+          releasePid(pid.rows[0]!.pid);
+          await transaction.query(
+            `SELECT pg_catalog.pg_advisory_xact_lock(
+               pg_catalog.hashtextextended($1::text, 0)
+             )`,
+            [parentKey],
+          );
+          return transaction.query<{ parent_version: string }>(
+            `SELECT parent_version::text AS parent_version
+               FROM timer.contract_parents
+              WHERE parent_key = $1::text
+              ORDER BY parent_version DESC
+              LIMIT 1`,
+            [parentKey],
+          );
+        });
+      const pid = await readerPid;
+      let observedWait = false;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const activity = await postgres.query<{
+          wait_event_type: string | null;
+          wait_event: string | null;
+        }>(
+          `SELECT wait_event_type, wait_event
+             FROM pg_catalog.pg_stat_activity
+            WHERE pid = $1::integer`,
+          [pid],
+        );
+        if (
+          activity.rows[0]?.wait_event_type === "Lock" &&
+          activity.rows[0]?.wait_event === "advisory"
+        ) {
+          observedWait = true;
+          break;
+        }
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 10);
+        });
+      }
+      expect(observedWait).toBe(true);
+      await writer.query("COMMIT");
+      await expect(read).resolves.toEqual({
+        rows: [{ parent_version: "2" }],
+      });
+    } finally {
+      await writer.query("ROLLBACK").catch(() => undefined);
+      writer.release();
+      await composition.close();
+    }
+  });
+
+  it("rejects session-level read SQL and reuses the connection without residual advisory locks", async () => {
+    const postgres = await reset();
+    if (databaseUrl === undefined) {
+      throw new Error("PAI_TEST_DATABASE_URL is required");
+    }
+    const runtimeUrl = new URL(databaseUrl);
+    runtimeUrl.username = "pai_timer_runtime";
+    runtimeUrl.password = "timer-runtime-test";
+    const composition = await openVerifiedOwnerPostgresCompositionV1(
+      POSTGRES_CONTRACT,
+      runtimeUrl.toString(),
+    );
+    const lockKey = `read-session-lock-${randomUUID()}`;
+    let rejectedConnectionPid: number | undefined;
+    try {
+      await expect(
+        composition.read_committed_postgres.withReadCommittedTransaction(
+          async (transaction) => {
+            const pid = await transaction.query<{ pid: number }>(
+              "SELECT pg_catalog.pg_backend_pid() AS pid",
+            );
+            rejectedConnectionPid = pid.rows[0]?.pid;
+            await transaction.query(
+              `SELECT pg_catalog.pg_advisory_lock(
+                 pg_catalog.hashtextextended($1::text, 0)
+               )`,
+              [lockKey],
+            );
+          },
+        ),
+      ).rejects.toThrow(/session-level or side-effecting functions/u);
+
+      for (const unsafeStatement of [
+        "COMMIT",
+        "SET application_name = 'unsafe-read-session'",
+        "SELECT pg_catalog.set_config('application_name', 'unsafe', false)",
+        "SELECT 1; SELECT 2",
+      ]) {
+        await expect(
+          composition.read_committed_postgres.withReadCommittedTransaction(
+            (transaction) => transaction.query(unsafeStatement),
+          ),
+        ).rejects.toThrow(/repository-safe SELECT|side-effecting functions/u);
+      }
+
+      const reusedConnectionPid =
+        await composition.read_committed_postgres.withReadCommittedTransaction(
+          async (transaction) => {
+            await transaction.query(
+              `SELECT pg_catalog.pg_advisory_xact_lock(
+                 pg_catalog.hashtextextended($1::text, 0)
+               )`,
+              [lockKey],
+            );
+            const pid = await transaction.query<{ pid: number }>(
+              "SELECT pg_catalog.pg_backend_pid() AS pid",
+            );
+            return pid.rows[0]?.pid;
+          },
+        );
+      expect(rejectedConnectionPid).toBeTypeOf("number");
+      expect(reusedConnectionPid).toBe(rejectedConnectionPid);
+      await expect(
+        postgres.query<{ advisory_locks: number }>(
+          `SELECT pg_catalog.count(*)::integer AS advisory_locks
+             FROM pg_catalog.pg_locks
+            WHERE locktype = 'advisory'
+              AND pid = $1::integer`,
+          [reusedConnectionPid],
+        ),
+      ).resolves.toMatchObject({ rows: [{ advisory_locks: 0 }] });
+
+      const externalLock = await postgres.query<{ acquired: boolean }>(
+        `SELECT pg_catalog.pg_try_advisory_lock(
+           pg_catalog.hashtextextended($1::text, 0)
+         ) AS acquired`,
+        [lockKey],
+      );
+      expect(externalLock.rows).toEqual([{ acquired: true }]);
+      await postgres.query(
+        `SELECT pg_catalog.pg_advisory_unlock(
+           pg_catalog.hashtextextended($1::text, 0)
+         )`,
+        [lockKey],
+      );
+    } finally {
+      await composition.close();
+    }
+  });
+
+  it("rolls back, releases locks, revokes escaped clients and makes the raw read capability read-only", async () => {
+    const postgres = await reset();
+    if (databaseUrl === undefined) {
+      throw new Error("PAI_TEST_DATABASE_URL is required");
+    }
+    const runtimeUrl = new URL(databaseUrl);
+    runtimeUrl.username = "pai_timer_runtime";
+    runtimeUrl.password = "timer-runtime-test";
+    const composition = await openVerifiedOwnerPostgresCompositionV1(
+      POSTGRES_CONTRACT,
+      runtimeUrl.toString(),
+    );
+    const lockKey = `read-rollback-${randomUUID()}`;
+    let escaped:
+      | Parameters<
+          Parameters<
+            typeof composition.read_committed_postgres.withReadCommittedTransaction
+          >[0]
+        >[0]
+      | undefined;
+    try {
+      await expect(
+        composition.read_committed_postgres.withReadCommittedTransaction(
+          async (transaction) => {
+            escaped = transaction;
+            await transaction.query(
+              `SELECT pg_catalog.pg_advisory_xact_lock(
+                 pg_catalog.hashtextextended($1::text, 0)
+               )`,
+              [lockKey],
+            );
+            throw new Error("forced read transaction failure");
+          },
+        ),
+      ).rejects.toThrow(/forced read transaction failure/u);
+      await expect(
+        escaped!.query("SELECT 1 AS value"),
+      ).rejects.toThrow(/no longer active/u);
+      const lock = await postgres.query<{ acquired: boolean }>(
+        `SELECT pg_catalog.pg_try_advisory_lock(
+           pg_catalog.hashtextextended($1::text, 0)
+         ) AS acquired`,
+        [lockKey],
+      );
+      expect(lock.rows).toEqual([{ acquired: true }]);
+      await postgres.query(
+        `SELECT pg_catalog.pg_advisory_unlock(
+           pg_catalog.hashtextextended($1::text, 0)
+         )`,
+        [lockKey],
+      );
+      await expect(
+        composition.read_committed_postgres.withReadCommittedTransaction(
+          (transaction) =>
+            transaction.query<{ value: number }>(
+              "SELECT 1::integer AS value",
+            ),
+        ),
+      ).resolves.toEqual({ rows: [{ value: 1 }] });
+      await expect(
+        composition.read_committed_postgres.withReadCommittedTransaction(
+          (transaction) =>
+            transaction.query(
+              `UPDATE timer.contract_parents
+                  SET parent_version = parent_version + 1`,
+            ),
+        ),
+      ).rejects.toThrow(
+        /repository-safe SELECT|read-only|permission denied/u,
+      );
+      const writerChildId = `raw-read-writer-${randomUUID()}`;
+      await expect(
+        composition.read_committed_postgres.withReadCommittedTransaction(
+          (transaction) =>
+            transaction.query(
+              `SELECT timer.write_contract_child_v1(
+                 $1::text,
+                 0::bigint,
+                 $2::text,
+                 '{}'::jsonb
+               )`,
+              [`parent-${writerChildId}`, writerChildId],
+            ),
+        ),
+      ).rejects.toThrow(/read-only transaction/u);
+      await expect(
+        postgres.query<{ count: string }>(
+          `SELECT count(*)::text AS count
+             FROM timer.contract_children
+            WHERE child_id = $1::text`,
+          [writerChildId],
+        ),
+      ).resolves.toMatchObject({ rows: [{ count: "0" }] });
+    } finally {
+      await composition.close();
+    }
   });
 
   it("keeps public catalog proofs non-executable, including Pool lookalikes", async () => {
@@ -1352,6 +2010,53 @@ describePostgres("PostgreSQL owner deployment verification", () => {
     );
     try {
       const childId = `composition-${randomUUID()}`;
+      const inheritedArguments = Object.create({
+        p_parent_key: `parent-inherited-${childId}`,
+        p_expected_parent_version: "0",
+        p_child_id: `inherited-${childId}`,
+        p_payload: {},
+      }) as Readonly<Record<string, unknown>>;
+      await expect(
+        composition.unit_of_work.withTransaction(
+          {
+            operation: "reject_inherited_writer_arguments",
+            idempotency_key: `inherited-${childId}`,
+            trace_id: `trace-inherited-${childId}`,
+            isolation: "read_committed",
+            retry: "none",
+          },
+          async (transaction, { owner }) =>
+            owner.executeWriter(transaction, {
+              writer: "write_contract_child_v1",
+              arguments: inheritedArguments as never,
+              expected_rows: 1,
+            }),
+        ),
+      ).rejects.toThrow(/plain data object/u);
+
+      await expect(
+        composition.unit_of_work.withTransaction(
+          {
+            operation: "reject_unbounded_writer_row_expectation",
+            idempotency_key: `row-expectation-${childId}`,
+            trace_id: `trace-row-expectation-${childId}`,
+            isolation: "read_committed",
+            retry: "none",
+          },
+          async (transaction, { owner }) =>
+            owner.executeWriter(transaction, {
+              writer: "write_contract_child_v1",
+              arguments: {
+                p_parent_key: `parent-row-expectation-${childId}`,
+                p_expected_parent_version: "0",
+                p_child_id: `row-expectation-${childId}`,
+                p_payload: {},
+              },
+              expected_rows: "unchecked" as never,
+            }),
+        ),
+      ).rejects.toThrow(/row-count expectation drift/u);
+
       const result = await composition.unit_of_work.withTransaction(
         {
           operation: "write_contract_child",
@@ -1408,6 +2113,35 @@ describePostgres("PostgreSQL owner deployment verification", () => {
     await expect(
       runtime().query("SELECT 1 AS owner_postgres_ready"),
     ).resolves.toMatchObject({ rows: [{ owner_postgres_ready: 1 }] });
+  });
+
+  it("re-attests the activated owner deployment during readiness", async () => {
+    const postgres = await reset();
+    if (databaseUrl === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
+    const runtimeUrl = new URL(databaseUrl);
+    runtimeUrl.username = "pai_timer_runtime";
+    runtimeUrl.password = "timer-runtime-test";
+    const composition = await openVerifiedOwnerPostgresCompositionV1(
+      POSTGRES_CONTRACT,
+      runtimeUrl.toString(),
+    );
+    const cleanController = new AbortController();
+    const driftController = new AbortController();
+    try {
+      await expect(
+        composition.checkReadiness(cleanController.signal),
+      ).resolves.toBeUndefined();
+      await postgres.query(
+        replacementWriterSql({
+          extraStatement: "PERFORM 1;",
+        }),
+      );
+      await expect(
+        composition.checkReadiness(driftController.signal),
+      ).rejects.toThrow(/drift|fingerprint/u);
+    } finally {
+      await composition.close();
+    }
   });
 
   it("maps only driver-origin PostgreSQL availability failures to transient storage errors", async () => {
@@ -1794,6 +2528,284 @@ describePostgres("PostgreSQL owner deployment verification", () => {
     }
   });
 
+  it("reports an outbox claim commit disconnect with exact durable claim identities and no repeated lease effect", async () => {
+    const postgres = await reset();
+    if (databaseUrl === undefined) {
+      throw new Error("PAI_TEST_DATABASE_URL is required");
+    }
+    const now = new Date().toISOString();
+    const outboxId = `claim-commit-unknown-${randomUUID()}`;
+    await postgres.query(
+      `INSERT INTO timer.eventing_transport_epochs
+         (transport_name, active_epoch, active_generation, activated_at)
+       VALUES ('redis_stream', 'epoch-1', 1, $1)`,
+      [now],
+    );
+    await postgres.query(
+      `INSERT INTO timer.contract_outbox
+         (id, status, attempt_count, payload, updated_at)
+       VALUES ($1, 'pending', 0, '{}'::jsonb, $2)`,
+      [outboxId, now],
+    );
+    const runtimeUrl = new URL(databaseUrl);
+    runtimeUrl.username = "pai_timer_runtime";
+    runtimeUrl.password = "timer-runtime-test";
+    const composition = await openVerifiedOwnerPostgresCompositionV1(
+      POSTGRES_CONTRACT,
+      runtimeUrl.toString(),
+    );
+    const mutablePoolPrototype = Pool.prototype as unknown as {
+      connect(this: Pool): Promise<PoolClient>;
+    };
+    const originalConnect = mutablePoolPrototype.connect;
+    const releaseDestroyFlags: unknown[] = [];
+    const request: OwnerOutboxClaimRequestV1 = {
+      outbox_table: "contract_outbox",
+      worker_id: "claim-commit-unknown-worker",
+      limit: 1,
+      lease_seconds: 30,
+      now,
+      current_transport_epoch: "epoch-1",
+      current_transport_generation: 1,
+    };
+    let commitFailure: unknown;
+    try {
+      mutablePoolPrototype.connect = async function () {
+        const client = await originalConnect.call(this);
+        const mutableClient = client as unknown as {
+          query: (
+            sql: string,
+            values?: readonly unknown[],
+          ) => Promise<unknown>;
+          release: (destroy?: boolean) => void;
+        };
+        const originalQuery = mutableClient.query;
+        const originalRelease = mutableClient.release;
+        mutableClient.query = async (sql, values = []) => {
+          if (sql === "COMMIT") {
+            mutableClient.query = originalQuery;
+            await originalQuery.call(client, sql, [...values]);
+            throw Object.assign(
+              new Error("socket reset after outbox claim commit"),
+              { code: "ECONNRESET" },
+            );
+          }
+          return originalQuery.call(client, sql, [...values]);
+        };
+        mutableClient.release = (destroy) => {
+          releaseDestroyFlags.push(destroy);
+          originalRelease.call(client, destroy);
+        };
+        return client;
+      };
+      try {
+        await composition.outbox.claim(request);
+      } catch (error) {
+        commitFailure = error;
+      }
+    } finally {
+      mutablePoolPrototype.connect = originalConnect;
+    }
+
+    try {
+      const persisted = await postgres.query<{
+        status: string;
+        attempt_count: number;
+        claimed_by: string;
+        claim_token: string;
+      }>(
+        `SELECT status, attempt_count, claimed_by, claim_token
+           FROM timer.contract_outbox
+          WHERE id = $1`,
+        [outboxId],
+      );
+      expect(persisted.rows).toHaveLength(1);
+      const claimToken = persisted.rows[0]!.claim_token;
+      expect(commitFailure).toMatchObject({
+        code: "commit_outcome_unknown",
+        operation:
+          "timer_trigger_app.outbox.claim:timer.contract_outbox",
+        idempotency_key: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+        reconciliation: {
+          kind: "outbox_claim",
+          outbox_table: "contract_outbox",
+          worker_id: request.worker_id,
+          current_transport_epoch: "epoch-1",
+          current_transport_generation: 1,
+          claims: [{ outbox_id: outboxId, claim_token: claimToken }],
+        },
+      });
+      expect(releaseDestroyFlags).toContain(true);
+      expect(persisted.rows[0]).toMatchObject({
+        status: "processing",
+        attempt_count: 1,
+        claimed_by: request.worker_id,
+      });
+      await expect(composition.outbox.claim(request)).resolves.toEqual([]);
+      await expect(
+        postgres.query<{ attempt_count: number }>(
+          "SELECT attempt_count FROM timer.contract_outbox WHERE id = $1",
+          [outboxId],
+        ),
+      ).resolves.toMatchObject({ rows: [{ attempt_count: 1 }] });
+    } finally {
+      await composition.close();
+    }
+  });
+
+  it("reports an outbox ACK commit disconnect with its exact CAS identity and makes retry a no-op", async () => {
+    const postgres = await reset();
+    if (databaseUrl === undefined) {
+      throw new Error("PAI_TEST_DATABASE_URL is required");
+    }
+    const now = new Date().toISOString();
+    const outboxId = `ack-commit-unknown-${randomUUID()}`;
+    await postgres.query(
+      `INSERT INTO timer.eventing_transport_epochs
+         (transport_name, active_epoch, active_generation, activated_at)
+       VALUES ('redis_stream', 'epoch-1', 1, $1)`,
+      [now],
+    );
+    await postgres.query(
+      `INSERT INTO timer.contract_outbox
+         (id, status, attempt_count, payload, updated_at)
+       VALUES ($1, 'pending', 0, '{}'::jsonb, $2)`,
+      [outboxId, now],
+    );
+    const runtimeUrl = new URL(databaseUrl);
+    runtimeUrl.username = "pai_timer_runtime";
+    runtimeUrl.password = "timer-runtime-test";
+    const composition = await openVerifiedOwnerPostgresCompositionV1(
+      POSTGRES_CONTRACT,
+      runtimeUrl.toString(),
+    );
+    const claimed = await composition.outbox.claim<{
+      readonly outbox_id: string;
+      readonly claim_token: string;
+    }>({
+      outbox_table: "contract_outbox",
+      worker_id: "ack-commit-unknown-worker",
+      limit: 1,
+      lease_seconds: 30,
+      now,
+      current_transport_epoch: "epoch-1",
+      current_transport_generation: 1,
+    });
+    const claimToken = claimed[0]?.claim_token;
+    if (claimToken === undefined) throw new Error("missing claim token");
+    const request: OwnerOutboxAcknowledgeRequestV1 = {
+      outbox_table: "contract_outbox",
+      outbox_id: outboxId,
+      claim_token: claimToken,
+      outcome: "sent",
+      next_retry_at: null,
+      error: null,
+      transport_ref: "redis_stream:test:1-0",
+      transport_epoch: "epoch-1",
+      transport_generation: 1,
+      current_transport_epoch: "epoch-1",
+      current_transport_generation: 1,
+      now,
+    };
+    const mutablePoolPrototype = Pool.prototype as unknown as {
+      connect(this: Pool): Promise<PoolClient>;
+    };
+    const originalConnect = mutablePoolPrototype.connect;
+    const releaseDestroyFlags: unknown[] = [];
+    let commitFailure: unknown;
+    try {
+      mutablePoolPrototype.connect = async function () {
+        const client = await originalConnect.call(this);
+        const mutableClient = client as unknown as {
+          query: (
+            sql: string,
+            values?: readonly unknown[],
+          ) => Promise<unknown>;
+          release: (destroy?: boolean) => void;
+        };
+        const originalQuery = mutableClient.query;
+        const originalRelease = mutableClient.release;
+        mutableClient.query = async (sql, values = []) => {
+          if (sql === "COMMIT") {
+            mutableClient.query = originalQuery;
+            await originalQuery.call(client, sql, [...values]);
+            throw Object.assign(
+              new Error("socket reset after outbox ACK commit"),
+              { code: "ECONNRESET" },
+            );
+          }
+          return originalQuery.call(client, sql, [...values]);
+        };
+        mutableClient.release = (destroy) => {
+          releaseDestroyFlags.push(destroy);
+          originalRelease.call(client, destroy);
+        };
+        return client;
+      };
+      try {
+        await composition.outbox.acknowledge(request);
+      } catch (error) {
+        commitFailure = error;
+      }
+    } finally {
+      mutablePoolPrototype.connect = originalConnect;
+    }
+
+    try {
+      expect(commitFailure).toMatchObject({
+        code: "commit_outcome_unknown",
+        operation: "timer_trigger_app.outbox.ack:timer.contract_outbox",
+        idempotency_key: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+        reconciliation: {
+          kind: "outbox_ack",
+          outbox_table: "contract_outbox",
+          outbox_id: outboxId,
+          claim_token: claimToken,
+          outcome: "sent",
+          next_retry_at: null,
+          transport_ref: request.transport_ref,
+          transport_epoch: "epoch-1",
+          transport_generation: 1,
+          current_transport_epoch: "epoch-1",
+          current_transport_generation: 1,
+          error_fingerprint: null,
+        },
+      });
+      expect(releaseDestroyFlags).toContain(true);
+      await expect(
+        postgres.query<{
+          status: string;
+          attempt_count: number;
+          transport_ref: string;
+        }>(
+          `SELECT status, attempt_count, transport_ref
+             FROM timer.contract_outbox
+            WHERE id = $1`,
+          [outboxId],
+        ),
+      ).resolves.toMatchObject({
+        rows: [
+          {
+            status: "sent",
+            attempt_count: 1,
+            transport_ref: request.transport_ref,
+          },
+        ],
+      });
+      await expect(
+        composition.outbox.acknowledge(request),
+      ).rejects.toThrow(/did not confirm its fenced compare-and-set/u);
+      await expect(
+        postgres.query<{ attempt_count: number }>(
+          "SELECT attempt_count FROM timer.contract_outbox WHERE id = $1",
+          [outboxId],
+        ),
+      ).resolves.toMatchObject({ rows: [{ attempt_count: 1 }] });
+    } finally {
+      await composition.close();
+    }
+  });
+
   it("rolls back a lease when PostgreSQL returns a malformed claim row", async () => {
     const postgres = await reset();
     if (databaseUrl === undefined) {
@@ -1917,6 +2929,20 @@ describePostgres("PostgreSQL owner deployment verification", () => {
        SET ROLE pai_migrator;
        CREATE TABLE timer_shadow.contract_children_shadow ()
        INHERITS (timer.contract_children);
+       RESET ROLE`,
+    ],
+    [
+      "inbound cross-schema foreign key and its owner-side internal triggers",
+      `CREATE SCHEMA timer_rogue AUTHORIZATION pai_migrator;
+       SET ROLE pai_migrator;
+       CREATE TABLE timer_rogue.inbound_child (
+         id text PRIMARY KEY,
+         parent_key text NOT NULL,
+         parent_version bigint NOT NULL,
+         CONSTRAINT inbound_child_parent_fk
+           FOREIGN KEY (parent_key, parent_version)
+           REFERENCES timer.contract_parents(parent_key, parent_version)
+       );
        RESET ROLE`,
     ],
     [

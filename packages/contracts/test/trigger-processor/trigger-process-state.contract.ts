@@ -510,6 +510,8 @@ describe("TriggerProcessStateV1", () => {
       isTriggerProcessTransitionV1Allowed(metaEnqueued, completed, {
         kind: "meta_finalization",
         execution_provenance: "not_applicable",
+        execution_transition_ref: null,
+        deferred_transition_ref: null,
         terminal_outcome: "executed",
         terminal_outcome_finalized_at: "2026-07-20T04:03:00.000Z",
         canonical_reason_code: "meta_completed",
@@ -610,6 +612,8 @@ describe("TriggerProcessStateV1", () => {
         kind: "stage_retry_scheduled",
         retry_record_ref: "retry-1",
         next_retry_at: "2026-07-22T08:01:00.000Z",
+        attempt_count: 1,
+        last_error: "dependency_unavailable",
         expected_process_updated_at: "2026-07-22T08:00:00.000Z",
         process_lock_ref: "process-lock-1",
         transition_audit_ref: "transition-audit-1",
@@ -679,6 +683,8 @@ describe("TriggerProcessStateV1", () => {
         isTriggerProcessTransitionV1Allowed(meta, closed, {
           kind: "meta_finalization",
           execution_provenance: "not_applicable",
+          execution_transition_ref: null,
+          deferred_transition_ref: null,
           terminal_outcome: terminalOutcome,
           terminal_outcome_finalized_at: "2026-07-20T04:03:00.000Z",
           canonical_reason_code: enqueueReason,
@@ -713,10 +719,13 @@ describe("TriggerProcessStateV1", () => {
     ["cooldown_expired", "completed", "failed_with_reason", "direct_execution", false],
     ["cooldown_expired", "failed", "failed_with_reason", "direct_execution", true],
     ["user_retracted", "cancelled", "cancelled_with_reason", "not_applicable", true],
+    ["user_retracted", "cancelled", "cancelled_with_reason", "direct_execution", true],
     ["user_retracted", "cancelled", "interrupted_with_reason", "not_applicable", false],
     ["system_interrupted", "cancelled", "interrupted_with_reason", "not_applicable", true],
+    ["system_interrupted", "cancelled", "interrupted_with_reason", "deferred_execution", true],
     ["system_interrupted", "completed", "executed", "not_applicable", false],
     ["failed_with_learnable_snapshot", "failed", "failed_with_reason", "not_applicable", true],
+    ["failed_with_learnable_snapshot", "failed", "failed_with_reason", "direct_execution", true],
   ] as const)(
     "enforces meta reason %s finalization status %s with outcome %s and provenance %s",
     (persistedReason, status, terminalOutcome, executionProvenance, expected) => {
@@ -737,6 +746,14 @@ describe("TriggerProcessStateV1", () => {
         isTriggerProcessTransitionV1Allowed(from, to, {
           kind: "meta_finalization",
           execution_provenance: executionProvenance,
+          execution_transition_ref:
+            executionProvenance === "not_applicable"
+              ? null
+              : "transition:execution-table",
+          deferred_transition_ref:
+            executionProvenance === "deferred_execution"
+              ? "transition:deferred-table"
+              : null,
           terminal_outcome: terminalOutcome,
           terminal_outcome_finalized_at: "2026-07-20T04:03:00.000Z",
           canonical_reason_code: `meta_${status}`,

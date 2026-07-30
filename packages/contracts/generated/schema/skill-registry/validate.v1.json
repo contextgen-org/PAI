@@ -1,0 +1,216 @@
+{
+  "$id": "urn:pai:skill-registry:validate:v1",
+  "anyOf": [
+    {
+      "$id": "urn:pai:skill-registry:validate-request:v1",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema_version",
+        "artifact_ref",
+        "content_digest",
+        "media_type",
+        "size_bytes",
+        "idempotency_key",
+        "trace_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "skill_validate_request.v1",
+          "type": "string"
+        },
+        "artifact_ref": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "content_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "media_type": {
+          "minLength": 1,
+          "maxLength": 256,
+          "type": "string"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "maximum": 31457280,
+          "type": "integer"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "details",
+        "trace_id"
+      ],
+      "properties": {
+        "code": {
+          "const": "skill_package_validated",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "retryable": {
+          "const": false,
+          "type": "boolean"
+        },
+        "details": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "validation_id",
+            "package_digest",
+            "manifest_digest",
+            "normalized_manifest",
+            "diagnostics",
+            "expires_at"
+          ],
+          "properties": {
+            "validation_id": {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            "package_digest": {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "manifest_digest": {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "normalized_manifest": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "schema_version",
+                "runtime_target",
+                "files"
+              ],
+              "properties": {
+                "schema_version": {
+                  "const": "skill_package_manifest.v1",
+                  "type": "string"
+                },
+                "runtime_target": {
+                  "const": "filesystem_bundle.v1",
+                  "type": "string"
+                },
+                "files": {
+                  "minItems": 1,
+                  "maxItems": 512,
+                  "type": "array",
+                  "items": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "path",
+                      "mode",
+                      "size_bytes",
+                      "sha256"
+                    ],
+                    "properties": {
+                      "path": {
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "type": "string"
+                      },
+                      "mode": {
+                        "pattern": "^0[0-7]{3}$",
+                        "type": "string"
+                      },
+                      "size_bytes": {
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "sha256": {
+                        "pattern": "^sha256:[0-9a-f]{64}$",
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "diagnostics": {
+              "maxItems": 4096,
+              "type": "array",
+              "items": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "severity",
+                  "code",
+                  "path",
+                  "message"
+                ],
+                "properties": {
+                  "severity": {
+                    "anyOf": [
+                      {
+                        "const": "info",
+                        "type": "string"
+                      },
+                      {
+                        "const": "warning",
+                        "type": "string"
+                      },
+                      {
+                        "const": "error",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "code": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "path": {
+                    "maxLength": 4096,
+                    "type": "string"
+                  },
+                  "message": {
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "expires_at": {
+              "format": "date-time",
+              "type": "string"
+            }
+          }
+        },
+        "trace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

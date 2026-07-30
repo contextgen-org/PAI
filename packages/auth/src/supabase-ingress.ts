@@ -5,6 +5,7 @@ import {
   type JWTVerifyGetKey,
   type JWTPayload,
 } from "jose";
+import { isProxy } from "node:util/types";
 
 import { AuthError, asUnauthenticated } from "./errors.js";
 import {
@@ -58,6 +59,7 @@ function snapshotSupabaseIngressOptionsV1(
     typeof value !== "object" ||
     value === null ||
     Array.isArray(value) ||
+    isProxy(value) ||
     (Object.getPrototypeOf(value) !== Object.prototype &&
       Object.getPrototypeOf(value) !== null)
   ) {
@@ -93,8 +95,11 @@ function snapshotSupabaseIngressOptionsV1(
     typeof issuer !== "string" ||
     typeof audience !== "string" ||
     typeof getKey !== "function" ||
+    isProxy(getKey) ||
     (algorithms !== undefined && !Array.isArray(algorithms)) ||
-    (mapPrincipal !== undefined && typeof mapPrincipal !== "function")
+    (algorithms !== undefined && isProxy(algorithms)) ||
+    (mapPrincipal !== undefined &&
+      (typeof mapPrincipal !== "function" || isProxy(mapPrincipal)))
   ) {
     throw new Error("Supabase ingress verifier options are invalid");
   }
@@ -123,14 +128,18 @@ function snapshotIngressPrincipalV1(
     "source_issuer",
     "source_subject",
   ];
-  const ownKeys =
-    typeof value === "object" && value !== null ? Reflect.ownKeys(value) : [];
   if (
     typeof value !== "object" ||
     value === null ||
     Array.isArray(value) ||
+    isProxy(value) ||
     (Object.getPrototypeOf(value) !== Object.prototype &&
-      Object.getPrototypeOf(value) !== null) ||
+      Object.getPrototypeOf(value) !== null)
+  ) {
+    throw new Error("Supabase principal mapper returned an invalid principal");
+  }
+  const ownKeys = Reflect.ownKeys(value);
+  if (
     ownKeys.some((key) => typeof key !== "string") ||
     (ownKeys as string[]).sort().join(",") !== expectedKeys.join(",")
   ) {
@@ -155,6 +164,9 @@ function snapshotIngressPrincipalV1(
   const authTime = dataValue("auth_time");
   if (!Array.isArray(rolesValue)) {
     throw new Error("Supabase principal mapper returned an invalid principal");
+  }
+  if (isProxy(rolesValue)) {
+    throw new Error("Supabase principal mapper returned invalid roles");
   }
   const rolesLength = Object.getOwnPropertyDescriptor(rolesValue, "length")?.value;
   if (
@@ -221,6 +233,7 @@ export function snapshotVerifiedSupabaseIngressV1(
     typeof value !== "object" ||
     value === null ||
     Array.isArray(value) ||
+    isProxy(value) ||
     (Object.getPrototypeOf(value) !== Object.prototype &&
       Object.getPrototypeOf(value) !== null)
   ) {
@@ -263,13 +276,19 @@ export function snapshotVerifiedSupabaseIngressV1(
 }
 
 function asRecord(value: unknown): Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null
+  return typeof value === "object" && value !== null && !isProxy(value)
     ? (value as Readonly<Record<string, unknown>>)
     : {};
 }
 
 function sortedStrings(value: unknown): string[] {
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    isProxy(value) ||
+    !Array.isArray(value) ||
+    value.some((item) => typeof item !== "string")
+  ) {
     return [];
   }
   return [...new Set(value)].sort();
@@ -400,7 +419,11 @@ export class SupabaseIngressVerifier {
         issuer: this.#issuer,
         audience: this.#audience,
         algorithms: [...this.#algorithms],
-        requiredClaims: ["sub", "iat", "nbf", "exp"],
+        // Supabase access tokens guarantee issued-at and expiry, but do not
+        // include a not-before claim. Requiring nbf here would reject every
+        // normal Supabase user credential despite a valid asymmetric signature
+        // and matching issuer/audience.
+        requiredClaims: ["sub", "iat", "exp"],
       });
       const claims = snapshotVerifiedJwtJsonV1(result.payload);
       const principal = snapshotIngressPrincipalV1(

@@ -15,6 +15,34 @@
     "./policy/*": {
       "types": "./src/policy/*.ts",
       "default": "./dist/policy/*.js"
+    },
+    "./memory/*": {
+      "types": "./src/memory/*.ts",
+      "default": "./dist/memory/*.js"
+    },
+    "./knowthat/*": {
+      "types": "./src/knowthat/*.ts",
+      "default": "./dist/knowthat/*.js"
+    },
+    "./meta/*": {
+      "types": "./src/meta/*.ts",
+      "default": "./dist/meta/*.js"
+    },
+    "./skill-registry/*": {
+      "types": "./src/skill-registry/*.ts",
+      "default": "./dist/skill-registry/*.js"
+    },
+    "./trigger-processor/*": {
+      "types": "./src/trigger-processor/*.ts",
+      "default": "./dist/trigger-processor/*.js"
+    },
+    "./action-runtime/*": {
+      "types": "./src/action-runtime/*.ts",
+      "default": "./dist/action-runtime/*.js"
+    },
+    "./timer/*": {
+      "types": "./src/timer/*.ts",
+      "default": "./dist/timer/*.js"
     }
   },
   "files": [
@@ -32,6 +60,7 @@
     "ajv": "catalog:"
   },
   "devDependencies": {
+    "@types/node": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

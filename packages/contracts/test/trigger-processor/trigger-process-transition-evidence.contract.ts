@@ -41,6 +41,65 @@ describe("TriggerProcessTransitionEvidenceV1Schema", () => {
     expect(validate(candidate)).toBe(false);
   });
 
+  it("binds Meta provenance to the exact persisted transition references", () => {
+    const transaction = {
+      terminal_outcome_finalized_at: "2026-07-20T04:00:00.000Z",
+      canonical_reason_code: "meta_completed",
+      transition_audit_ref: "audit-meta-1",
+      outbox_event_ref: "outbox-meta-1",
+    } as const;
+    expect(
+      validate({
+        kind: "meta_finalization",
+        execution_provenance: "direct_execution",
+        execution_transition_ref: "transition-execution-1",
+        deferred_transition_ref: null,
+        terminal_outcome: "executed",
+        ...transaction,
+      }),
+    ).toBe(true);
+    expect(
+      validate({
+        kind: "meta_finalization",
+        execution_provenance: "deferred_execution",
+        execution_transition_ref: "transition-execution-1",
+        deferred_transition_ref: null,
+        terminal_outcome: "deferred_then_executed",
+        ...transaction,
+      }),
+    ).toBe(false);
+    expect(
+      validate({
+        kind: "meta_finalization",
+        execution_provenance: "direct_execution",
+        execution_transition_ref: "transition-execution-1",
+        deferred_transition_ref: null,
+        terminal_outcome: "cancelled_with_reason",
+        ...transaction,
+      }),
+    ).toBe(true);
+    expect(
+      validate({
+        kind: "meta_finalization",
+        execution_provenance: "deferred_execution",
+        execution_transition_ref: "transition-execution-1",
+        deferred_transition_ref: "transition-deferred-1",
+        terminal_outcome: "interrupted_with_reason",
+        ...transaction,
+      }),
+    ).toBe(true);
+    expect(
+      validate({
+        kind: "meta_finalization",
+        execution_provenance: "not_applicable",
+        execution_transition_ref: "caller-reported-transition",
+        deferred_transition_ref: null,
+        terminal_outcome: "cancelled_with_reason",
+        ...transaction,
+      }),
+    ).toBe(false);
+  });
+
   it("requires queue-promotion fencing facts instead of a caller promotion assertion", () => {
     const strongPromotion = {
       kind: "admission_queue_promotion",

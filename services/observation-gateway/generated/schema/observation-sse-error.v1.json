@@ -1,0 +1,35 @@
+{
+  "$id": "observation.sse.error",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "code",
+    "error_code",
+    "retryable",
+    "trace_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0",
+      "type": "string"
+    },
+    "code": {
+      "const": "observation.error",
+      "type": "string"
+    },
+    "error_code": {
+      "minLength": 1,
+      "maxLength": 256,
+      "type": "string"
+    },
+    "retryable": {
+      "type": "boolean"
+    },
+    "trace_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    }
+  }
+}

@@ -5,6 +5,18 @@
   "type": "module",
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
   "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc -p tsconfig.json --noEmit", "test": "vitest run test" },
-  "dependencies": { "@pai/eventing": "workspace:*" },
+  "dependencies": {
+    "@pai/action-runtime": "workspace:*",
+    "@pai/contracts": "workspace:*",
+    "@pai/eventing": "workspace:*",
+    "@pai/knowthat": "workspace:*",
+    "@pai/memory": "workspace:*",
+    "@pai/meta-cognition": "workspace:*",
+    "@pai/persistence": "workspace:*",
+    "@pai/service-kit": "workspace:*",
+    "@pai/skill-registry": "workspace:*",
+    "@pai/timer-trigger-app": "workspace:*",
+    "@pai/trigger-processor": "workspace:*"
+  },
   "devDependencies": { "typescript": "catalog:", "vitest": "catalog:" }
 }

@@ -44,5 +44,23 @@ describe("DirectActivePolicyV1", () => {
       status: "candidate",
       reason_code: "rule_not_allowlisted",
     });
+    expect(
+      evaluateDirectActivePolicyV1({
+        ...eligible,
+        explicitness: "weak_implication",
+      }),
+    ).toMatchObject({
+      status: "candidate",
+      reason_code: "not_explicit_statement",
+    });
+  });
+
+  it("rejects non-finite confidence instead of allowing it past the threshold", () => {
+    expect(() =>
+      evaluateDirectActivePolicyV1({
+        ...eligible,
+        confidence: Number.NaN,
+      }),
+    ).toThrow(/input is invalid/u);
   });
 });

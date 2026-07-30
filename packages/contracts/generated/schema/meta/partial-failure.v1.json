@@ -1,0 +1,188 @@
+{
+  "$id": "urn:pai:meta:partial-failure:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "failure_id",
+    "stage",
+    "target_service",
+    "operation",
+    "blocking",
+    "retryable",
+    "status",
+    "attempt_count",
+    "compensation_owner",
+    "error_ref"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "partial_failure.v1",
+      "type": "string"
+    },
+    "failure_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "stage": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "target_service": {
+      "anyOf": [
+        {
+          "const": "trigger_processor",
+          "type": "string"
+        },
+        {
+          "const": "action_runtime",
+          "type": "string"
+        },
+        {
+          "const": "meta_cognition",
+          "type": "string"
+        },
+        {
+          "const": "memory",
+          "type": "string"
+        },
+        {
+          "const": "knowthat",
+          "type": "string"
+        },
+        {
+          "const": "skill_registry",
+          "type": "string"
+        },
+        {
+          "const": "timer_trigger_app",
+          "type": "string"
+        },
+        {
+          "const": "observation_gateway",
+          "type": "string"
+        }
+      ]
+    },
+    "operation": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "blocking": {
+      "type": "boolean"
+    },
+    "retryable": {
+      "type": "boolean"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "const": "pending",
+          "type": "string"
+        },
+        {
+          "const": "retrying",
+          "type": "string"
+        },
+        {
+          "const": "succeeded",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "type": "string"
+        },
+        {
+          "const": "abandoned",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "type": "string"
+        }
+      ]
+    },
+    "attempt_count": {
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
+    "next_retry_at": {
+      "minLength": 20,
+      "maxLength": 30,
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+      "type": "string"
+    },
+    "compensation_owner": {
+      "anyOf": [
+        {
+          "const": "trigger_processor",
+          "type": "string"
+        },
+        {
+          "const": "action_runtime",
+          "type": "string"
+        },
+        {
+          "const": "meta_cognition",
+          "type": "string"
+        },
+        {
+          "const": "memory",
+          "type": "string"
+        },
+        {
+          "const": "knowthat",
+          "type": "string"
+        },
+        {
+          "const": "skill_registry",
+          "type": "string"
+        },
+        {
+          "const": "timer_trigger_app",
+          "type": "string"
+        },
+        {
+          "const": "observation_gateway",
+          "type": "string"
+        }
+      ]
+    },
+    "compensation_outbox_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "compensation_ref": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "downstream_ref": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "error_ref": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "terminal_reason": {
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+      "type": "string"
+    },
+    "resolved_at": {
+      "minLength": 20,
+      "maxLength": 30,
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?Z$",
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,502 @@
+{
+  "$id": "urn:pai:trigger-processor:process-get-response:v1",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "code",
+    "message",
+    "retryable",
+    "trace_id",
+    "details"
+  ],
+  "properties": {
+    "code": {
+      "const": "trigger_process_found",
+      "type": "string"
+    },
+    "message": {
+      "minLength": 1,
+      "maxLength": 4096,
+      "type": "string"
+    },
+    "retryable": {
+      "const": false,
+      "type": "boolean"
+    },
+    "trace_id": {
+      "minLength": 1,
+      "maxLength": 512,
+      "type": "string"
+    },
+    "details": {
+      "$id": "urn:pai:trigger-processor:process-query-details:v1",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "trigger_id",
+        "workspace_id",
+        "bot_id",
+        "owner_agent_id",
+        "deployment_environment",
+        "release_channel",
+        "runtime_run_id",
+        "phase",
+        "status",
+        "terminal_reason",
+        "terminal_outcome",
+        "terminal_outcome_finalized_at",
+        "successor_process_id",
+        "snapshot_transfer_ref",
+        "boundary_system_event_ref",
+        "canonical_reason_code",
+        "reason_code",
+        "cooldown_until",
+        "snapshot_retention_until",
+        "process_snapshot_identity",
+        "context_snapshot_identity",
+        "snapshot_watermark",
+        "meta_job_id",
+        "meta_status",
+        "meta_summary_ref",
+        "observation_finalized"
+      ],
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "trigger_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "workspace_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "bot_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "owner_agent_id": {
+          "minLength": 1,
+          "maxLength": 512,
+          "type": "string"
+        },
+        "deployment_environment": {
+          "$id": "urn:pai:shared:deployment-environment:v1",
+          "anyOf": [
+            {
+              "const": "local",
+              "type": "string"
+            },
+            {
+              "const": "dev",
+              "type": "string"
+            },
+            {
+              "const": "staging",
+              "type": "string"
+            },
+            {
+              "const": "prod",
+              "type": "string"
+            }
+          ]
+        },
+        "release_channel": {
+          "$id": "urn:pai:shared:release-channel:v1",
+          "anyOf": [
+            {
+              "const": "stable",
+              "type": "string"
+            },
+            {
+              "const": "canary",
+              "type": "string"
+            }
+          ]
+        },
+        "runtime_run_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "const": "admission",
+              "type": "string"
+            },
+            {
+              "const": "context",
+              "type": "string"
+            },
+            {
+              "const": "intent",
+              "type": "string"
+            },
+            {
+              "const": "execution",
+              "type": "string"
+            },
+            {
+              "const": "cooldown",
+              "type": "string"
+            },
+            {
+              "const": "meta_enqueued",
+              "type": "string"
+            },
+            {
+              "const": "closed",
+              "type": "string"
+            }
+          ]
+        },
+        "status": {
+          "anyOf": [
+            {
+              "const": "running",
+              "type": "string"
+            },
+            {
+              "const": "waiting",
+              "type": "string"
+            },
+            {
+              "const": "preempt_requested",
+              "type": "string"
+            },
+            {
+              "const": "cancelling",
+              "type": "string"
+            },
+            {
+              "const": "completed",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "type": "string"
+            },
+            {
+              "const": "preempted",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "type": "string"
+            }
+          ]
+        },
+        "terminal_reason": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terminal_outcome": {
+          "anyOf": [
+            {
+              "$id": "urn:pai:trigger-processor:terminal-outcome:v1",
+              "anyOf": [
+                {
+                  "const": "executed",
+                  "type": "string"
+                },
+                {
+                  "const": "merged_and_executed",
+                  "type": "string"
+                },
+                {
+                  "const": "superseded_by_later_trigger",
+                  "type": "string"
+                },
+                {
+                  "const": "deferred_then_executed",
+                  "type": "string"
+                },
+                {
+                  "const": "expired_with_audit_record",
+                  "type": "string"
+                },
+                {
+                  "const": "cancelled_with_reason",
+                  "type": "string"
+                },
+                {
+                  "const": "failed_with_reason",
+                  "type": "string"
+                },
+                {
+                  "const": "preempted_and_handed_off",
+                  "type": "string"
+                },
+                {
+                  "const": "interrupted_with_reason",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terminal_outcome_finalized_at": {
+          "anyOf": [
+            {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "successor_process_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "snapshot_transfer_ref": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "boundary_system_event_ref": {
+          "anyOf": [
+            {
+              "$id": "urn:pai:shared:typed-evidence-ref:v1",
+              "minLength": 3,
+              "pattern": "^(memory_point|trigger_process|trigger_event|user_feedback|developer_note|system_event|artifact|tool_result):[^\\r\\n]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "canonical_reason_code": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason_code": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:[._-][a-z0-9_]+)*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cooldown_until": {
+          "anyOf": [
+            {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "snapshot_retention_until": {
+          "anyOf": [
+            {
+              "minLength": 20,
+              "maxLength": 35,
+              "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,9})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "process_snapshot_identity": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "snapshot_ref",
+                "snapshot_version",
+                "snapshot_hash"
+              ],
+              "properties": {
+                "snapshot_ref": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "snapshot_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "snapshot_hash": {
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "context_snapshot_identity": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "context_snapshot_ref",
+                "context_snapshot_version",
+                "context_snapshot_hash"
+              ],
+              "properties": {
+                "context_snapshot_ref": {
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "context_snapshot_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "context_snapshot_hash": {
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "snapshot_watermark": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "meta_job_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "meta_status": {
+          "anyOf": [
+            {
+              "const": "not_enqueued",
+              "type": "string"
+            },
+            {
+              "const": "enqueue_pending",
+              "type": "string"
+            },
+            {
+              "const": "queued",
+              "type": "string"
+            },
+            {
+              "const": "running",
+              "type": "string"
+            },
+            {
+              "const": "retry_wait",
+              "type": "string"
+            },
+            {
+              "const": "completed",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "type": "string"
+            },
+            {
+              "const": "not_applicable",
+              "type": "string"
+            }
+          ]
+        },
+        "meta_summary_ref": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "maxLength": 512,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "observation_finalized": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}
