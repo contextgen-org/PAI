@@ -60,6 +60,23 @@ describePostgres("Trigger runtime lifecycle owner writers", () => {
     const contextSnapshotRetentionUntil = new Date(
       Date.now() + 60 * 60 * 1_000,
     ).toISOString();
+    const authenticatedContext = {
+      authentication_kind: "supabase_ingress",
+      principal_id: "user:test",
+      principal_type: "user",
+      permission_scope: "trigger.submit.chat",
+      delegated_principal: null,
+      verified_principal: {
+        principal_id: "user:test",
+        principal_type: "user",
+        roles: ["member"],
+        source_issuer: "https://test.invalid/auth/v1",
+        source_subject: "user:test",
+        auth_time: 0,
+        scope_kind: "bot",
+        ...scope,
+      },
+    };
 
     await client.query(
       `INSERT INTO trigger_processor.bots(
@@ -72,11 +89,12 @@ describePostgres("Trigger runtime lifecycle owner writers", () => {
     await client.query(
       `INSERT INTO trigger_processor.triggers(
          id, workspace_id, bot_id, owner_agent_id, deployment_environment,
-         release_channel, source, actor_type, actor_id, payload, dedupe_key,
-         request_hash, priority, status
-       ) VALUES ($1,$2,$3,$4,$5,$6,'chat','user','user:test','{}',$7,$8,'strong','accepted')`,
+         release_channel, source, actor_type, actor_id, authenticated_context,
+         payload, dedupe_key, request_hash, priority, status
+       ) VALUES ($1,$2,$3,$4,$5,$6,'chat','user','user:test',$7,'{}',$8,$9,'strong','accepted')`,
       [triggerId, scope.workspace_id, scope.bot_id, scope.owner_agent_id,
-        scope.deployment_environment, scope.release_channel, `dedupe:${suffix}`, hash],
+        scope.deployment_environment, scope.release_channel, authenticatedContext,
+        `dedupe:${suffix}`, hash],
     );
     await client.query(
       `INSERT INTO trigger_processor.trigger_processes(
