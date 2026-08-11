@@ -50,6 +50,23 @@ jobs:
       - run: corepack prepare pnpm@11.13.1 --activate
       - run: pnpm verify:toolchain
       - run: pnpm install --frozen-lockfile
+      - name: Checkout locked PAI infrastructure migrations
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: contextgen-org/PAI-infra
+          ref: bb3f0a4d2543a1e2ee3e5e31ae401e07776cc134
+          path: pai-infra
+          persist-credentials: false
+      - name: Install locked infrastructure dependencies
+        working-directory: pai-infra
+        run: pnpm install --frozen-lockfile
+      - name: Apply locked PAI database migrations
+        working-directory: pai-infra
+        env:
+          PAI_DATABASE_URL: ${{ env.PAI_TEST_DATABASE_URL }}
+          PAI_DEPLOYMENT_ENVIRONMENT: local
+          PAI_SEED_MODE: none
+        run: pnpm db:fresh
       - name: Apply locked Redis effective configuration
         run: |
           docker exec "${{ job.services.redis.id }}" redis-cli CONFIG SET appendonly yes
