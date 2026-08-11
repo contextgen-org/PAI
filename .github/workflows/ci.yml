@@ -55,13 +55,13 @@ jobs:
         with:
           repository: contextgen-org/PAI-infra
           ref: bb3f0a4d2543a1e2ee3e5e31ae401e07776cc134
-          path: pai-infra
+          path: locked-infra
           persist-credentials: false
       - name: Install locked infrastructure dependencies
-        working-directory: pai-infra
+        working-directory: locked-infra
         run: pnpm --ignore-workspace install --frozen-lockfile
       - name: Apply locked PAI database migrations
-        working-directory: pai-infra
+        working-directory: locked-infra
         env:
           PAI_DATABASE_URL: ${{ env.PAI_TEST_DATABASE_URL }}
           PAI_DEPLOYMENT_ENVIRONMENT: local
