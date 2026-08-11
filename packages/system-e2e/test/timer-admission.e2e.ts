@@ -448,7 +448,7 @@ describe("Timer application to Trigger Processor admission", () => {
                     occurrence_id: payload.occurrence_id,
                     action,
                     reason_code: reasonCode,
-                    blocked_by_process_id: blockedBy,
+                    blocked_by_process_id: null,
                     admission_request: structuredClone(
                       args["p_admission_request"],
                     ),
@@ -504,7 +504,7 @@ describe("Timer application to Trigger Processor admission", () => {
                             process_phase: "admission",
                             process_status: "waiting",
                             wait_reason: "deferred_strong_queue",
-                            blocked_by_process_id: blockedBy,
+                            blocked_by_process_id: null,
                             priority: "strong",
                             action: "enqueue_strong_fifo",
                             reason_code: "catch_up_foreground_busy",
@@ -638,7 +638,7 @@ describe("Timer application to Trigger Processor admission", () => {
       occurrence_id: firstOccurrence.id,
       action: "enqueue_strong_fifo",
       reason_code: "catch_up_foreground_busy",
-      blocked_by_process_id: "process-foreground",
+      blocked_by_process_id: null,
     });
     expect(admissionDecisions.map(({ action }) => action)).toEqual([
       "enqueue_strong_fifo",

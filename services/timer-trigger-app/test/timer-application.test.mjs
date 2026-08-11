@@ -513,7 +513,7 @@ test("catch-up dispatch accepts the documented Strong FIFO TP projection", async
       );
       response.details.process_status = "waiting";
       response.details.wait_reason = "deferred_strong_queue";
-      response.details.blocked_by_process_id = "foreground_process_1";
+      response.details.blocked_by_process_id = null;
       response.details.action = "enqueue_strong_fifo";
       response.details.reason_code = "catch_up_foreground_busy";
       return response;
