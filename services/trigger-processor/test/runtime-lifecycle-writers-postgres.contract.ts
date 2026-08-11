@@ -194,6 +194,23 @@ describePostgres("Trigger runtime lifecycle owner writers", () => {
     const workItemId = `work:${suffix}`;
     const traceId = `trace:${suffix}`;
     const idempotencyKey = `${processId}:start:1`;
+    const authenticatedContext = {
+      authentication_kind: "supabase_ingress",
+      principal_id: "user:test",
+      principal_type: "user",
+      permission_scope: "trigger.submit.chat",
+      delegated_principal: null,
+      verified_principal: {
+        principal_id: "user:test",
+        principal_type: "user",
+        roles: ["member"],
+        source_issuer: "https://test.invalid/auth/v1",
+        source_subject: "user:test",
+        auth_time: 0,
+        scope_kind: "bot",
+        ...seeded.scope,
+      },
+    };
     const intentPolicySnapshot = {
       schema_version: "intent_policy_input_snapshot.v1",
       snapshot_ref: policySnapshotId,
@@ -292,12 +309,13 @@ describePostgres("Trigger runtime lifecycle owner writers", () => {
     await client.query(
       `INSERT INTO trigger_processor.triggers(
          id, workspace_id, bot_id, owner_agent_id, deployment_environment,
-         release_channel, source, actor_type, actor_id, payload, dedupe_key,
-         request_hash, priority, status
-       ) VALUES ($1,$2,$3,$4,$5,$6,'chat','user','user:test','{}',$7,$8,'strong','accepted')`,
+         release_channel, source, actor_type, actor_id, authenticated_context,
+         payload, dedupe_key, request_hash, priority, status
+       ) VALUES ($1,$2,$3,$4,$5,$6,'chat','user','user:test',$7,'{}',$8,$9,'strong','accepted')`,
       [triggerId, seeded.scope.workspace_id, seeded.scope.bot_id,
         seeded.scope.owner_agent_id, seeded.scope.deployment_environment,
-        seeded.scope.release_channel, `dedupe:${suffix}`, seeded.hash],
+        seeded.scope.release_channel, authenticatedContext, `dedupe:${suffix}`,
+        seeded.hash],
     );
     await client.query(
       `INSERT INTO trigger_processor.trigger_processes(
