@@ -6,6 +6,7 @@ import {
   RuntimeEventReadContractV1Schema,
   RuntimeEventReadErrorV1Schema,
   RuntimeEventResolveRequestV1Schema,
+  RuntimeFinalResultReadContractV1Schema,
   RuntimePreemptContractV1Schema,
   RuntimeRunQueryDetailsV1Schema,
   RuntimeStartRequestV1Schema,
@@ -32,6 +33,11 @@ import {
   RuntimeEventReadErrorV1,
   type RuntimeEventReadApplicationV1,
 } from "./runtime-event-read.v1.js";
+import {
+  RuntimeFinalResultReadErrorV1,
+  type RuntimeFinalResultReadApplicationV1,
+  type RuntimeFinalResultReadPrincipalV1,
+} from "./runtime-final-result-read.v1.js";
 import {
   RUNTIME_EXECUTION_ERROR_CODES_V1,
   RuntimeExecutionErrorV1,
@@ -68,6 +74,8 @@ const runtimePolicyInputReadRegistrationRoute =
   "/internal/runtime/runs/:runtime_run_id/start-attempts/:start_attempt_no/policy-input" as const;
 const runtimePolicyInputReferenceReadRegistrationRoute =
   "/internal/runtime/policy-inputs/:policy_input_ref" as const;
+const runtimeFinalResultReadRegistrationRoute =
+  "/internal/runtime/runs/:runtime_run_id/final-result" as const;
 const runtimeRunQueryRegistrationRoute = "/v1/runtime-runs/:id" as const;
 const runtimeToolQueryRegistrationRoute =
   "/v1/runtime-runs/:id/tool-invocations" as const;
@@ -103,6 +111,7 @@ const runtimeControlParamsSchemaV1 = Type.Object(
 export interface ActionRuntimeApplicationsV1 {
   readonly tool_permission_profile_current_read?: ToolPermissionProfileCurrentReadApplicationV1;
   readonly runtime_event_read?: RuntimeEventReadApplicationV1;
+  readonly runtime_final_result_read?: RuntimeFinalResultReadApplicationV1;
   readonly runtime_execution?: RuntimeExecutionApplicationV1;
   readonly runtime_execution_readiness?: Readonly<{
     checkReadiness(signal: AbortSignal): Promise<void>;
@@ -227,6 +236,30 @@ function runtimePrincipalV1(
   };
 }
 
+function runtimeFinalResultReadPrincipalV1(
+  request: Parameters<typeof getWorkloadAuthContext>[0],
+): RuntimeFinalResultReadPrincipalV1 {
+  const claims = getWorkloadAuthContext(request).claims;
+  if (claims.scope_kind !== "bot" || claims.sub !== "trigger_processor") {
+    throw new RuntimeFinalResultReadErrorV1(
+      "authorization_scope_mismatch",
+      false,
+    );
+  }
+  return Object.freeze({
+    sub: "trigger_processor",
+    aud: "action_runtime",
+    capability: claims.capability,
+    scope: {
+      workspace_id: claims.workspace_id,
+      bot_id: claims.bot_id,
+      owner_agent_id: claims.owner_agent_id,
+      deployment_environment: claims.deployment_environment,
+      release_channel: claims.release_channel,
+    },
+  });
+}
+
 function runtimePolicyReadPrincipalV1(
   request: Parameters<typeof getWorkloadAuthContext>[0],
 ): RuntimePolicyReadPrincipalV1 {
@@ -297,6 +330,14 @@ const runtimePolicyInputReferenceReadPolicyV1 = Object.freeze({
   requiredScope: runtimeEventReadScopeV1,
 } satisfies InternalRouteAuthPolicy);
 
+const runtimeFinalResultReadPolicyV1 = Object.freeze({
+  method: "GET",
+  route: runtimeFinalResultReadRegistrationRoute,
+  requiredCapabilities: ["runtime.final_result.read"],
+  allowedCallers: ["trigger_processor"],
+  requiredScope: runtimeEventReadScopeV1,
+} satisfies InternalRouteAuthPolicy);
+
 const runtimeToolReconciliationPolicyV1 = Object.freeze({
   method: "POST",
   route: runtimeToolReconciliationRegistrationRoute,
@@ -326,6 +367,34 @@ const runtimeExecutionErrorSchemaV1 = Type.Object(
       ),
     ),
     message: Type.String({ minLength: 1 }),
+    retryable: Type.Boolean(),
+    details: Type.Object({}, { additionalProperties: false }),
+    trace_id: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+
+function runtimeExecutionErrorResponseV1(
+  request: Readonly<{ id: string }>,
+  error: Readonly<{
+    code: RuntimeExecutionErrorV1["code"];
+    message: string;
+    retryable: boolean;
+  }>,
+) {
+  return {
+    code: error.code,
+    message: error.message,
+    retryable: error.retryable,
+    details: {},
+    trace_id: request.id,
+  };
+}
+
+const runtimeFinalResultReadErrorSchemaV1 = Type.Object(
+  {
+    code: Type.String({ minLength: 1, maxLength: 128 }),
+    message: Type.String({ minLength: 1, maxLength: 128 }),
     retryable: Type.Boolean(),
   },
   { additionalProperties: false },
@@ -689,6 +758,7 @@ export function buildActionRuntimeApp(
   const toolPermissionProfileCurrentRead =
     applications.tool_permission_profile_current_read;
   const runtimeEventRead = applications.runtime_event_read;
+  const runtimeFinalResultRead = applications.runtime_final_result_read;
   const runtimeExecution = applications.runtime_execution;
   const runtimeExecutionReadiness =
     applications.runtime_execution_readiness;
@@ -701,6 +771,9 @@ export function buildActionRuntimeApp(
       ? []
       : [toolPermissionProfileCurrentReadPolicyV1]),
     ...(runtimeEventRead === undefined ? [] : [runtimeEventReadPolicyV1]),
+    ...(runtimeFinalResultRead === undefined
+      ? []
+      : [runtimeFinalResultReadPolicyV1]),
     ...(runtimeExecution === undefined
       ? []
       : [
@@ -742,6 +815,14 @@ export function buildActionRuntimeApp(
               async check() {
                 if (runtimeEventRead === undefined) {
                   throw new Error("Runtime event owner reader is not composed");
+                }
+              },
+            },
+            {
+              name: "runtime_final_result_reader",
+              async check() {
+                if (runtimeFinalResultRead === undefined) {
+                  throw new Error("Runtime final-result reader is not composed");
                 }
               },
             },
@@ -911,6 +992,58 @@ export function buildActionRuntimeApp(
     );
   }
 
+  if (runtimeFinalResultRead !== undefined) {
+    app.get(
+      runtimeFinalResultReadRegistrationRoute,
+      {
+        schema: {
+          params: Type.Object(
+            {
+              runtime_run_id: Type.String({ minLength: 1, maxLength: 512 }),
+            },
+            { additionalProperties: false },
+          ),
+          response: {
+            200: inlineFastifySchemaV1(RuntimeFinalResultReadContractV1Schema),
+            403: runtimeFinalResultReadErrorSchemaV1,
+            404: runtimeFinalResultReadErrorSchemaV1,
+            409: runtimeFinalResultReadErrorSchemaV1,
+            503: runtimeFinalResultReadErrorSchemaV1,
+          },
+        },
+      },
+      async (request, reply) => {
+        const params = request.params as Readonly<{ runtime_run_id: string }>;
+        try {
+          return reply.code(200).send(
+            await runtimeFinalResultRead.read(
+              runtimeFinalResultReadPrincipalV1(request),
+              params.runtime_run_id,
+              request.id,
+            ),
+          );
+        } catch (error) {
+          if (!(error instanceof RuntimeFinalResultReadErrorV1)) throw error;
+          const status =
+            error.code === "authorization_scope_mismatch"
+              ? 403
+              : error.code === "runtime_not_found"
+                ? 404
+                : error.code === "runtime_not_completed"
+                  ? 409
+                  : error.retryable
+                    ? 503
+                    : 409;
+          return reply.code(status).send({
+            code: error.code,
+            message: error.code,
+            retryable: error.retryable,
+          });
+        }
+      },
+    );
+  }
+
   if (runtimeExecution !== undefined) {
     app.get(
       runtimePolicyInputReferenceReadRegistrationRoute,
@@ -954,11 +1087,9 @@ export function buildActionRuntimeApp(
               : error.code === "runtime_not_found"
                 ? 404
                 : 503;
-          return reply.code(status).send({
-            code: error.code,
-            message: error.code,
-            retryable: error.retryable,
-          });
+          return reply
+            .code(status)
+            .send(runtimeExecutionErrorResponseV1(request, error));
         }
       },
     );
@@ -1011,11 +1142,9 @@ export function buildActionRuntimeApp(
               : error.code === "runtime_not_found"
                 ? 404
                 : 503;
-          return reply.code(status).send({
-            code: error.code,
-            message: error.code,
-            retryable: error.retryable,
-          });
+          return reply
+            .code(status)
+            .send(runtimeExecutionErrorResponseV1(request, error));
         }
       },
     );
@@ -1061,11 +1190,9 @@ export function buildActionRuntimeApp(
             );
             throw error;
           }
-          return reply.code(runtimeExecutionErrorStatusV1(error)).send({
-            code: error.code,
-            message: error.code,
-            retryable: error.retryable,
-          });
+          return reply
+            .code(runtimeExecutionErrorStatusV1(error))
+            .send(runtimeExecutionErrorResponseV1(request, error));
         }
       },
     );
@@ -1108,12 +1235,13 @@ export function buildActionRuntimeApp(
           try {
             canonicalBody = JSON.parse(canonicalJsonV1(request.body));
           } catch {
-            return reply.code(400).send({
-              code: "schema_validation_failed",
-              message:
-                "Runtime reconciliation body is not canonical JSON",
-              retryable: false,
-            });
+            return reply.code(400).send(
+              runtimeExecutionErrorResponseV1(request, {
+                code: "schema_validation_failed",
+                message: "Runtime reconciliation body is not canonical JSON",
+                retryable: false,
+              }),
+            );
           }
           if (
             !Value.Check(
@@ -1121,11 +1249,13 @@ export function buildActionRuntimeApp(
               canonicalBody,
             )
           ) {
-            return reply.code(400).send({
-              code: "schema_validation_failed",
-              message: "Runtime reconciliation body is invalid",
-              retryable: false,
-            });
+            return reply.code(400).send(
+              runtimeExecutionErrorResponseV1(request, {
+                code: "schema_validation_failed",
+                message: "Runtime reconciliation body is invalid",
+                retryable: false,
+              }),
+            );
           }
           const body = canonicalBody as Readonly<{
             runtime_run_id: string;
@@ -1135,12 +1265,14 @@ export function buildActionRuntimeApp(
             params.runtime_run_id !== body.runtime_run_id ||
             params.tool_invocation_id !== body.tool_invocation_id
           ) {
-            return reply.code(400).send({
-              code: "schema_validation_failed",
-              message:
-                "Runtime reconciliation path identity must match the body",
-              retryable: false,
-            });
+            return reply.code(400).send(
+              runtimeExecutionErrorResponseV1(request, {
+                code: "schema_validation_failed",
+                message:
+                  "Runtime reconciliation path identity must match the body",
+                retryable: false,
+              }),
+            );
           }
           return reply.code(200).send(
             await runtimeExecution.reconcileUnknownTool(
@@ -1150,11 +1282,9 @@ export function buildActionRuntimeApp(
           );
         } catch (error) {
           if (!(error instanceof RuntimeExecutionErrorV1)) throw error;
-          return reply.code(runtimeExecutionErrorStatusV1(error)).send({
-            code: error.code,
-            message: error.code,
-            retryable: error.retryable,
-          });
+          return reply
+            .code(runtimeExecutionErrorStatusV1(error))
+            .send(runtimeExecutionErrorResponseV1(request, error));
         }
       },
     );
@@ -1186,30 +1316,35 @@ export function buildActionRuntimeApp(
                 canonicalJsonV1(request.body),
               );
             } catch {
-              return reply.code(400).send({
-                code: "schema_validation_failed",
-                message:
-                  "Runtime control request is not canonical JSON",
-                retryable: false,
-              });
+              return reply.code(400).send(
+                runtimeExecutionErrorResponseV1(request, {
+                  code: "schema_validation_failed",
+                  message: "Runtime control request is not canonical JSON",
+                  retryable: false,
+                }),
+              );
             }
             if (!Value.Check(controlRoute.schema, canonicalBody)) {
-              return reply.code(400).send({
-                code: "schema_validation_failed",
-                message: "Runtime control request schema is invalid",
-                retryable: false,
-              });
+              return reply.code(400).send(
+                runtimeExecutionErrorResponseV1(request, {
+                  code: "schema_validation_failed",
+                  message: "Runtime control request schema is invalid",
+                  retryable: false,
+                }),
+              );
             }
             const body = canonicalBody as Readonly<{
               runtime_run_id: string;
             }>;
             if (params.runtime_run_id !== body.runtime_run_id) {
-              return reply.code(400).send({
-                code: "schema_validation_failed",
-                message:
-                  "runtime_run_id path parameter must match the control body",
-                retryable: false,
-              });
+              return reply.code(400).send(
+                runtimeExecutionErrorResponseV1(request, {
+                  code: "schema_validation_failed",
+                  message:
+                    "runtime_run_id path parameter must match the control body",
+                  retryable: false,
+                }),
+              );
             }
             const response = await runtimeExecution.receiveControl(
               runtimePrincipalV1(request),
@@ -1217,12 +1352,25 @@ export function buildActionRuntimeApp(
             );
             return reply.code(202).send(response);
           } catch (error) {
-            if (!(error instanceof RuntimeExecutionErrorV1)) throw error;
-            return reply.code(runtimeExecutionErrorStatusV1(error)).send({
-              code: error.code,
-              message: error.code,
-              retryable: error.retryable,
-            });
+            if (!(error instanceof RuntimeExecutionErrorV1)) {
+              // Keep the external response fail-closed, but retain the
+              // server-side cause needed to diagnose a durable control
+              // command. Do not attach the control body, policy, or token:
+              // those are intentionally absent from the log record.
+              request.log.error(
+                {
+                  event: "runtime_control_unhandled_exception",
+                  service_id: "action_runtime",
+                  trace_id: request.id,
+                  err: error,
+                },
+                "runtime control failed before a classified error was produced",
+              );
+              throw error;
+            }
+            return reply
+              .code(runtimeExecutionErrorStatusV1(error))
+              .send(runtimeExecutionErrorResponseV1(request, error));
           }
         },
       );

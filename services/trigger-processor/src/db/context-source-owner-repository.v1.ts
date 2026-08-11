@@ -37,6 +37,7 @@ export interface TriggerContextOwnerSourcePortV1 {
     signal: AbortSignal,
   ): Promise<Readonly<{
     trigger_ref: string;
+    source: "chat" | "notification" | "timer";
     received_at: string;
     payload: unknown;
   }>>;
@@ -67,6 +68,14 @@ function textV1(value: unknown, label: string, maximum = 512): string {
     throw new Error(`${label} is invalid`);
   }
   return value;
+}
+
+function triggerSourceV1(value: unknown): "chat" | "notification" | "timer" {
+  const source = textV1(value, "Trigger intent source");
+  if (source !== "chat" && source !== "notification" && source !== "timer") {
+    throw new Error("Trigger intent source is invalid");
+  }
+  return source;
 }
 
 function contextQueryV1(payload: unknown): string {
@@ -225,6 +234,7 @@ export function createTriggerContextOwnerSourcePortV1(
       }
       return Object.freeze({
         trigger_ref: ownerRef,
+        source: triggerSourceV1(row.trigger_source),
         received_at: timestampV1(row.trigger_received_at, "Trigger received"),
         payload: intentPayloadV1(row.trigger_payload),
       });

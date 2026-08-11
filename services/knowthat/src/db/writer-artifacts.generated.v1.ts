@@ -150,7 +150,7 @@ export const KNOWTHAT_WRITER_ARTIFACTS_V1 = [
     "generator_source": "pai-infra/supabase/generated/permissions/0500_knowthat.sql",
     "function_name": "claim_knowthat_event_outbox_v1",
     "signature_fingerprint": "sha256:5e9e4c061c44c5ec122e9792459d14e28f1f4238164e03db9cad957359262f7f",
-    "function_body_sha256": "sha256:50ddbbfb53a5d06522a39894157824401677c9b172afcf1619549b7276c74aa2"
+    "function_body_sha256": "sha256:cb56b71c011d0b945d9e5078b02365a80232d120a2be2affd60a8f0a12893b71"
   },
   {
     "artifact_version": "owner_writer_artifact.v1",
@@ -174,7 +174,7 @@ export const KNOWTHAT_WRITER_ARTIFACTS_V1 = [
     "generator_source": "pai-infra/supabase/generated/permissions/0500_knowthat.sql",
     "function_name": "claim_knowthat_memory_command_outbox_v1",
     "signature_fingerprint": "sha256:07ac92cde7368fde6643a094cc68dcb296961a827e8d45abe65c72c9e83cf964",
-    "function_body_sha256": "sha256:2e1d833443320600d9a6c47c37be4c85f76435dc378c2458524543b36af4e597"
+    "function_body_sha256": "sha256:53021bd2109634f84f2aadf749f39145116ccb1ea18dee13f59be6ff58c9bd75"
   },
   {
     "artifact_version": "owner_writer_artifact.v1",

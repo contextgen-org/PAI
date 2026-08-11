@@ -1,16 +1,16 @@
-import {
-  ObjectStoreErrorV1,
-  type ObjectStorePortV1,
-  type ObjectStoreReconciliationPortV1,
+import type {
+  ObjectStorePortV1,
+  ObjectStoreReconciliationPortV1,
 } from "@pai/object-store";
 import {
   ObjectStoreReconciliationWorkerV1,
   createPostgresObjectMetadataRepositoryV1,
   createSupabaseStorageAdapterV1,
-  type ObjectAccessPolicyVerifierV1,
 } from "@pai/object-store/composition";
 import { isTrustedLocalDockerHttpOriginV1 } from "@pai/service-kit";
 import { Pool } from "pg";
+
+import type { ActionRuntimeFinalResultObjectAccessPolicyV1 } from "./production-final-result-object-access-policy.v1.js";
 
 export interface ActionRuntimeObjectStoreOptionsV1 {
   readonly database_url: string;
@@ -18,6 +18,8 @@ export interface ActionRuntimeObjectStoreOptionsV1 {
   readonly supabase_url: string;
   readonly supabase_secret_key: string;
   readonly worker_id: string;
+  /** Action-owned verifier; it permits only authenticated textual final reads. */
+  readonly access_policy: ActionRuntimeFinalResultObjectAccessPolicyV1;
   readonly reconciliation_interval_ms?: number;
   readonly fetch?: typeof fetch;
   readonly now?: () => Date;
@@ -171,22 +173,13 @@ export async function openActionRuntimeObjectStoreV1(
         await checkStorageV1();
       },
     });
-    const denyExternalObjectReads: ObjectAccessPolicyVerifierV1 = Object.freeze({
-      async verify(): Promise<never> {
-        throw new ObjectStoreErrorV1(
-          "authorization_scope_mismatch",
-          "Action Runtime does not expose an ObjectStore read-decision resolver",
-          false,
-        );
-      },
-    });
     const adapter = createSupabaseStorageAdapterV1({
       url: supabaseUrl,
       secretKey,
       allow_insecure_local_docker_transport: allowInsecureLocalDockerTransport,
       metadataRepository,
       terminalProofReconciler,
-      accessPolicyVerifier: denyExternalObjectReads,
+      accessPolicyVerifier: options.access_policy.verifier,
       policies: [
         {
           owner_service: "action_runtime",

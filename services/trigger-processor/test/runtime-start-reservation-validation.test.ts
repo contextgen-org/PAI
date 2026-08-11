@@ -23,6 +23,14 @@ const request = {
   validation_stage: "request_received",
   trace_id: "trace-1",
 } as const;
+const beforeRunningRequest = {
+  schema_version: "runtime_start_reservation_validate_request.v1",
+  runtime_run_id: "run-1",
+  start_fence_token_hash: tokenHash,
+  request_hash: requestHash,
+  validation_stage: "before_running",
+  trace_id: "trace-1",
+} as const;
 const principal = {
   sub: "action_runtime" as const,
   aud: "trigger_processor" as const,
@@ -148,7 +156,11 @@ describe("Runtime Start reservation validation", () => {
       create(row("cancel_requested")).validate(principal, path, request),
     ).rejects.toMatchObject({ code: "start_cancelled" });
     await expect(
-      create(row("started")).validate(principal, path, request),
+      create({
+        ...row("started"),
+        current_runtime_run_id: "run-1",
+        process_status: "running",
+      }).validate(principal, path, request),
     ).rejects.toMatchObject({ code: "reservation_terminal" });
   });
 
@@ -177,6 +189,33 @@ describe("Runtime Start reservation validation", () => {
             return { outcome: "found", reservation };
           }),
         ).validate(principal, path, request),
+      ).rejects.toMatchObject({ code: "reservation_terminal" });
+    }
+  });
+
+  it("permits only the exact published run during before-running lease recovery", async () => {
+    const recoveredReservation = {
+      ...row("started"),
+      current_runtime_run_id: "run-1",
+      process_status: "running",
+    } as const;
+    await expect(
+      createRuntimeStartReservationValidationApplicationV1(
+        repositoryFromRead(async () => ({
+          outcome: "found",
+          reservation: recoveredReservation,
+        })),
+      ).validate(principal, path, beforeRunningRequest),
+    ).resolves.toMatchObject({ reservation_status: "started" });
+
+    for (const reservation of [
+      { ...recoveredReservation, current_runtime_run_id: "run-other" },
+      { ...recoveredReservation, process_status: "waiting" },
+    ]) {
+      await expect(
+        createRuntimeStartReservationValidationApplicationV1(
+          repositoryFromRead(async () => ({ outcome: "found", reservation })),
+        ).validate(principal, path, beforeRunningRequest),
       ).rejects.toMatchObject({ code: "reservation_terminal" });
     }
   });

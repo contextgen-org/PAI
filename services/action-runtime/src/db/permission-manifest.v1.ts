@@ -333,6 +333,7 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
       "freeze_unknown_tool_side_effect_v1",
       "reconcile_tool_invocation_v1",
       "record_runtime_control_signal_v1",
+      "record_runtime_already_terminal_control_v1",
       "transition_runtime_control_signal_v1",
       "record_runtime_artifact_v1",
       "finalize_runtime_artifact_v1",
@@ -1201,6 +1202,74 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
       }),
       ownerFunctionSignatureV1({
         schema: "action_runtime",
+        function_name: "record_runtime_already_terminal_control_v1",
+        primary_table: "runtime_control_signals",
+        writer_kind: "state_transition",
+        arguments: [
+          ["p_runtime_signal_id", "text"],
+          ["p_runtime_run_id", "text"],
+          ["p_trigger_process_id", "text"],
+          ["p_start_attempt_no", "integer"],
+          ["p_expected_start_fence_generation", "bigint"],
+          ["p_verified_control_claims", "jsonb"],
+          ["p_signal_result", "jsonb"],
+          ["p_event_batch", "jsonb"],
+          ["p_outbox_batch", "jsonb"],
+          ["p_idempotency_key", "text"],
+          ["p_request_hash", "text"],
+          ["p_trace_id", "text"],
+        ],
+        reads_tables: [
+          "runtime_runs",
+          "runtime_run_leases",
+          "runtime_start_attempts",
+          "runtime_control_signals",
+          "runtime_events",
+          "runtime_event_outbox",
+        ],
+        writes_tables: [
+          "runtime_control_signals",
+          "runtime_events",
+          "runtime_event_outbox",
+        ],
+        effects: [
+          {
+            table_name: "runtime_control_signals",
+            operation: "append",
+            concurrency_control: "idempotency_key",
+          },
+          {
+            table_name: "runtime_control_signals",
+            operation: "append",
+            concurrency_control: "advisory_identity_lock",
+          },
+          {
+            table_name: "runtime_control_signals",
+            operation: "append",
+            concurrency_control: "database_row_lock",
+            lock_table_name: "runtime_runs",
+          },
+          {
+            table_name: "runtime_events",
+            operation: "append",
+            concurrency_control: "idempotency_key",
+          },
+          {
+            table_name: "runtime_events",
+            operation: "append",
+            concurrency_control: "database_row_lock",
+            lock_table_name: "runtime_runs",
+          },
+          {
+            table_name: "runtime_event_outbox",
+            operation: "enqueue",
+            concurrency_control: "idempotency_key",
+          },
+        ],
+        returns: "jsonb",
+      }),
+      ownerFunctionSignatureV1({
+        schema: "action_runtime",
         function_name: "transition_runtime_control_signal_v1",
         primary_table: "runtime_control_signals",
         writer_kind: "state_transition",
@@ -1614,7 +1683,14 @@ export const ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 =
           ["p_current_transport_epoch", "text"],
           ["p_current_transport_generation", "bigint"],
         ],
-        reads_tables: ["runtime_event_outbox", "eventing_transport_epochs"],
+        // Claiming an outbox row returns the immutable source envelope to the
+        // dispatcher.  Keep this dependency explicit so the generated writer
+        // remains least-privilege and verifier-visible.
+        reads_tables: [
+          "runtime_event_outbox",
+          "runtime_events",
+          "eventing_transport_epochs",
+        ],
         writes_tables: ["runtime_event_outbox"],
         effects: [
           {

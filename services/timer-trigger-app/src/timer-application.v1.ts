@@ -55,7 +55,7 @@ export interface TimerScopeV1 {
 }
 
 export interface TimerPrincipalV1 {
-  readonly caller: "action_runtime" | "timer_trigger_app";
+  readonly caller: "action_runtime" | "timer_trigger_app" | "trigger_processor";
   readonly capabilities: readonly string[];
   readonly scope: TimerScopeV1;
 }
@@ -526,6 +526,12 @@ export interface TimerApplicationOptionsV1 {
   readonly max_dispatch_attempts?: number;
   readonly base_retry_delay_ms?: number;
   readonly max_retry_delay_ms?: number;
+  /**
+   * A production scanner observes a due timestamp on its next poll rather
+   * than at the exact millisecond stored by the schedule.  This grace window
+   * keeps ordinary polling jitter out of the recovery/catch-up lane.
+   */
+  readonly direct_dispatch_grace_ms?: number;
   readonly clock?: () => Date;
 }
 
@@ -1323,7 +1329,8 @@ function assertQueryEnvelope(
     invalid("query contains an unsupported field");
   }
   if (
-    principal.caller !== "action_runtime" ||
+    (principal.caller !== "action_runtime" &&
+      principal.caller !== "trigger_processor") ||
     !principal.capabilities.includes("timer.read")
   ) {
     throw new TimerApplicationErrorV1("forbidden", "timer.read is required");
@@ -1398,6 +1405,21 @@ function assertWorker(
     throw new TimerApplicationErrorV1(
       "forbidden",
       `${capability} and matching scope are required`,
+    );
+  }
+}
+
+function assertGlobalWorkerCapabilityV1(
+  principal: Readonly<Pick<TimerPrincipalV1, "caller" | "capabilities">>,
+  capability: string,
+): void {
+  if (
+    principal.caller !== "timer_trigger_app" ||
+    !principal.capabilities.includes(capability)
+  ) {
+    throw new TimerApplicationErrorV1(
+      "forbidden",
+      `${capability} is required`,
     );
   }
 }
@@ -2051,6 +2073,7 @@ export class TimerApplicationV1 {
   readonly #maxDispatchAttempts: number;
   readonly #baseRetryDelayMs: number;
   readonly #maxRetryDelayMs: number;
+  readonly #directDispatchGraceMs: number;
   readonly #clock: () => Date;
 
   public constructor(
@@ -2061,6 +2084,7 @@ export class TimerApplicationV1 {
     this.#maxDispatchAttempts = options.max_dispatch_attempts ?? 5;
     this.#baseRetryDelayMs = options.base_retry_delay_ms ?? 1_000;
     this.#maxRetryDelayMs = options.max_retry_delay_ms ?? 60_000;
+    this.#directDispatchGraceMs = options.direct_dispatch_grace_ms ?? 30_000;
     this.#clock = options.clock ?? (() => new Date());
     assertSafePositiveInteger(
       this.#maxDispatchAttempts,
@@ -2076,6 +2100,11 @@ export class TimerApplicationV1 {
       this.#maxRetryDelayMs,
       "max_retry_delay_ms",
       86_400_000,
+    );
+    assertSafePositiveInteger(
+      this.#directDispatchGraceMs,
+      "direct_dispatch_grace_ms",
+      300_000,
     );
   }
 
@@ -2791,7 +2820,13 @@ export class TimerApplicationV1 {
             continue;
           }
         }
-        if (scheduled.getTime() === now.getTime()) {
+        // `next_fire_at` includes milliseconds while a durable worker polls
+        // periodically. Treat bounded scanner jitter as an ordinary due
+        // occurrence; only a materially late schedule enters the missed /
+        // catch-up branch below.
+        if (
+          now.getTime() - scheduled.getTime() <= this.#directDispatchGraceMs
+        ) {
           const occurrence = createOccurrence(
             state,
             schedule,
@@ -3068,6 +3103,140 @@ export class TimerApplicationV1 {
         dispatchable.slice(0, limit).map(snapshotOccurrence),
       );
     });
+  }
+
+  /**
+   * Returns only scopes that need timer work now. This is intentionally an
+   * in-process owner operation: no external caller gains cross-scope read
+   * access, while the Timer service can run one durable worker for all of its
+   * own schedules.
+   */
+  public async discoverRunnableScopes(
+    principal: Readonly<Pick<TimerPrincipalV1, "caller" | "capabilities">>,
+    now = snapshotInstantV1(this.#clock(), "clock"),
+  ): Promise<readonly TimerScopeV1[]> {
+    assertGlobalWorkerCapabilityV1(principal, "timer.worker.scan");
+    assertGlobalWorkerCapabilityV1(principal, "timer.worker.dispatch");
+    now = snapshotInstantV1(now, "now");
+    return this.repository.transact((state) => {
+      const scopes = new Map<string, TimerScopeV1>();
+      const add = (scope: TimerScopeV1): void => {
+        const snapshot = snapshotScope(scope);
+        scopes.set(scopeKey(snapshot), snapshot);
+      };
+      for (const schedule of state.schedules.values()) {
+        if (
+          schedule.status === "active" &&
+          schedule.next_fire_at !== null &&
+          Date.parse(schedule.next_fire_at) <= now.getTime()
+        ) {
+          add(schedule.scope);
+        }
+      }
+      for (const occurrence of state.occurrences.values()) {
+        const schedule = state.schedules.get(occurrence.schedule_id);
+        const eligibleSchedule =
+          schedule?.status === "active" || isCommitUnknownReplayV1(occurrence);
+        const retryDue =
+          occurrence.status === "retry_wait" &&
+          occurrence.next_retry_at !== null &&
+          Date.parse(occurrence.next_retry_at) <= now.getTime();
+        const expiredLease =
+          occurrence.status === "dispatching" &&
+          occurrence.locked_until !== null &&
+          Date.parse(occurrence.locked_until) <= now.getTime();
+        if (
+          eligibleSchedule &&
+          Date.parse(occurrence.effective_fire_at) <= now.getTime() &&
+          (occurrence.status === "pending" || retryDue || expiredLease)
+        ) {
+          add(occurrence.scope);
+        }
+      }
+      return Object.freeze(
+        [...scopes.values()].sort((left, right) =>
+          scopeKey(left).localeCompare(scopeKey(right)),
+        ),
+      );
+    });
+  }
+
+  /**
+   * Atomically selects and claims one runnable occurrence in the worker's
+   * bound scope. Callers never receive another scope's occurrence.
+   */
+  public async claimNextRunnableOccurrence(
+    principal: TimerPrincipalV1,
+    request: Readonly<{ worker_id: string; lease_seconds?: number; now?: string }>,
+  ): Promise<TimerClaimV1 | null> {
+    assertWorker(principal, "timer.worker.dispatch", principal.scope);
+    assertIdentifier(request.worker_id, "worker_id");
+    const now =
+      request.now === undefined
+        ? snapshotInstantV1(this.#clock(), "clock")
+        : parseInstant(request.now, "now");
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const candidate = await this.repository.transact((state) =>
+        [...state.occurrences.values()]
+          .filter((occurrence) => {
+            if (!sameScope(occurrence.scope, principal.scope)) return false;
+            const schedule = state.schedules.get(occurrence.schedule_id);
+            const eligibleSchedule =
+              schedule?.status === "active" || isCommitUnknownReplayV1(occurrence);
+            const retryDue =
+              occurrence.status === "retry_wait" &&
+              occurrence.next_retry_at !== null &&
+              Date.parse(occurrence.next_retry_at) <= now.getTime();
+            const expiredLease =
+              occurrence.status === "dispatching" &&
+              occurrence.locked_until !== null &&
+              Date.parse(occurrence.locked_until) <= now.getTime();
+            return (
+              eligibleSchedule &&
+              Date.parse(occurrence.effective_fire_at) <= now.getTime() &&
+              (occurrence.status === "pending" || retryDue || expiredLease)
+            );
+          })
+          .sort(
+            (left, right) =>
+              Date.parse(left.effective_fire_at) -
+                Date.parse(right.effective_fire_at) ||
+              left.id.localeCompare(right.id),
+          )
+          .map(snapshotOccurrence)[0],
+      );
+      if (candidate === undefined) return null;
+      const expectedStatus = candidate.status;
+      if (
+        expectedStatus !== "pending" &&
+        expectedStatus !== "retry_wait" &&
+        expectedStatus !== "dispatching"
+      ) {
+        continue;
+      }
+      try {
+        return await this.claimOccurrence(principal, {
+          scope: principal.scope,
+          occurrence_id: candidate.id,
+          expected_occurrence_version: candidate.occurrence_version,
+          expected_schedule_version: candidate.schedule_version,
+          expected_status: expectedStatus,
+          worker_id: request.worker_id,
+          ...(request.lease_seconds === undefined
+            ? {}
+            : { lease_seconds: request.lease_seconds }),
+          now: now.toISOString(),
+        });
+      } catch (error) {
+        if (
+          !(error instanceof TimerApplicationErrorV1) ||
+          error.code !== "claim_conflict"
+        ) {
+          throw error;
+        }
+      }
+    }
+    return null;
   }
 
   public async claimOccurrence(

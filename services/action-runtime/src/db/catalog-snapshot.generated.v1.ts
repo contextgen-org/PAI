@@ -3653,7 +3653,7 @@ export const ACTION_RUNTIME_DATABASE_CHECKS_V1 = [
     "constraint_name": "runtime_control_signals_check",
     "table_name": "runtime_control_signals",
     "required_definition_fragments": [
-      "CHECK (control_valid_until > requested_at)"
+      "CHECK (control_valid_until > requested_at OR status = 'handled'::text AND handled_status = 'already_terminal'::text AND safe_point_reached = false AND late_events_isolated = true AND handled_at IS NOT NULL AND final_fencing_generation IS NOT NULL AND last_runtime_sequence_no IS NOT NULL AND isolation_proof_ref IS NOT NULL)"
     ]
   },
   {
@@ -5448,15 +5448,14 @@ export const ACTION_RUNTIME_DATABASE_UNIQUE_CONSTRAINTS_V1 = [
     "validated": true
   },
   {
-    "constraint_name": "runtime_events_resolver_identity_uq",
+    "constraint_name": "runtime_events_resolver_owner_identity_uq",
     "table_name": "runtime_events",
     "columns": [
       "id",
       "runtime_run_id",
       "trigger_process_id",
       "sequence_no",
-      "payload_ref",
-      "payload_hash"
+      "payload_ref"
     ],
     "kind": "unique",
     "deferrable": false,
@@ -6116,9 +6115,9 @@ export const ACTION_RUNTIME_DATABASE_INDEXES_V1 = [
     "valid": true
   },
   {
-    "index_name": "runtime_events_resolver_identity_uq",
+    "index_name": "runtime_events_resolver_owner_identity_uq",
     "table_name": "runtime_events",
-    "definition": "CREATE UNIQUE INDEX runtime_events_resolver_identity_uq ON action_runtime.runtime_events USING btree (id, runtime_run_id, trigger_process_id, sequence_no, payload_ref, payload_hash)",
+    "definition": "CREATE UNIQUE INDEX runtime_events_resolver_owner_identity_uq ON action_runtime.runtime_events USING btree (id, runtime_run_id, trigger_process_id, sequence_no, payload_ref)",
     "unique": true,
     "primary": false,
     "valid": true
@@ -6516,8 +6515,7 @@ export const ACTION_RUNTIME_FOREIGN_KEYS_V1 = [
       "runtime_run_id",
       "trigger_process_id",
       "source_sequence_no",
-      "payload_ref",
-      "payload_hash"
+      "payload_ref"
     ],
     "referenced_schema": "action_runtime",
     "referenced_table": "runtime_events",
@@ -6526,8 +6524,7 @@ export const ACTION_RUNTIME_FOREIGN_KEYS_V1 = [
       "runtime_run_id",
       "trigger_process_id",
       "sequence_no",
-      "payload_ref",
-      "payload_hash"
+      "payload_ref"
     ],
     "match_type": "simple",
     "on_update": "no_action",

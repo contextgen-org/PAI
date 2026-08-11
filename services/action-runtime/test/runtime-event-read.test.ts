@@ -350,6 +350,7 @@ describe("Action Runtime owner event resolver", () => {
       checks: [
         { name: "tool_permission_profile_reader", status: "down" },
         { name: "runtime_event_reader", status: "down" },
+        { name: "runtime_final_result_reader", status: "down" },
         { name: "runtime_execution", status: "down" },
         { name: "runtime_query", status: "down" },
         { name: "runtime_token_stream", status: "down" },

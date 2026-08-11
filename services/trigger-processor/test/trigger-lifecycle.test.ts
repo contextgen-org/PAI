@@ -10,6 +10,7 @@ import type {
 } from "@pai/contracts";
 import { canonicalJsonV1 } from "@pai/eventing";
 import type { ObjectRefV1, PutImmutableRequestV1 } from "@pai/object-store";
+import { InternalClientError } from "@pai/service-kit";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -188,6 +189,7 @@ function dependencies(
     failPut?: boolean;
     resolvedContext?: ContextSnapshotV1;
     runtimeEvent?: unknown;
+    runtimeResolveError?: unknown;
     runtimeResolveRequests?: unknown[];
     runtimeRetentionUntil?: string;
     snapshotRetentionUntil?: string;
@@ -272,6 +274,9 @@ function dependencies(
     },
     runtime_events: {
       async resolve(request) {
+        if (options.runtimeResolveError !== undefined) {
+          throw options.runtimeResolveError;
+        }
         if (options.runtimeEvent === undefined) throw new Error("unused");
         options.runtimeResolveRequests?.push(request);
         return {
@@ -300,9 +305,9 @@ function dependencies(
     process_snapshot_retention: {
       async readCurrent(request) {
         options.retentionReadRequests?.push(request);
-        return (
-          options.snapshotRetentionUntil ?? "2026-08-30T00:00:00.000Z"
-        );
+        return "snapshotRetentionUntil" in options
+          ? options.snapshotRetentionUntil
+          : "2026-08-30T00:00:00.000Z";
       },
     },
     now: () => new Date(at),
@@ -1192,6 +1197,39 @@ describe("Trigger lifecycle runtime completion", () => {
     );
   });
 
+  it("keeps a non-retryable owner event read rejection permanent", async () => {
+    const callback = callbackFor("runtime.run.started");
+    const app = createTriggerLifecycleApplicationV1(
+      database([]),
+      dependencies([], {
+        runtimeResolveError: new InternalClientError({
+          code: "event_expired",
+          message: "Runtime event retention has expired",
+          retryable: false,
+          traceId: "11111111111111111111111111111111",
+          status: 410,
+        }),
+      }),
+    );
+
+    await expect(
+      app.appendRuntimeEvent({
+        request: callback.request,
+        authenticated_principal: {
+          sub: "action_runtime",
+          aud: "trigger_processor",
+          capability: ["trigger.process.snapshot.append"],
+          scope_kind: "bot",
+          workspace_id: "workspace-1",
+          bot_id: "bot-1",
+          owner_agent_id: "agent-1",
+          deployment_environment: "dev",
+          release_channel: "stable",
+        },
+      }),
+    ).rejects.toMatchObject({ reason_code: "runtime_event_owner_rejected" });
+  });
+
   it("lets the owner writer build the next snapshot under its DB lock", async () => {
     const calls: Array<Readonly<Record<string, unknown>>> = [];
     const runtimeResolveRequests: unknown[] = [];
@@ -1265,6 +1303,53 @@ describe("Trigger lifecycle runtime completion", () => {
         trace_id: "trace-1",
       },
     ]);
+  });
+
+  it("bootstraps the first runtime snapshot retention from its verified owner event", async () => {
+    const calls: Array<Readonly<Record<string, unknown>>> = [];
+    const app = createTriggerLifecycleApplicationV1(
+      database(calls, {
+        writerResult: {
+          code: "snapshot_appended",
+          message: "appended",
+          retryable: false,
+          trace_id: "trace-1",
+          details: {
+            trigger_process_id: "process-1",
+            snapshot_version: 2,
+            append_sequence_no: 2,
+            last_sequence_by_source: { action_runtime: 1 },
+            duplicate_replayed: false,
+          },
+        },
+      }),
+      dependencies([], {
+        runtimeEvent: callbackFor("runtime.run.started").event,
+        snapshotRetentionUntil: undefined,
+      }),
+    );
+
+    const callback = callbackFor("runtime.run.started");
+    await expect(app.appendRuntimeEvent({
+      request: callback.request,
+      authenticated_principal: {
+        sub: "action_runtime",
+        aud: "trigger_processor",
+        capability: ["trigger.process.snapshot.append"],
+        scope_kind: "bot",
+        workspace_id: "workspace-1",
+        bot_id: "bot-1",
+        owner_agent_id: "agent-1",
+        deployment_environment: "dev",
+        release_channel: "stable",
+      },
+    })).resolves.toMatchObject({ code: "snapshot_appended" });
+    expect(calls).toContainEqual(expect.objectContaining({
+      writer: "record_runtime_started_v1",
+      arguments: expect.objectContaining({
+        p_expected_snapshot_retention_until: "2026-08-30T00:00:00.000Z",
+      }),
+    }));
   });
 
   it("fails closed when the owner writer returns another process identity", async () => {

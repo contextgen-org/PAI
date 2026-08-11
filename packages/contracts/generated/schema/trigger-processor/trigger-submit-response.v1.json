@@ -86,11 +86,19 @@
                       "type": "string"
                     },
                     {
+                      "const": "timer_due_supersede_cooldown",
+                      "type": "string"
+                    },
+                    {
                       "const": "explicit_interrupt",
                       "type": "string"
                     },
                     {
                       "const": "strong_no_active_dispatch",
+                      "type": "string"
+                    },
+                    {
+                      "const": "strong_supersede_cooldown",
                       "type": "string"
                     }
                   ]
@@ -349,9 +357,7 @@
                   "type": "string"
                 },
                 "blocked_by_process_id": {
-                  "minLength": 1,
-                  "maxLength": 512,
-                  "type": "string"
+                  "type": "null"
                 },
                 "priority": {
                   "const": "strong",
@@ -797,11 +803,19 @@
                               "type": "string"
                             },
                             {
+                              "const": "timer_due_supersede_cooldown",
+                              "type": "string"
+                            },
+                            {
                               "const": "explicit_interrupt",
                               "type": "string"
                             },
                             {
                               "const": "strong_no_active_dispatch",
+                              "type": "string"
+                            },
+                            {
+                              "const": "strong_supersede_cooldown",
                               "type": "string"
                             }
                           ]
@@ -1060,9 +1074,7 @@
                           "type": "string"
                         },
                         "blocked_by_process_id": {
-                          "minLength": 1,
-                          "maxLength": 512,
-                          "type": "string"
+                          "type": "null"
                         },
                         "priority": {
                           "const": "strong",

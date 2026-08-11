@@ -198,7 +198,7 @@ export const SKILL_REGISTRY_WRITER_ARTIFACTS_V1 = [
     "generator_source": "pai-infra/supabase/generated/permissions/0450_skill_registry.sql",
     "function_name": "claim_skill_event_outbox_v1",
     "signature_fingerprint": "sha256:4a69ae39f6462e153921f79cd6db59a75aebfaecfa3c6d8c78d8e17fc2838b1a",
-    "function_body_sha256": "sha256:ec43fd0e19f2d96452628eb9da3624f76625c6fd2fe0be702b56b52b987081f4"
+    "function_body_sha256": "sha256:3a02f14250f9b42f291c6b2b96cd29cd3dc984464956e66ceb119f7efd6fb062"
   },
   {
     "artifact_version": "owner_writer_artifact.v1",

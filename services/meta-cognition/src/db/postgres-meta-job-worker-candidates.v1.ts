@@ -53,7 +53,7 @@ export function createPostgresMetaJobWorkerCandidateSourceV1(
                AND (
                  lease.job_id IS NULL
                  OR lease.lease_expires_at <=
-                   clock_timestamp() - make_interval(msecs => $2::integer)
+                   clock_timestamp() - (($2::bigint * interval '1 millisecond'))
                )
              )
           ORDER BY job.created_at ASC, job.id ASC

@@ -912,6 +912,2869 @@
           "type": "null"
         },
         "active_process": {
+          "const": "execution_waiting",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "strong_fifo_head_admission_time": {
+          "minLength": 1,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "type": "string"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "type": "null"
+        },
+        "active_process": {
+          "const": "execution_waiting",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "strong_fifo_head_admission_time": {
+          "minLength": 1,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "type": "string"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process": {
+          "const": "execution_waiting",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "type": "null"
+        },
+        "strong_fifo_head_admission_time": {
+          "type": "null"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "type": "null"
+        },
+        "active_process": {
+          "const": "execution_preempt_requested",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "strong_fifo_head_admission_time": {
+          "minLength": 1,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "type": "string"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "type": "null"
+        },
+        "active_process": {
+          "const": "execution_preempt_requested",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "strong_fifo_head_admission_time": {
+          "minLength": 1,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "type": "string"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process": {
+          "const": "execution_preempt_requested",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "type": "null"
+        },
+        "strong_fifo_head_admission_time": {
+          "type": "null"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "type": "null"
+        },
+        "active_process": {
+          "const": "execution_cancelling",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "strong_fifo_head_admission_time": {
+          "minLength": 1,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "type": "string"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "type": "null"
+        },
+        "active_process": {
+          "const": "execution_cancelling",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "strong_fifo_head_admission_time": {
+          "minLength": 1,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "type": "string"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process": {
+          "const": "execution_cancelling",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "type": "null"
+        },
+        "strong_fifo_head_admission_time": {
+          "type": "null"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "type": "null"
+        },
+        "active_process": {
+          "const": "context_running",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "strong_fifo_head_admission_time": {
+          "minLength": 1,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "type": "string"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "type": "null"
+        },
+        "active_process": {
+          "const": "context_running",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "strong_fifo_head_admission_time": {
+          "minLength": 1,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "type": "string"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process": {
+          "const": "context_running",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "type": "null"
+        },
+        "strong_fifo_head_admission_time": {
+          "type": "null"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "type": "null"
+        },
+        "active_process": {
+          "const": "context_waiting",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "strong_fifo_head_admission_time": {
+          "minLength": 1,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "type": "string"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "type": "null"
+        },
+        "active_process": {
+          "const": "context_waiting",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "strong_fifo_head_admission_time": {
+          "minLength": 1,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "type": "string"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process": {
+          "const": "context_waiting",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "type": "null"
+        },
+        "strong_fifo_head_admission_time": {
+          "type": "null"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "type": "null"
+        },
+        "active_process": {
+          "const": "intent_running",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "strong_fifo_head_admission_time": {
+          "minLength": 1,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "type": "string"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "type": "null"
+        },
+        "active_process": {
+          "const": "intent_running",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "strong_fifo_head_admission_time": {
+          "minLength": 1,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "type": "string"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process": {
+          "const": "intent_running",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "type": "null"
+        },
+        "strong_fifo_head_admission_time": {
+          "type": "null"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "type": "null"
+        },
+        "active_process": {
+          "const": "intent_waiting",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "strong_fifo_head_admission_time": {
+          "minLength": 1,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "type": "string"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "type": "null"
+        },
+        "active_process": {
+          "const": "intent_waiting",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "strong_fifo_head_admission_time": {
+          "minLength": 1,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "type": "string"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process": {
+          "const": "intent_waiting",
+          "type": "string"
+        },
+        "active_process_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "active_process_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "active_process_state_version": {
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "foreground_slot_process_id": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source",
+        "actor_type",
+        "bot_state",
+        "safety_blocked",
+        "trusted_strong_hint",
+        "explicit_interrupt",
+        "is_catch_up",
+        "foreground_slot_generation",
+        "strong_fifo_revision",
+        "strong_fifo_head_process_id",
+        "strong_fifo_head_admission_time",
+        "strong_fifo_preempt_commit_process_id",
+        "active_process",
+        "active_process_id",
+        "active_process_slot_generation",
+        "active_process_state_version",
+        "foreground_slot_process_id"
+      ],
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "notification",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "type": "string"
+            }
+          ]
+        },
+        "actor_type": {
+          "anyOf": [
+            {
+              "const": "super_user",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "developer",
+              "type": "string"
+            },
+            {
+              "const": "system",
+              "type": "string"
+            }
+          ]
+        },
+        "bot_state": {
+          "anyOf": [
+            {
+              "const": "active",
+              "type": "string"
+            },
+            {
+              "const": "disabled",
+              "type": "string"
+            },
+            {
+              "const": "archived",
+              "type": "string"
+            }
+          ]
+        },
+        "safety_blocked": {
+          "type": "boolean"
+        },
+        "trusted_strong_hint": {
+          "type": "boolean"
+        },
+        "explicit_interrupt": {
+          "type": "boolean"
+        },
+        "is_catch_up": {
+          "type": "boolean"
+        },
+        "foreground_slot_generation": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_revision": {
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "strong_fifo_head_process_id": {
+          "type": "null"
+        },
+        "strong_fifo_head_admission_time": {
+          "type": "null"
+        },
+        "strong_fifo_preempt_commit_process_id": {
+          "type": "null"
+        },
+        "active_process": {
           "const": "cooldown_waiting",
           "type": "string"
         },

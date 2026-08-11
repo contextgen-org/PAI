@@ -1,7 +1,6 @@
 import { constants as fsConstants } from "node:fs";
 import { access, mkdir } from "node:fs/promises";
 
-import { openOwnerEventDispatchRuntimeFromEnvV1 } from "@pai/eventing";
 import {
   openVerifiedOwnerPostgresCompositionV1,
   type VerifiedOwnerPostgresCompositionV1,
@@ -24,10 +23,17 @@ import {
   createActionRuntimeWorkloadSignerFromEnvV1,
 } from "./production-http-ports.v1.js";
 import { openActionRuntimeObjectStoreV1 } from "./production-object-store.v1.js";
+import { createActionRuntimeFinalResultObjectAccessPolicyV1 } from "./production-final-result-object-access-policy.v1.js";
 import { createActionRuntimeCallbackV1 } from "./production-runtime-callback.v1.js";
-import { createActionRuntimeToolPortV1 } from "./production-tool-port.v1.js";
+import {
+  createActionRuntimeToolPortV1,
+  type AgentCoreWebToolsOptionsV1,
+  type PersonalAssistantMcpToolNameV1,
+  type PersonalAssistantMcpToolsOptionsV1,
+} from "./production-tool-port.v1.js";
 import { createRuntimeControlTokenVerifierFromEnvV1 } from "./runtime-control-token-verifier.v1.js";
 import { createRuntimeEventReadApplicationV1 } from "./runtime-event-read.v1.js";
+import { createRuntimeFinalResultReadApplicationV1 } from "./runtime-final-result-read.v1.js";
 import { createRuntimeExecutionApplicationV1 } from "./runtime-execution.v1.js";
 import { createRuntimeQueryApplicationV1 } from "./runtime-query.v1.js";
 import { openRedisRuntimeTokenLiveBusV1 } from "./runtime-token-live-bus.v1.js";
@@ -119,6 +125,90 @@ function nonemptySecretV1(env: NodeJS.ProcessEnv, key: string): string {
     throw new Error(`${key} is invalid`);
   }
   return value;
+}
+
+/**
+ * AgentCore is deliberately opt-in.  Supplying any part of its connection
+ * configuration without the rest is a startup error, rather than silently
+ * downgrading an authorized web tool to a different network path.
+ */
+export function agentCoreWebToolsFromEnvironmentV1(
+  env: NodeJS.ProcessEnv,
+): Readonly<AgentCoreWebToolsOptionsV1> | undefined {
+  const endpoint = env.PAI_AGENTCORE_MCP_URL?.trim() || undefined;
+  const bearerToken = env.PAI_AGENTCORE_MCP_BEARER_TOKEN || undefined;
+  if (endpoint === undefined && bearerToken === undefined) {
+    return undefined;
+  }
+  if (endpoint === undefined) {
+    throw new Error("PAI_AGENTCORE_MCP_URL is required when AgentCore web tools are configured");
+  }
+  if (bearerToken === undefined) {
+    throw new Error("PAI_AGENTCORE_MCP_BEARER_TOKEN is required when AgentCore web tools are configured");
+  }
+  return Object.freeze({
+    mcp_url: endpoint,
+    bearer_token: bearerToken,
+    tools: Object.freeze({
+      search: env.PAI_AGENTCORE_WEB_SEARCH_TOOL_NAME?.trim() || "web_search",
+      fetch: env.PAI_AGENTCORE_WEB_FETCH_TOOL_NAME?.trim() || "web_fetch",
+      browser: env.PAI_AGENTCORE_WEB_BROWSER_TOOL_NAME?.trim() || "web_browser",
+    }),
+  });
+}
+
+/**
+ * The personal-assistant bridge is opt-in and deliberately accepts only a
+ * fixed PAI logical-tool map.  Its bearer token is consumed here by Action
+ * Runtime, never sent to the model, browser, permission profile, or chat UI.
+ */
+export function personalAssistantMcpToolsFromEnvironmentV1(
+  env: NodeJS.ProcessEnv,
+): Readonly<PersonalAssistantMcpToolsOptionsV1> | undefined {
+  const endpoint = env.PAI_PERSONAL_ASSISTANT_MCP_URL?.trim() || undefined;
+  const bearerToken = env.PAI_PERSONAL_ASSISTANT_MCP_BEARER_TOKEN || undefined;
+  const rawMapping = env.PAI_PERSONAL_ASSISTANT_MCP_TOOLS_JSON?.trim() || undefined;
+  if (
+    endpoint === undefined &&
+    bearerToken === undefined &&
+    rawMapping === undefined
+  ) {
+    return undefined;
+  }
+  if (endpoint === undefined) {
+    throw new Error("PAI_PERSONAL_ASSISTANT_MCP_URL is required when personal assistant tools are configured");
+  }
+  if (bearerToken === undefined) {
+    throw new Error("PAI_PERSONAL_ASSISTANT_MCP_BEARER_TOKEN is required when personal assistant tools are configured");
+  }
+  if (rawMapping === undefined) {
+    throw new Error("PAI_PERSONAL_ASSISTANT_MCP_TOOLS_JSON is required when personal assistant tools are configured");
+  }
+  let mapping: unknown;
+  try {
+    mapping = JSON.parse(rawMapping);
+  } catch {
+    throw new Error("PAI_PERSONAL_ASSISTANT_MCP_TOOLS_JSON must be a JSON object");
+  }
+  if (
+    typeof mapping !== "object" ||
+    mapping === null ||
+    Array.isArray(mapping)
+  ) {
+    throw new Error("PAI_PERSONAL_ASSISTANT_MCP_TOOLS_JSON must be a JSON object");
+  }
+  const tools: Partial<Record<PersonalAssistantMcpToolNameV1, string>> = {};
+  for (const [logicalName, remoteName] of Object.entries(mapping)) {
+    if (typeof remoteName !== "string") {
+      throw new Error("PAI_PERSONAL_ASSISTANT_MCP_TOOLS_JSON values must be strings");
+    }
+    tools[logicalName as PersonalAssistantMcpToolNameV1] = remoteName;
+  }
+  return Object.freeze({
+    mcp_url: endpoint,
+    bearer_token: bearerToken,
+    tools: Object.freeze(tools),
+  });
 }
 
 export function providerEnvironmentV1(
@@ -254,12 +344,18 @@ export async function openProductionActionRuntimeCompositionV1(
     env,
     "PAI_SUPABASE_SECRET_KEY",
   );
+  const finalResultObjectAccessSecret = requiredEnvV1(
+    env,
+    "PAI_ACTION_RUNTIME_OBJECT_ACCESS_HMAC_SECRET",
+  );
   const requestTimeoutMs = optionalIntegerV1(
     env,
     "PAI_RUNTIME_INTERNAL_REQUEST_TIMEOUT_MS",
     100,
     300_000,
   );
+  const agentCoreWebTools = agentCoreWebToolsFromEnvironmentV1(env);
+  const personalAssistantMcpTools = personalAssistantMcpToolsFromEnvironmentV1(env);
   await mkdir(sandboxCwd, { recursive: true, mode: 0o700 });
   await access(
     sandboxCwd,
@@ -267,9 +363,6 @@ export async function openProductionActionRuntimeCompositionV1(
   );
 
   let postgres: ActionRuntimePostgresCompositionV1 | undefined;
-  let eventDispatch: Awaited<
-    ReturnType<typeof openOwnerEventDispatchRuntimeFromEnvV1>
-  > | undefined;
   let tokenBus: Awaited<
     ReturnType<typeof openRedisRuntimeTokenLiveBusV1>
   > | undefined;
@@ -288,7 +381,6 @@ export async function openProductionActionRuntimeCompositionV1(
     closed = true;
     await runtimeWorker?.close().catch(() => undefined);
     await skillProjectionRuntime?.close().catch(() => undefined);
-    await eventDispatch?.close().catch(() => undefined);
     await tokenBus?.close().catch(() => undefined);
     await objectStore?.close().catch(() => undefined);
     await postgres?.close().catch(() => undefined);
@@ -299,19 +391,10 @@ export async function openProductionActionRuntimeCompositionV1(
       ACTION_RUNTIME_REPOSITORY_CONTRACT_V1,
       databaseUrl,
     );
-    eventDispatch = await openOwnerEventDispatchRuntimeFromEnvV1(
-      postgres.outbox,
-      {
-        deployment_environment: options.deployment_environment,
-        release_channel: options.release_channel,
-        production_dependencies_required: true,
-        transport_epoch_postgres: postgres.postgres,
-        env,
-      },
-    );
-    if (eventDispatch === undefined) {
-      throw new Error("Action Runtime owner event dispatch is not composed");
-    }
+    // Runtime events are not Redis consumer messages. This service owns the
+    // outbox through the fenced, workload-authenticated Trigger callback
+    // below; starting the generic owner dispatcher would ACK the row before
+    // Trigger durably appends the process snapshot.
     tokenBus = await openRedisRuntimeTokenLiveBusV1(redisUrl);
     const signer = createActionRuntimeWorkloadSignerFromEnvV1(env);
     const httpPorts = createActionRuntimeHttpPortsV1({
@@ -326,6 +409,12 @@ export async function openProductionActionRuntimeCompositionV1(
       memory_url: memoryUrl,
       timer_url: timerUrl,
       signer,
+      ...(agentCoreWebTools === undefined
+        ? {}
+        : { agentcore_web: agentCoreWebTools }),
+      ...(personalAssistantMcpTools === undefined
+        ? {}
+        : { personal_assistant_mcp: personalAssistantMcpTools }),
       ...(requestTimeoutMs === undefined
         ? {}
         : { request_timeout_ms: requestTimeoutMs }),
@@ -341,12 +430,18 @@ export async function openProductionActionRuntimeCompositionV1(
         ? {}
         : { request_timeout_ms: requestTimeoutMs }),
     });
+    const finalResultObjectAccess =
+      createActionRuntimeFinalResultObjectAccessPolicyV1({
+        postgres: postgres.postgres,
+        hmac_secret: finalResultObjectAccessSecret,
+      });
     objectStore = await openActionRuntimeObjectStoreV1({
       database_url: databaseUrl,
       reconciler_database_url: reconcilerDatabaseUrl,
       supabase_url: supabaseUrl,
       supabase_secret_key: supabaseSecretKey,
       worker_id: `${workerId}:object-store`,
+      access_policy: finalResultObjectAccess,
     });
     const projection = createPostgresRuntimeSkillSecurityProjectionV1({
       postgres: postgres.postgres,
@@ -408,6 +503,7 @@ export async function openProductionActionRuntimeCompositionV1(
         retry_max_backoff_ms: config.retry_max_backoff_seconds * 1_000,
         retry_jitter: config.retry_jitter,
         tool_timeout_ms: config.tool_timeout_seconds * 1_000,
+        heartbeat_interval_ms: config.heartbeat_interval_seconds * 1_000,
       },
     );
     runtimeWorker = createActionRuntimeWorkerV1({
@@ -417,6 +513,28 @@ export async function openProductionActionRuntimeCompositionV1(
       run_lease_seconds: config.run_lease_ttl_seconds,
       callback_batch_size: config.outbox_batch_size,
       artifact_lease_seconds: config.tool_lease_ttl_seconds,
+      on_execution_error(failure) {
+        // Only the opaque run id, classified code, and retry bit are emitted:
+        // the original error can contain provider or database details.
+        console.error(
+          JSON.stringify({
+            event: "runtime_worker_execution_failed",
+            service_id: "action_runtime",
+            ...failure,
+          }),
+        );
+      },
+      on_cycle_error(failure) {
+        // Keep background recovery failures observable without exposing raw
+        // database, provider, or object-store error contents.
+        console.error(
+          JSON.stringify({
+            event: "runtime_worker_cycle_failed",
+            service_id: "action_runtime",
+            ...failure,
+          }),
+        );
+      },
     });
     const runtimeQuery = createRuntimeQueryApplicationV1(
       createPostgresRuntimeQueryRepositoryV1(postgres.postgres),
@@ -436,6 +554,11 @@ export async function openProductionActionRuntimeCompositionV1(
         createPostgresRuntimeEventOwnerRepositoryV1(postgres.postgres),
       ),
       runtime_execution: execution,
+      runtime_final_result_read: createRuntimeFinalResultReadApplicationV1({
+        store,
+        object_store: objectStore.object_store,
+        access_policy: finalResultObjectAccess,
+      }),
       runtime_execution_readiness: Object.freeze({
         async checkReadiness(signal: AbortSignal): Promise<void> {
           await Promise.all([
@@ -459,10 +582,6 @@ export async function openProductionActionRuntimeCompositionV1(
     });
     const readinessChecks = Object.freeze([
       Object.freeze({ name: "owner_postgres", check: postgres.checkReadiness }),
-      Object.freeze({
-        name: "owner_event_dispatch",
-        check: eventDispatch.checkReadiness,
-      }),
     ]);
     return Object.freeze({
       applications,
@@ -471,7 +590,6 @@ export async function openProductionActionRuntimeCompositionV1(
         if (started || closed) return;
         started = true;
         objectStore!.start();
-        eventDispatch!.start();
         skillProjectionRuntime!.start();
         runtimeWorker!.start();
       },

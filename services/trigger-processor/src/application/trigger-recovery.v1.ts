@@ -70,6 +70,34 @@ export interface TriggerProcessRecoveryWorkerV1 {
   runOnce(): Promise<TriggerProcessRecoveryRunResultV1>;
 }
 
+/**
+ * A source-gap callback is intentionally retained by the producer until this
+ * worker writes the owner-authoritative gap marker.  The read is advisory;
+ * the pending row's status and updated_at remain the transition fence.
+ */
+export interface TriggerSnapshotGapRecoveryRepositoryV1 {
+  listEligible(
+    limit: number,
+    signal: AbortSignal,
+  ): Promise<readonly TriggerSnapshotGapRecoveryCandidateV1[]>;
+}
+
+export interface TriggerSnapshotGapRecoveryCandidateV1 {
+  readonly pending_event_id: string;
+  readonly status: "pending";
+  readonly updated_at: string;
+}
+
+export interface TriggerSnapshotGapRecoveryRunResultV1
+  extends TriggerProcessRecoveryRunResultV1 {
+  readonly transitioned: number;
+  readonly raced: number;
+}
+
+export interface TriggerSnapshotGapRecoveryWorkerV1 {
+  runOnce(): Promise<TriggerSnapshotGapRecoveryRunResultV1>;
+}
+
 export interface TriggerProcessRecoveryRunnerV1 {
   start(): void;
   stop(): Promise<void>;
@@ -123,10 +151,20 @@ function canonicalRecoverySnapshotV1<T>(
   return snapshot;
 }
 
+type ValidatedRecoveryClaimV1 =
+  | Readonly<{
+      kind: "processable";
+      claim: TriggerProcessRecoveryClaimV1;
+    }>
+  | Readonly<{
+      kind: "invalid_payload";
+      claim: TriggerProcessRecoveryClaimV1;
+    }>;
+
 function validateClaims(
   value: unknown,
   limit: number,
-): readonly TriggerProcessRecoveryClaimV1[] {
+): readonly ValidatedRecoveryClaimV1[] {
   const snapshot = canonicalRecoverySnapshotV1<unknown>(
     value,
     "Trigger Process recovery claim batch is invalid",
@@ -135,7 +173,7 @@ function validateClaims(
     throw new Error("Trigger Process recovery claim batch is invalid");
   }
   const identities = new Set<string>();
-  const claims = snapshot.map((candidate): TriggerProcessRecoveryClaimV1 => {
+  const claims = snapshot.map((candidate): ValidatedRecoveryClaimV1 => {
     if (!isRecord(candidate)) {
       throw new Error("Trigger Process recovery claim is invalid");
     }
@@ -154,7 +192,6 @@ function validateClaims(
       !Number.isSafeInteger(claim.attempt_count) ||
       claim.attempt_count < 1 ||
       !isRecord(claim.payload) ||
-      !Value.Check(TriggerProcessWorkPayloadV1Schema, claim.payload) ||
       !Number.isFinite(Date.parse(claim.database_now)) ||
       !Number.isFinite(Date.parse(claim.lease_until)) ||
       Date.parse(claim.lease_until) <= Date.parse(claim.database_now) ||
@@ -163,22 +200,33 @@ function validateClaims(
     ) {
       throw new Error("Trigger Process recovery claim is invalid");
     }
-    const payload = claim.payload as TriggerProcessWorkPayloadV1;
-    assertTriggerProcessWorkPayloadBindingsV1(claim.work_kind, payload);
-    if (
-      payload.trigger_process_id !== claim.trigger_process_id ||
-      payload.expected_process_state_version !==
-        claim.expected_process_state_version ||
-      sha256(payload) !== claim.payload_hash
-    ) {
-      throw new Error("Trigger Process recovery claim payload binding is invalid");
-    }
     const identity = `${claim.work_item_id}:${claim.claim_token}:${claim.lease_generation}`;
     if (identities.has(identity)) {
       throw new Error("Trigger Process recovery claim batch contains duplicates");
     }
     identities.add(identity);
-    return claim;
+    try {
+      if (!Value.Check(TriggerProcessWorkPayloadV1Schema, claim.payload)) {
+        throw new Error("invalid_recovery_payload");
+      }
+      const payload = claim.payload as TriggerProcessWorkPayloadV1;
+      assertTriggerProcessWorkPayloadBindingsV1(claim.work_kind, payload);
+      if (
+        payload.trigger_process_id !== claim.trigger_process_id ||
+        payload.expected_process_state_version !==
+          claim.expected_process_state_version ||
+        sha256(payload) !== claim.payload_hash
+      ) {
+        throw new Error("invalid_recovery_payload");
+      }
+      return Object.freeze({ kind: "processable", claim });
+    } catch {
+      // The claim fence was verified above, so the owner can terminally mark
+      // this immutable legacy payload without running it. Keeping it in the
+      // batch would otherwise starve valid work behind a permanently invalid
+      // record on every recovery pass.
+      return Object.freeze({ kind: "invalid_payload", claim });
+    }
   });
   return Object.freeze(claims);
 }
@@ -583,9 +631,28 @@ export function createTriggerProcessRecoveryWorkerV1(
           clearTimeout(timer);
         }
       };
+      const settleInvalidPayloadClaim = async (
+        claim: TriggerProcessRecoveryClaimV1,
+      ): Promise<"failed"> => {
+        // A claim that has passed its fence but failed immutable payload
+        // validation must never be retried: no future worker can safely make
+        // that payload executable under the current contract.
+        await acknowledge(
+          claim,
+          "failed",
+          Object.freeze({ reason_code: "invalid_recovery_payload" }),
+        );
+        return "failed";
+      };
       // Every claim in a batch shares a finite DB lease. Start them together;
       // serial handling lets later claims expire before their handler begins.
-      const settled = await Promise.allSettled(claims.map(settleClaim));
+      const settled = await Promise.allSettled(
+        claims.map((entry) =>
+          entry.kind === "processable"
+            ? settleClaim(entry.claim)
+            : settleInvalidPayloadClaim(entry.claim),
+        ),
+      );
       const rejected = settled.find(
         (result): result is PromiseRejectedResult => result.status === "rejected",
       );
@@ -604,6 +671,119 @@ export function createTriggerProcessRecoveryWorkerV1(
         failed: outcomes.filter((outcome) => outcome === "failed").length,
         lease_expired: outcomes.filter((outcome) => outcome === "lease_expired")
           .length,
+      });
+    },
+  });
+}
+
+function isSnapshotGapTransitionRaceV1(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as Readonly<{ code?: unknown }>).code === "40001"
+  );
+}
+
+function isCanonicalTimestampV1(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/u.test(value) &&
+    Number.isFinite(Date.parse(value))
+  );
+}
+
+/**
+ * Advances only pending owner events whose durable timeout is already due.
+ * It never replays event contents or changes a Process directly: the existing
+ * transition writer serializes the marker, repair work, and cursor fence.
+ */
+export function createTriggerSnapshotGapRecoveryWorkerV1(
+  repository: TriggerSnapshotGapRecoveryRepositoryV1,
+  database: TriggerProcessorOwnerDatabaseV1,
+  config: Readonly<{
+    worker_id: string;
+    batch_size?: number;
+  }>,
+): TriggerSnapshotGapRecoveryWorkerV1 {
+  const workerId = config.worker_id;
+  const batchSize = config.batch_size ?? 16;
+  if (
+    !boundedIdentity(workerId) ||
+    !Number.isSafeInteger(batchSize) ||
+    batchSize < 1 ||
+    batchSize > 16
+  ) {
+    throw new Error("Trigger snapshot-gap recovery worker configuration is invalid");
+  }
+
+  return Object.freeze({
+    async runOnce() {
+      const signal = new AbortController().signal;
+      const candidates = await repository.listEligible(batchSize, signal);
+      if (candidates.length > batchSize) {
+        throw new Error("Trigger snapshot-gap recovery repository exceeded its limit");
+      }
+      const outcomes = await Promise.allSettled(
+        candidates.map(async (candidate) => {
+          if (
+            !boundedIdentity(candidate.pending_event_id) ||
+            candidate.status !== "pending" ||
+            !isCanonicalTimestampV1(candidate.updated_at)
+          ) {
+            throw new Error("Trigger snapshot-gap recovery candidate is invalid");
+          }
+          const traceId = `snapshot-gap:${candidate.pending_event_id}`;
+          try {
+            await database.unit_of_work.withTransaction(
+              {
+                operation: "transition_trigger_snapshot_pending_event",
+                idempotency_key:
+                  `${candidate.pending_event_id}:${candidate.updated_at}:gap_skipped`,
+                trace_id: traceId,
+                isolation: "read_committed",
+                retry: "serialization_failures",
+              },
+              async (transaction, { owner }) =>
+                owner.executeWriter(transaction, {
+                  writer: "transition_trigger_snapshot_pending_event_v1",
+                  arguments: {
+                    p_pending_event_id: candidate.pending_event_id,
+                    p_expected_status: "pending",
+                    p_expected_updated_at: candidate.updated_at,
+                    p_next_status: "gap_skipped",
+                    p_worker_id: workerId,
+                    p_retry_delay_ms: null,
+                    p_last_error: {
+                      reason_code: "source_sequence_gap_timeout",
+                      trace_id: traceId,
+                    },
+                  },
+                  expected_rows: 1,
+                }),
+            );
+            return "transitioned" as const;
+          } catch (error) {
+            if (isSnapshotGapTransitionRaceV1(error)) return "raced" as const;
+            throw error;
+          }
+        }),
+      );
+      const rejected = outcomes.find(
+        (outcome): outcome is PromiseRejectedResult => outcome.status === "rejected",
+      );
+      if (rejected !== undefined) throw rejected.reason;
+      const values = outcomes.map(
+        (outcome) => (outcome as PromiseFulfilledResult<"transitioned" | "raced">).value,
+      );
+      return Object.freeze({
+        claimed: candidates.length,
+        completed: values.filter((value) => value === "transitioned").length,
+        retried: 0,
+        failed: 0,
+        lease_expired: 0,
+        transitioned: values.filter((value) => value === "transitioned").length,
+        raced: values.filter((value) => value === "raced").length,
       });
     },
   });

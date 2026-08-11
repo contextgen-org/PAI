@@ -1,4 +1,3 @@
-import { openOwnerEventDispatchRuntimeFromEnvV1 } from "@pai/eventing";
 import { openVerifiedOwnerPostgresCompositionV1 } from "@pai/persistence";
 import {
   loadServiceRuntimeConfig,
@@ -61,18 +60,9 @@ if (productionDependenciesRequired) {
           ACTION_RUNTIME_REPOSITORY_CONTRACT_V1,
           databaseUrl,
         );
-  const ownerEventDispatch =
-    postgresComposition === undefined
-      ? undefined
-      : await openOwnerEventDispatchRuntimeFromEnvV1(
-          postgresComposition.outbox,
-          {
-            deployment_environment: runtimeConfig.deployment_environment,
-            release_channel: runtimeConfig.release_channel,
-            production_dependencies_required: false,
-            transport_epoch_postgres: postgresComposition.postgres,
-          },
-        );
+  // The development fallback exposes read APIs only. It must not create a
+  // generic Redis dispatcher for runtime_event_outbox: production uses the
+  // fenced Trigger callback as its sole delivery owner.
   const runtimeQuery =
     postgresComposition === undefined
       ? undefined
@@ -85,7 +75,6 @@ if (productionDependenciesRequired) {
     runtimeQuery === undefined || process.env.PAI_REDIS_URL === undefined
       ? undefined
       : await openRedisRuntimeTokenLiveBusV1(process.env.PAI_REDIS_URL);
-  ownerEventDispatch?.start();
   try {
     await startService({
       serviceId: "action_runtime",
@@ -104,14 +93,6 @@ if (productionDependenciesRequired) {
                       name: "owner_postgres",
                       check: postgresComposition.checkReadiness,
                     },
-                    ...(ownerEventDispatch === undefined
-                      ? []
-                      : [
-                          {
-                            name: "owner_event_dispatch",
-                            check: ownerEventDispatch.checkReadiness,
-                          },
-                        ]),
                   ]),
             ],
           },
@@ -146,13 +127,9 @@ if (productionDependenciesRequired) {
         );
         app.addHook("onClose", async () => {
           try {
-            await ownerEventDispatch?.close();
+            await runtimeTokenBus?.close();
           } finally {
-            try {
-              await runtimeTokenBus?.close();
-            } finally {
-              await postgresComposition?.close();
-            }
+            await postgresComposition?.close();
           }
         });
         return app;
@@ -160,13 +137,9 @@ if (productionDependenciesRequired) {
     });
   } catch (error) {
     try {
-      await ownerEventDispatch?.close();
+      await runtimeTokenBus?.close();
     } finally {
-      try {
-        await runtimeTokenBus?.close();
-      } finally {
-        await postgresComposition?.close();
-      }
+      await postgresComposition?.close();
     }
     throw error;
   }

@@ -2,12 +2,17 @@ import { createHash } from "node:crypto";
 
 import {
   TriggerConfirmationChallengeV1Schema,
+  TriggerConfirmationPendingViewV1Schema,
   TriggerConfirmationResponseResultV1Schema,
   TriggerConfirmationResponseV1Schema,
   assertTriggerConfirmationChallengeSemanticBindingsV1,
+  assertStructuredIntentSemanticBindingsV1,
   type TriggerConfirmationChallengeV1,
+  type TriggerConfirmationPendingViewV1,
   type TriggerConfirmationResponseResultV1,
   type TriggerConfirmationResponseV1,
+  type StructuredIntentV1,
+  StructuredIntentV1Schema,
 } from "@pai/contracts";
 import { canonicalJsonV1 } from "@pai/eventing";
 import { Value } from "@sinclair/typebox/value";
@@ -217,6 +222,11 @@ export interface TriggerConfirmationOwnerRowV1
   readonly responded_at: string | null;
   readonly created_at: string;
   readonly updated_at: string;
+  /**
+   * Read only from the pending Runtime Start work item. It is never accepted
+   * from the browser and is verified against structured_intent_hash below.
+   */
+  readonly confirmation_structured_intent: unknown | null;
 }
 
 export interface TriggerConfirmationReadRepositoryV1 {
@@ -224,6 +234,29 @@ export interface TriggerConfirmationReadRepositoryV1 {
     challengeId: string,
     signal: AbortSignal,
   ): Promise<TriggerConfirmationOwnerRowV1 | undefined>;
+}
+
+export interface TriggerConfirmationPendingReadRepositoryV1 {
+  findPendingByProcessAndPrincipal(
+    processId: string,
+    principalType: "user" | "developer" | "operator",
+    principalId: string,
+    signal: AbortSignal,
+  ): Promise<TriggerConfirmationOwnerRowV1 | undefined>;
+}
+
+/**
+ * Read-only public confirmation discovery.  It intentionally returns the
+ * pre-existing challenge rather than constructing an approval from browser
+ * input, so the later accept/reject writer remains bound to the owner-created
+ * intent hashes and action step ids.
+ */
+export interface TriggerConfirmationPendingReadApplicationV1 {
+  getPending(
+    ingress: VerifiedTriggerIngressV1,
+    processId: string,
+    signal: AbortSignal,
+  ): Promise<TriggerConfirmationPendingViewV1 | undefined>;
 }
 
 export interface AcceptedTriggerConfirmationVerifierV1 {
@@ -302,6 +335,103 @@ function rowSnapshotV1(
 
 function sha256V1(value: string): string {
   return `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
+}
+
+function legacyMillisecondUtcTimestampV1(value: string): string | undefined {
+  // Before the owner writer was corrected, accepted confirmation proofs used
+  // a millisecond rendering while PostgreSQL persisted the same instant with
+  // microsecond precision.  Accept only that exact prior serialization; all
+  // scope, request, response and stage bindings remain in the proof hash.
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.(\d{6})Z$/u.exec(value);
+  if (match === null || match[1] === undefined || match[2] === undefined) {
+    return undefined;
+  }
+  return `${match[1]}.${match[2].slice(0, 3)}Z`;
+}
+
+function pendingViewSnapshotV1(
+  challenge: TriggerConfirmationChallengeV1,
+  row: TriggerConfirmationOwnerRowV1,
+): TriggerConfirmationPendingViewV1 {
+  const preview = row.confirmation_structured_intent;
+  if (!Value.Check(StructuredIntentV1Schema, preview)) {
+    throw new TriggerConfirmationResponseErrorV1("owner_contract_drift");
+  }
+  try {
+    assertStructuredIntentSemanticBindingsV1(preview);
+  } catch {
+    throw new TriggerConfirmationResponseErrorV1("owner_contract_drift");
+  }
+  if (
+    sha256V1(canonicalJsonV1(preview)) !== challenge.structured_intent_hash
+  ) {
+    throw new TriggerConfirmationResponseErrorV1("owner_contract_drift");
+  }
+  const view: TriggerConfirmationPendingViewV1 = {
+    ...challenge,
+    confirmation_preview: preview as StructuredIntentV1,
+  };
+  if (!Value.Check(TriggerConfirmationPendingViewV1Schema, view)) {
+    throw new TriggerConfirmationResponseErrorV1("owner_contract_drift");
+  }
+  return view;
+}
+
+export function createTriggerConfirmationPendingReadApplicationV1(
+  repository: TriggerConfirmationPendingReadRepositoryV1,
+  options: Readonly<{ now?: () => Date }> = {},
+): TriggerConfirmationPendingReadApplicationV1 {
+  const now = options.now ?? (() => new Date());
+  return Object.freeze({
+    async getPending(
+      ingress: VerifiedTriggerIngressV1,
+      processId: string,
+      signal: AbortSignal,
+    ): Promise<TriggerConfirmationPendingViewV1 | undefined> {
+      if (
+        ingress.authentication_kind !== "supabase_ingress" ||
+        processId.length < 1 ||
+        processId.length > 512 ||
+        /[\r\n]/u.test(processId)
+      ) {
+        throw new TriggerConfirmationResponseErrorV1(
+          "confirmation_principal_mismatch",
+        );
+      }
+      const principal = ingress.credential.principal;
+      if (principal.principal_type === "bot") {
+        throw new TriggerConfirmationResponseErrorV1(
+          "confirmation_principal_mismatch",
+        );
+      }
+      const row = await repository.findPendingByProcessAndPrincipal(
+        processId,
+        principal.principal_type,
+        principal.principal_id,
+        signal,
+      );
+      if (row === undefined) return undefined;
+      const challenge = rowSnapshotV1(row);
+      if (!Value.Check(TriggerConfirmationChallengeV1Schema, challenge)) {
+        throw new TriggerConfirmationResponseErrorV1("owner_contract_drift");
+      }
+      try {
+        assertTriggerConfirmationChallengeSemanticBindingsV1(challenge);
+      } catch {
+        throw new TriggerConfirmationResponseErrorV1("owner_contract_drift");
+      }
+      if (
+        challenge.status !== "pending" ||
+        challenge.trigger_process_id !== processId ||
+        challenge.allowed_principal_type !== principal.principal_type ||
+        challenge.allowed_principal_id !== principal.principal_id ||
+        Date.parse(challenge.expires_at) <= now().getTime()
+      ) {
+        return undefined;
+      }
+      return pendingViewSnapshotV1(challenge, row);
+    },
+  });
 }
 
 export function createAcceptedTriggerConfirmationVerifierV1(
@@ -403,9 +533,19 @@ export function createAcceptedTriggerConfirmationVerifierV1(
         ),
         stage_execute_work_id: challenge.stage_execute_work_id,
       } as const;
+      const canonicalProofHash = sha256V1(canonicalJsonV1(proof));
+      const legacyAcceptedAt = legacyMillisecondUtcTimestampV1(
+        challenge.responded_at,
+      );
+      const legacyProofHash = legacyAcceptedAt === undefined
+        ? undefined
+        : sha256V1(canonicalJsonV1({ ...proof, accepted_at: legacyAcceptedAt }));
       if (
         challenge.confirmation_hash !== expected.confirmation_hash ||
-        sha256V1(canonicalJsonV1(proof)) !== expected.confirmation_hash
+        (
+          canonicalProofHash !== expected.confirmation_hash &&
+          legacyProofHash !== expected.confirmation_hash
+        )
       ) {
         throw new AcceptedTriggerConfirmationErrorV1(
           "confirmation_hash_mismatch",

@@ -3,7 +3,7 @@ import type { PostgresQueryPortV1 } from "@pai/persistence";
 import type { TriggerProcessSnapshotRetentionRepositoryV1 } from "../application/trigger-lifecycle.v1.js";
 
 interface ProcessRetentionRowV1 extends Record<string, unknown> {
-  readonly snapshot_retention_until: string;
+  readonly snapshot_retention_until: string | null;
 }
 
 function timestamp(value: string): string {
@@ -61,7 +61,11 @@ export function createTriggerProcessSnapshotRetentionRepositoryV1(
       if (result.rows.length !== 1) {
         throw new Error("Trigger Process retention resolved to multiple owner rows");
       }
-      return timestamp(result.rows[0]!.snapshot_retention_until);
+      const retentionUntil = result.rows[0]!.snapshot_retention_until;
+      // The first runtime lifecycle event establishes this value.  Returning
+      // `undefined` here is distinct from a missing owner row: the lifecycle
+      // binds the initial value to the verified Action Runtime owner event.
+      return retentionUntil === null ? undefined : timestamp(retentionUntil);
     },
   });
 }

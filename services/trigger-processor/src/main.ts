@@ -22,8 +22,30 @@ import {
   assertTriggerIngressConfigurationV1,
   createTriggerSupabaseIngressVerifierFromEnvV1,
 } from "./supabase-ingress-config.v1.js";
+import {
+  localChatConsoleEnabledFromEnvV1,
+  localChatConsoleSupabaseAuthOriginFromIssuerV1,
+  localChatConsoleSupabasePublishableKeyFromEnvV1,
+} from "./local-chat-console.v1.js";
 
 const runtimeConfig = loadServiceRuntimeConfig({ port: 3001 });
+const localChatConsoleEnabled = localChatConsoleEnabledFromEnvV1(
+  process.env,
+  runtimeConfig.deployment_environment,
+);
+const localChatConsoleSupabaseAuthOrigin =
+  localChatConsoleSupabaseAuthOriginFromIssuerV1(
+    process.env.PAI_SUPABASE_ISSUER,
+  );
+const localChatConsoleSupabasePublishableKey =
+  localChatConsoleEnabled
+    ? localChatConsoleSupabasePublishableKeyFromEnvV1(
+        process.env.PAI_SUPABASE_PUBLISHABLE_KEY,
+      )
+    : undefined;
+if (localChatConsoleEnabled && localChatConsoleSupabaseAuthOrigin === undefined) {
+  throw new Error("PAI_SUPABASE_ISSUER is required when the local chat console is enabled");
+}
 const productionDependenciesRequired = requiresProductionDependenciesV1();
 const productionComposition = productionDependenciesRequired
   ? await openProductionTriggerProcessorCompositionV1({
@@ -48,6 +70,7 @@ const triggerAdmission =
     ? undefined
     : createTriggerAdmissionApplicationV1(
         ownerDatabaseApplicationDependenciesV1(postgresComposition),
+        { localInteractiveChat: localChatConsoleEnabled },
       ));
 const processControl =
   productionComposition?.process_control ??
@@ -114,6 +137,18 @@ try {
                 ]),
           ],
           ...(supabaseIngressVerifier === undefined ? {} : { supabaseIngressVerifier }),
+          localChatConsole: {
+            enabled: localChatConsoleEnabled,
+            ...(localChatConsoleSupabaseAuthOrigin === undefined
+              ? {}
+              : { supabaseAuthOrigin: localChatConsoleSupabaseAuthOrigin }),
+            ...(localChatConsoleSupabasePublishableKey === undefined
+              ? {}
+              : {
+                  supabasePublishableKey:
+                    localChatConsoleSupabasePublishableKey,
+                }),
+          },
         },
         triggerAdmission,
         processControl,

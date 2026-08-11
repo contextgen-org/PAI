@@ -9,6 +9,7 @@ import {
   TriggerProcessorSha256V1Schema,
   TriggerProcessorUtcTimestampV1Schema,
 } from "./contract-primitives.v1.js";
+import { StructuredIntentV1Schema } from "./structured-intent.v1.js";
 
 const nullableIdentifier = Type.Union([
   TriggerProcessorIdentifierV1Schema,
@@ -62,6 +63,24 @@ export const TriggerConfirmationChallengeV1Schema = Type.Object(
   },
   {
     $id: "urn:pai:trigger-processor:confirmation-challenge:v1",
+    additionalProperties: false,
+  },
+);
+
+/**
+ * The authenticated pending-confirmation read is a view, not the durable
+ * challenge itself. The preview is reconstructed from the immutable Runtime
+ * Start request and must be hash-bound to the challenge's structured intent.
+ * Keeping it separate prevents presentation-only data from changing the
+ * durable confirmation proof or its response hash.
+ */
+export const TriggerConfirmationPendingViewV1Schema = Type.Object(
+  {
+    ...TriggerConfirmationChallengeV1Schema.properties,
+    confirmation_preview: StructuredIntentV1Schema,
+  },
+  {
+    $id: "urn:pai:trigger-processor:confirmation-pending-view:v1",
     additionalProperties: false,
   },
 );
@@ -184,6 +203,9 @@ export const TRIGGER_CONFIRMATION_ERROR_CODES_V1 = [
 
 export type TriggerConfirmationChallengeV1 = Static<
   typeof TriggerConfirmationChallengeV1Schema
+>;
+export type TriggerConfirmationPendingViewV1 = Static<
+  typeof TriggerConfirmationPendingViewV1Schema
 >;
 export type TriggerConfirmationResponseV1 = Static<
   typeof TriggerConfirmationResponseV1Schema

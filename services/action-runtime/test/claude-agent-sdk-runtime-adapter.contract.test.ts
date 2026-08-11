@@ -379,7 +379,7 @@ describe("ClaudeAgentSdkRuntimeAdapter contract", () => {
       strictMcpConfig: true,
       settingSources: ["project"],
       persistSession: false,
-      permissionMode: "dontAsk",
+      permissionMode: "default",
     });
     expect(observedOptions?.env).toEqual({
       PATH: "/usr/bin:/bin",
@@ -398,7 +398,7 @@ describe("ClaudeAgentSdkRuntimeAdapter contract", () => {
       artifact: {
         artifact_id: "run-1:sdk-final",
         artifact_kind: "runtime-final-result",
-        media_type: "text/plain; charset=utf-8",
+        media_type: "text/plain",
       },
     });
     if (artifactTurn.kind !== "artifact") throw new Error("artifact expected");
@@ -423,6 +423,9 @@ describe("ClaudeAgentSdkRuntimeAdapter contract", () => {
   it("bridges an SDK MCP tool use through the durable permission hook and returns the exact audited result", async () => {
     const definitions: Array<{
       name: string;
+      inputSchema: Readonly<{
+        safeParse?: (value: unknown) => Readonly<{ success: boolean }>;
+      }>;
       handler: (
         args: Readonly<Record<string, unknown>>,
         extra: unknown,
@@ -457,13 +460,19 @@ describe("ClaudeAgentSdkRuntimeAdapter contract", () => {
     const toolFactory = (
       name: string,
       _description: string,
-      _schema: Readonly<Record<string, unknown>>,
+      schema: Readonly<Record<string, unknown>>,
       handler: (
         args: Readonly<Record<string, unknown>>,
         extra: unknown,
       ) => Promise<unknown>,
     ) => {
-      definitions.push({ name, handler });
+      definitions.push({
+        name,
+        inputSchema: schema as Readonly<{
+          safeParse?: (value: unknown) => Readonly<{ success: boolean }>;
+        }>,
+        handler,
+      });
       return { name, handler } as unknown as SdkMcpToolDefinition;
     };
     const adapter = new ClaudeAgentSdkRuntimeAdapter(
@@ -476,10 +485,17 @@ describe("ClaudeAgentSdkRuntimeAdapter contract", () => {
         })) as never,
       }),
     );
-    const session = await adapter.start(request(), adapterContext());
-    const input = {
-      arguments: { query: "bounded" },
-    };
+    const session = await adapter.start(
+      request({
+        allowed_tools: ["search", "weather.current"],
+        tool_authorizations: {
+          search: "search.read",
+          "weather.current": "weather.read",
+        },
+      }),
+      adapterContext(),
+    );
+    const input = { query: "bounded" };
     const canUseTool = sdkOptions?.canUseTool;
     if (canUseTool === undefined) throw new Error("permission hook missing");
     await expect(
@@ -502,11 +518,21 @@ describe("ClaudeAgentSdkRuntimeAdapter contract", () => {
         } as Parameters<CanUseTool>[2],
       ),
     ).resolves.toMatchObject({ behavior: "deny" });
+    await expect(
+      canUseTool(
+        "mcp__pai_runtime__weather_current",
+        { arguments: { location: "Shanghai" } },
+        {
+          signal: new AbortController().signal,
+          toolUseID: "sdk-weather-1",
+        } as Parameters<CanUseTool>[2],
+      ),
+    ).resolves.toMatchObject({ behavior: "allow" });
 
     const search = definitions.find(({ name }) => name === "search");
     if (search === undefined) throw new Error("search bridge missing");
     const providerToolResult = search.handler(input, {});
-    input.arguments.query = "admin-after-enqueue";
+    input.query = "admin-after-enqueue";
     await expect(adapter.next(session, adapterContext())).resolves.toEqual({
       kind: "tool_call",
       call: {
@@ -517,7 +543,17 @@ describe("ClaudeAgentSdkRuntimeAdapter contract", () => {
       },
     });
 
-    const terminalPromise = adapter.next(
+    const weather = definitions.find(({ name }) => name === "weather.current");
+    if (weather === undefined) throw new Error("weather bridge missing");
+    expect(weather.inputSchema.safeParse?.({ location: "Shanghai" })).toMatchObject({
+      success: true,
+    });
+    expect(
+      weather.inputSchema.safeParse?.({
+        arguments: { location: "Shanghai" },
+      }),
+    ).toMatchObject({ success: true });
+    const nextTurnPromise = adapter.next(
       session,
       adapterContext({
         last_tool_call_id: "sdk-tool-1",
@@ -542,14 +578,177 @@ describe("ClaudeAgentSdkRuntimeAdapter contract", () => {
     expect(JSON.stringify(providerResult)).not.toContain(
       "evidence:search:1",
     );
+
+    // DeepSeek's Anthropic-compatible transport has presented the permission
+    // hook with the legacy wrapper while invoking the local MCP handler with
+    // direct JSON.  Both spellings represent one logical tool input and must
+    // bind to the same SDK tool-use id before the durable profile revalidates
+    // it.
+    const weatherProviderResult = weather.handler({ location: "Shanghai" }, {});
+    await expect(nextTurnPromise).resolves.toEqual({
+      kind: "tool_call",
+      call: {
+        tool_call_id: "sdk-weather-1",
+        tool_name: "weather.current",
+        capability: "weather.read",
+        arguments: { location: "Shanghai" },
+      },
+    });
+    const finalPromise = adapter.next(
+      session,
+      adapterContext({
+        last_tool_call_id: "sdk-weather-1",
+        last_tool_result: {
+          outcome: "completed",
+          retryable: false,
+          side_effect_status: "none",
+          output: { temperature_c: 25 },
+        },
+      }),
+    );
+    await expect(weatherProviderResult).resolves.toMatchObject({
+      content: [
+        {
+          type: "text",
+          text: expect.stringContaining('"temperature_c":25'),
+        },
+      ],
+    });
     finishProvider?.();
-    await expect(terminalPromise).resolves.toEqual({
+    await expect(finalPromise).resolves.toEqual({
       kind: "failed",
       retryable: false,
       reason_code: "sdk_execution_failed",
       error_summary:
         "Claude Agent SDK ended with error_during_execution",
     });
+  });
+
+  it("turns a deferred parent into a timer-only acknowledgement without an early result", async () => {
+    const definitions: Array<{
+      name: string;
+      handler: (
+        args: Readonly<Record<string, unknown>>,
+        extra: unknown,
+      ) => Promise<unknown>;
+    }> = [];
+    let sdkOptions: ClaudeAgentSdkOptions | undefined;
+    let finishProvider: (() => void) | undefined;
+    const providerGate = new Promise<void>((resolve) => {
+      finishProvider = resolve;
+    });
+    const adapter = new ClaudeAgentSdkRuntimeAdapter(
+      adapterOptions((parameters) => {
+        sdkOptions = parameters.options;
+        return {
+          close: vi.fn(),
+          interrupt: vi.fn(async () => undefined),
+          async *[Symbol.asyncIterator]() {
+            await providerGate;
+            yield successMessage("Shanghai is 36C right now");
+          },
+        };
+      }, {
+        tool_factory: (
+          name: string,
+          _description: string,
+          _schema: Readonly<Record<string, unknown>>,
+          handler: (
+            args: Readonly<Record<string, unknown>>,
+            extra: unknown,
+          ) => Promise<unknown>,
+        ) => {
+          definitions.push({ name, handler });
+          return { name, handler } as unknown as SdkMcpToolDefinition;
+        },
+        mcp_server_factory: (() => ({
+          type: "sdk",
+          name: "pai_runtime",
+          instance: {},
+        })) as never,
+      }),
+    );
+    const deferredInstruction =
+      "The scheduled time has now arrived. Query Shanghai weather now and report it. 原始请求：上海天气，3 分钟后提醒。";
+    const deferredRequest = request({
+      structured_intent: {
+        ...request().structured_intent,
+        execution_mode: "deferred_timer_parent",
+        deferred_instruction: deferredInstruction,
+        deferred_fire_at: "2030-01-01T00:03:00.000Z",
+        action_plan: [
+          {
+            step: 1,
+            action_type: "tool_use",
+            action: "Schedule the deferred instruction",
+            candidate_tool: "timer.remind_after",
+          },
+        ],
+      },
+      allowed_tools: ["timer.remind_after"],
+      tool_authorizations: { "timer.remind_after": "timer.write" },
+    });
+    const session = await adapter.start(deferredRequest, adapterContext());
+    expect(definitions.map(({ name }) => name)).toEqual(["timer.remind_after"]);
+
+    const canUseTool = sdkOptions?.canUseTool;
+    if (canUseTool === undefined) throw new Error("permission hook missing");
+    await expect(
+      canUseTool(
+        "mcp__pai_runtime__timer_remind_after",
+        { after_seconds: 180, message: "Shanghai weather reminder" },
+        {
+          signal: new AbortController().signal,
+          toolUseID: "sdk-deferred-timer-1",
+        } as Parameters<CanUseTool>[2],
+      ),
+    ).resolves.toMatchObject({ behavior: "allow" });
+
+    const timer = definitions[0];
+    if (timer === undefined) throw new Error("timer bridge missing");
+    const providerToolResult = timer.handler(
+      { after_seconds: 180, message: "Shanghai weather reminder" },
+      {},
+    );
+    await expect(adapter.next(session, adapterContext())).resolves.toEqual({
+      kind: "tool_call",
+      call: {
+        tool_call_id: "sdk-deferred-timer-1",
+        tool_name: "timer.remind_after",
+        capability: "timer.write",
+        arguments: {
+          schedule: {
+            name: "Reminder",
+            message: deferredInstruction,
+            timezone: "UTC",
+            catch_up: true,
+            schedule_type: "once",
+            fire_at: "2030-01-01T00:03:00.000Z",
+          },
+        },
+      },
+    });
+    const finalArtifact = adapter.next(
+      session,
+      adapterContext({
+        last_tool_call_id: "sdk-deferred-timer-1",
+        last_tool_result: {
+          outcome: "completed",
+          retryable: false,
+          side_effect_status: "produced",
+          output: { schedule_id: "timer-1" },
+        },
+      }),
+    );
+    await providerToolResult;
+    finishProvider?.();
+    const artifact = await finalArtifact;
+    expect(artifact).toMatchObject({ kind: "artifact" });
+    if (artifact.kind !== "artifact") throw new Error("final artifact expected");
+    const finalText = new TextDecoder().decode(artifact.artifact.body);
+    expect(finalText).toContain("提醒已设置");
+    expect(finalText).not.toContain("36");
+    expect(finalText).not.toContain("Shanghai");
   });
 
   it("does not invent a tool-use id when the SDK permission hook was bypassed", async () => {
@@ -701,7 +900,7 @@ describe("ClaudeAgentSdkRuntimeAdapter contract", () => {
     };
     await expect(
       permission(
-        "mcp__pai_runtime__skill.load",
+        "mcp__pai_runtime__skill_load",
         skillInput,
         {
           signal: new AbortController().signal,

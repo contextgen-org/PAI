@@ -48,6 +48,7 @@ import {
 } from "@pai/contracts";
 import { canonicalJsonV1 } from "@pai/eventing";
 import type { ObjectStorePortV1 } from "@pai/object-store";
+import { InternalClientError } from "@pai/service-kit";
 import { Value } from "@sinclair/typebox/value";
 
 import type { TriggerProcessorOwnerDatabaseV1 } from "./trigger-admission.v1.js";
@@ -184,7 +185,7 @@ export interface TriggerProcessSnapshotRetentionRepositoryV1 {
   readCurrent(
     request: TriggerProcessSnapshotRetentionReadRequestV1,
     signal: AbortSignal,
-  ): Promise<string>;
+  ): Promise<string | undefined>;
 }
 
 export interface TriggerLifecycleDependenciesV1 {
@@ -1435,7 +1436,13 @@ export function createTriggerLifecycleApplicationV1(
       } catch (error) {
         throw new TriggerLifecycleStageErrorV1(
           "snapshot",
-          "runtime_event_owner_unavailable",
+          // Preserve the permanent/retryable boundary from the authenticated
+          // owner response without exposing its internal error vocabulary on
+          // this cross-service endpoint. The Action Runtime uses this to
+          // dead-letter stale events rather than hot-looping an owner outbox.
+          error instanceof InternalClientError && !error.retryable
+            ? "runtime_event_owner_rejected"
+            : "runtime_event_owner_unavailable",
           { cause: error },
         );
       }
@@ -1465,9 +1472,9 @@ export function createTriggerLifecycleApplicationV1(
           { cause: error },
         );
       }
-      let expectedSnapshotRetentionUntil: string;
+      let currentSnapshotRetentionUntil: string | undefined;
       try {
-        expectedSnapshotRetentionUntil = await withDeadline(2_000, (signal) =>
+        currentSnapshotRetentionUntil = await withDeadline(2_000, (signal) =>
           dependencies.process_snapshot_retention.readCurrent(
             {
               trigger_process_id: request.trigger_process_id,
@@ -1487,6 +1494,13 @@ export function createTriggerLifecycleApplicationV1(
           { cause: error },
         );
       }
+      // A Process has no snapshot retention before its first runtime event.
+      // That bootstrap event is already bound to the Action Runtime owner read
+      // above, so use its retained-until value as the initial owner baseline.
+      // Every subsequent append must use the Process value and is still
+      // rechecked inside the writer while its row is locked.
+      const expectedSnapshotRetentionUntil =
+        currentSnapshotRetentionUntil ?? ownerRead.retention_until;
       const ownerRetentionNs = timestampNanosecondsV1(ownerRead.retention_until);
       const snapshotRetentionNs = timestampNanosecondsV1(
         expectedSnapshotRetentionUntil,

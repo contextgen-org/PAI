@@ -89,6 +89,9 @@ export const RuntimeStartReservationValidateResponseV1Schema = Type.Object(
       Type.Literal("reserved"),
       Type.Literal("dispatching"),
       Type.Literal("queued"),
+      // Returned only for a `before_running` revalidation of the exact
+      // published run when a replacement worker takes an expired lease.
+      Type.Literal("started"),
     ]),
     validated_fence_generation: TriggerProcessorPositiveVersionV1Schema,
     validation_stage: Type.Union(

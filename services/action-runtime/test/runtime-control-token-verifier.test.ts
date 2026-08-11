@@ -1,6 +1,7 @@
 import {
   SignJWT,
   createLocalJWKSet,
+  errors,
   exportJWK,
   generateKeyPair,
 } from "jose";
@@ -24,13 +25,15 @@ const expected = Object.freeze({
   }),
 });
 
-async function fixture() {
+async function fixture(
+  controlValidUntil = "2030-01-01T00:15:00.000Z",
+) {
   const pair = await generateKeyPair("Ed25519", { extractable: true });
   const publicJwk = await exportJWK(pair.publicKey);
   const getKey = createLocalJWKSet({
     keys: [{ ...publicJwk, kid: "runtime-control-1", alg: "EdDSA", use: "sig" }],
   });
-  const controlValidUntil = "2030-01-01T00:15:00.000Z";
+  const issuedAt = Math.floor(Date.parse(controlValidUntil) / 1_000) - 20 * 60;
   const token = await new SignJWT({
     trigger_process_id: expected.trigger_process_id,
     runtime_run_id: expected.runtime_run_id,
@@ -43,7 +46,7 @@ async function fixture() {
     .setAudience("action_runtime")
     .setSubject("trigger_processor")
     .setJti("control-1")
-    .setIssuedAt(Math.floor(Date.parse("2029-12-31T23:55:00.000Z") / 1_000))
+    .setIssuedAt(issuedAt)
     .setExpirationTime(Math.floor(Date.parse(controlValidUntil) / 1_000))
     .sign(pair.privateKey);
   return { token, getKey, controlValidUntil };
@@ -92,5 +95,29 @@ describe("Runtime control token verifier", () => {
         scope: { ...expected.scope, bot_id: "another-bot" },
       }),
     ).rejects.toThrow(/binding is invalid/u);
+  });
+
+  it("permits an expired signed control only for a terminal replay", async () => {
+    const { token, getKey, controlValidUntil } = await fixture(
+      "2020-01-01T00:15:00.000Z",
+    );
+    const verifier = createRuntimeControlTokenVerifierV1({ get_key: getKey });
+
+    await expect(verifier.verify(token, expected)).rejects.toBeInstanceOf(
+      errors.JWTExpired,
+    );
+    await expect(
+      verifier.verify(token, {
+        ...expected,
+        allow_expired_terminal_replay: true,
+      }),
+    ).resolves.toEqual({
+      runtime_run_id: expected.runtime_run_id,
+      trigger_process_id: expected.trigger_process_id,
+      start_attempt_no: expected.start_attempt_no,
+      start_fence_generation: 7,
+      ...expected.scope,
+      control_valid_until: controlValidUntil,
+    });
   });
 });

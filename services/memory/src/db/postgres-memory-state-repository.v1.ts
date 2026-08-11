@@ -6,6 +6,7 @@ import type { VerifiedOwnerPostgresCompositionV1 } from "@pai/persistence";
 import type { MEMORY_REPOSITORY_CONTRACT_V1 } from "./permission-manifest.v1.js";
 import {
   MEMORY_EMBEDDING_PROFILE_V1,
+  MemoryApplicationErrorV1,
   MEMORY_RANKING_PROFILE_V1,
   type MemoryScopeV1,
   type MemoryStateRepositoryPortV1,
@@ -146,7 +147,15 @@ function exactScopeV1(value: unknown, expected: MemoryScopeV1, label: string): M
     release_channel: textV1(row.release_channel, `${label}.release_channel`),
   } as MemoryScopeV1;
   if (scopeKeyV1(scope) !== scopeKeyV1(expected)) {
-    throw new Error("Memory PostgreSQL durable owner scope mismatch");
+    // A row with the requested bot id but a different full owner scope must
+    // never be interpreted as an empty result. That would mask a durable
+    // ownership-integrity violation and may invite unsafe retries. Surface a
+    // typed, non-retryable authorization denial so the HTTP boundary returns
+    // 403 rather than an unclassified 500.
+    throw new MemoryApplicationErrorV1(
+      "forbidden",
+      "Memory PostgreSQL durable owner scope does not match the workload scope",
+    );
   }
   return Object.freeze(scope);
 }

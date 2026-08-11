@@ -5,7 +5,10 @@ import { openVerifiedOwnerPostgresCompositionV1 } from "@pai/persistence";
 
 import { MEMORY_REPOSITORY_CONTRACT_V1 } from "../dist/db/permission-manifest.v1.js";
 import { createPostgresMemoryStateRepositoryV1 } from "../dist/db/postgres-memory-state-repository.v1.js";
-import { MemoryApplicationV1 } from "../dist/memory-application.v1.js";
+import {
+  MemoryApplicationErrorV1,
+  MemoryApplicationV1,
+} from "../dist/memory-application.v1.js";
 import { acquireMemoryRuntimeDatabaseV1 } from "./postgres-test-runtime.mjs";
 
 const databaseUrl =
@@ -121,6 +124,34 @@ test(
       );
       assert.equal(recall.items.length, 1);
       assert.equal(recall.items[0].memory_point_id, created.accepted_point_ids[0]);
+
+      const mismatchedScope = Object.freeze({
+        ...scope,
+        workspace_id: `other_workspace_${suffix}`,
+        owner_agent_id: `other_agent_${suffix}`,
+      });
+      const mismatchedReader = Object.freeze({
+        caller: "trigger_processor",
+        capabilities: Object.freeze(["memory.read"]),
+        scope: mismatchedScope,
+      });
+      await assert.rejects(
+        () =>
+          restarted.fastRecall(
+            mismatchedReader,
+            {
+              schema_version: "memory.fast_recall.v1",
+              bot_id: scope.bot_id,
+              query: "durable postgres",
+              query_purpose: "context_injection",
+            },
+            new Date("2026-07-28T00:00:04.000Z"),
+          ),
+        (error) =>
+          error instanceof MemoryApplicationErrorV1 &&
+          error.code === "forbidden" &&
+          error.retryable === false,
+      );
     } finally {
       try {
         await composition?.close();

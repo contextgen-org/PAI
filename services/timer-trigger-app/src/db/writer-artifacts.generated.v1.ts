@@ -166,7 +166,7 @@ export const TIMER_WRITER_ARTIFACTS_V1 = [
     "generator_source": "pai-infra/supabase/generated/permissions/0300_timer.sql",
     "function_name": "claim_timer_event_outbox_v1",
     "signature_fingerprint": "sha256:bb6aee1312e878ffcf4406b216a33d964ab2c31c90567577edfa078753be1212",
-    "function_body_sha256": "sha256:00860d400a349980599713db40d6683d59171a2a0fc35ea52749546834609fbf"
+    "function_body_sha256": "sha256:b2cce990bda36833dcff1719374d7046f9b44d7824f4dd417796893ba1f27e7c"
   },
   {
     "artifact_version": "owner_writer_artifact.v1",

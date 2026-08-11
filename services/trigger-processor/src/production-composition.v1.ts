@@ -2,6 +2,15 @@ import { constants as fsConstants } from "node:fs";
 import { access } from "node:fs/promises";
 
 import {
+  DelegatedPrincipalContextV1Schema,
+  DeploymentEnvironmentV1Schema,
+  ReleaseChannelV1Schema,
+  type DelegatedPrincipalContextV1,
+} from "@pai/contracts";
+import {
+  canonicalJsonV1,
+} from "@pai/eventing";
+import {
   openOwnerCommandDispatchRuntimeFromEnvV1,
   openOwnerEventDispatchRuntimeFromEnvV1,
 } from "@pai/eventing";
@@ -10,10 +19,12 @@ import {
   ownerDatabaseApplicationDependenciesV1,
   type VerifiedOwnerPostgresCompositionV1,
 } from "@pai/persistence";
+import { Value } from "@sinclair/typebox/value";
 
 import type { TriggerProcessorInternalApplicationsV1 } from "./app.js";
 import {
   createAcceptedTriggerConfirmationVerifierV1,
+  createTriggerConfirmationPendingReadApplicationV1,
   createTriggerConfirmationResponseApplicationV1,
 } from "./application/confirmation.v1.js";
 import {
@@ -36,11 +47,14 @@ import {
   createTriggerProcessRecoveryRunnerV1,
   createTriggerProcessRecoveryWorkerV1,
   createTriggerProcessSnapshotRepairHandlerV1,
+  createTriggerSnapshotGapRecoveryWorkerV1,
 } from "./application/trigger-recovery.v1.js";
+import { createStrongFifoPromotionWorkerV1 } from "./application/strong-fifo-promotion.v1.js";
 import { createRuntimeStartReservationValidationApplicationV1 } from "./application/runtime-start-reservation-validation.v1.js";
 import { createTriggerAdmissionApplicationV1 } from "./application/trigger-admission.v1.js";
 import { createTriggerProcessControlApplicationV1 } from "./application/process-control.v1.js";
 import { createTriggerProcessObservationApplicationV1 } from "./application/process-observation.v1.js";
+import { createTriggerProcessFinalResponseApplicationV1 } from "./application/process-final-response.v1.js";
 import { createTriggerConfirmationReadRepositoryV1 } from "./db/confirmation-read-repository.v1.js";
 import { createContextSnapshotCanonicalReferenceRepositoryV1 } from "./db/context-snapshot-canonical-reference-repository.v1.js";
 import { createTriggerContextOwnerSourcePortV1 } from "./db/context-source-owner-repository.v1.js";
@@ -48,6 +62,8 @@ import { createTriggerProcessObservationRepositoryV1 } from "./db/process-observ
 import { createTriggerProcessSnapshotMetadataRepositoryV1 } from "./db/process-snapshot-metadata-repository.v1.js";
 import { createTriggerProcessSnapshotRetentionRepositoryV1 } from "./db/process-snapshot-retention-repository.v1.js";
 import { createRuntimeStartReservationValidationRepositoryV1 } from "./db/runtime-start-reservation-validation-repository.v1.js";
+import { createTriggerSnapshotGapRecoveryRepositoryV1 } from "./db/snapshot-gap-recovery-repository.v1.js";
+import { createStrongFifoPromotionRepositoryV1 } from "./db/strong-fifo-promotion-repository.v1.js";
 import { TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1 } from "./db/permission-manifest.v1.js";
 import { DeepSeekClaudeAgentIntentAdapterV1 } from "./deepseek-claude-agent-intent-adapter.v1.js";
 import { createTriggerProcessorHttpPortsV1, createTriggerProcessorWorkloadSignerFromEnvV1 } from "./production-http-ports.v1.js";
@@ -111,6 +127,111 @@ function requiredIntegerV1(
   return value;
 }
 
+type RuntimeStartBotScopeV1 = Readonly<{
+  workspace_id: string;
+  bot_id: string;
+  owner_agent_id: string;
+  deployment_environment: "local" | "dev" | "staging" | "prod";
+  release_channel: "stable" | "canary";
+}>;
+
+function canonicalRecordV1(value: unknown, label: string): Readonly<Record<string, unknown>> {
+  let snapshot: unknown;
+  try {
+    snapshot = JSON.parse(canonicalJsonV1(value));
+  } catch (error) {
+    throw new Error(`${label} is not canonical JSON`, { cause: error });
+  }
+  if (
+    typeof snapshot !== "object" ||
+    snapshot === null ||
+    Array.isArray(snapshot)
+  ) {
+    throw new Error(`${label} must be an object`);
+  }
+  return Object.freeze(snapshot as Readonly<Record<string, unknown>>);
+}
+
+/**
+ * The ingress snapshot is authoritative only because Trigger Admission wrote
+ * it atomically with the Trigger after verifying the public credential.  Do
+ * not reconstruct a user delegation from actor_id; old rows that lack this
+ * durable proof fail closed instead.
+ */
+function runtimeStartDelegatedPrincipalV1(
+  source: string,
+  authenticatedContextValue: unknown,
+  scope: RuntimeStartBotScopeV1,
+): DelegatedPrincipalContextV1 | undefined {
+  const authenticatedContext = canonicalRecordV1(
+    authenticatedContextValue,
+    "Trigger authenticated context",
+  );
+  const delegationValue = authenticatedContext.delegated_principal;
+  if (source === "timer") {
+    if (
+      authenticatedContext.authentication_kind !== "pai_workload_jwt" ||
+      (delegationValue !== undefined && delegationValue !== null)
+    ) {
+      throw new Error("timer Trigger delegation is invalid");
+    }
+    return undefined;
+  }
+  if (
+    source !== "chat" &&
+    source !== "notification"
+  ) {
+    throw new Error("Trigger source is invalid for Runtime Start delegation");
+  }
+  if (
+    authenticatedContext.authentication_kind !== "supabase_ingress" ||
+    delegationValue === undefined
+  ) {
+    throw new Error("public Trigger delegation provenance is unavailable");
+  }
+  if (delegationValue === null) return undefined;
+  const delegated = canonicalRecordV1(
+    delegationValue,
+    "Trigger delegated principal",
+  );
+  if (
+    !Value.Check(
+      DelegatedPrincipalContextV1Schema,
+      [DeploymentEnvironmentV1Schema, ReleaseChannelV1Schema],
+      delegated,
+    ) ||
+    delegated.scope_kind !== "bot" ||
+    delegated.workspace_id !== scope.workspace_id ||
+    delegated.bot_id !== scope.bot_id ||
+    delegated.owner_agent_id !== scope.owner_agent_id ||
+    delegated.deployment_environment !== scope.deployment_environment ||
+    delegated.release_channel !== scope.release_channel ||
+    delegated.principal_type !== authenticatedContext.principal_type ||
+    delegated.principal_id !== authenticatedContext.principal_id
+  ) {
+    throw new Error("Trigger delegated principal does not match Runtime Start scope");
+  }
+  const verifiedPrincipal = canonicalRecordV1(
+    authenticatedContext.verified_principal,
+    "Trigger verified principal",
+  );
+  const expectedVerifiedPrincipal = {
+    principal_type: delegated.principal_type,
+    principal_id: delegated.principal_id,
+    roles: delegated.roles,
+    source_issuer: delegated.source_issuer,
+    source_subject: delegated.source_subject,
+    auth_time: delegated.auth_time,
+  };
+  if (
+    canonicalJsonV1(verifiedPrincipal) !==
+    canonicalJsonV1(expectedVerifiedPrincipal)
+  ) {
+    throw new Error("Trigger delegated principal is not bound to verified ingress");
+  }
+  return Object.freeze(delegated as DelegatedPrincipalContextV1);
+}
+
 function deepSeekProviderEnvironmentV1(env: NodeJS.ProcessEnv): Readonly<Record<string, string>> {
   const apiKey = requiredEnvV1(env, "DEEPSEEK_API_KEY");
   const path = requiredEnvV1(env, "PATH");
@@ -164,9 +285,11 @@ export async function openProductionTriggerProcessorCompositionV1(
   const objectAccessSecret = requiredEnvV1(env, "PAI_TRIGGER_OBJECT_ACCESS_HMAC_SECRET");
   const recoveryWorkerId = requiredEnvV1(env, "PAI_TRIGGER_RECOVERY_WORKER_ID");
   const actionRuntimeUrl = requiredEnvV1(env, "PAI_ACTION_RUNTIME_URL");
+  const metaCognitionUrl = requiredEnvV1(env, "PAI_META_COGNITION_URL");
   const skillRegistryUrl = requiredEnvV1(env, "PAI_SKILL_REGISTRY_URL");
   const memoryUrl = requiredEnvV1(env, "PAI_MEMORY_URL");
   const knowThatUrl = requiredEnvV1(env, "PAI_KNOWTHAT_URL");
+  const timerTriggerAppUrl = requiredEnvV1(env, "PAI_TIMER_TRIGGER_APP_URL");
   const intentModel = requiredEnvV1(env, "PAI_TRIGGER_INTENT_MODEL");
   const intentSdkCwd = requiredEnvV1(env, "PAI_TRIGGER_INTENT_SDK_CWD");
   const contextRetentionSeconds = requiredIntegerV1(
@@ -195,12 +318,16 @@ export async function openProductionTriggerProcessorCompositionV1(
   let commandDispatch: Awaited<ReturnType<typeof openOwnerCommandDispatchRuntimeFromEnvV1>> | undefined;
   let objectStore: Awaited<ReturnType<typeof openTriggerProcessorObjectStoreV1>> | undefined;
   let recoveryRunner: ReturnType<typeof createTriggerProcessRecoveryRunnerV1> | undefined;
+  let snapshotGapRecoveryRunner: ReturnType<typeof createTriggerProcessRecoveryRunnerV1> | undefined;
+  let strongFifoPromotionRunner: ReturnType<typeof createTriggerProcessRecoveryRunnerV1> | undefined;
   let started = false;
   let closed = false;
 
   const closeV1 = async (): Promise<void> => {
     if (closed) return;
     closed = true;
+    await strongFifoPromotionRunner?.stop().catch(() => undefined);
+    await snapshotGapRecoveryRunner?.stop().catch(() => undefined);
     await recoveryRunner?.stop().catch(() => undefined);
     await commandDispatch?.close().catch(() => undefined);
     await eventDispatch?.close().catch(() => undefined);
@@ -213,6 +340,7 @@ export async function openProductionTriggerProcessorCompositionV1(
       TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
       databaseUrl,
     );
+    const verifiedPostgres = postgres;
     eventDispatch = await openOwnerEventDispatchRuntimeFromEnvV1(
       postgres.outbox,
       {
@@ -233,7 +361,95 @@ export async function openProductionTriggerProcessorCompositionV1(
         transport_epoch_postgres: postgres.postgres,
         transport: createTriggerRuntimeCommandTransportV1({
           action_runtime_url: actionRuntimeUrl,
+          meta_cognition_url: metaCognitionUrl,
           signer: createTriggerProcessorWorkloadSignerFromEnvV1(env),
+          runtime_control_scope: async (request, signal) => {
+            signal?.throwIfAborted();
+            const result = await verifiedPostgres.postgres.query<Readonly<{
+              workspace_id: string;
+              bot_id: string;
+              owner_agent_id: string;
+              deployment_environment: "local" | "dev" | "staging" | "prod";
+              release_channel: "stable" | "canary";
+            }>>(
+              `SELECT workspace_id, bot_id, owner_agent_id,
+                      deployment_environment, release_channel
+                 FROM trigger_processor.trigger_processes
+                WHERE id = $1::text
+                  AND current_runtime_run_id = $2::text
+                  AND runtime_start_attempt_no = $3::integer`,
+              [
+                request.trigger_process_id,
+                request.runtime_run_id,
+                request.start_attempt_no,
+              ],
+            );
+            signal?.throwIfAborted();
+            const scope = result.rows[0];
+            if (
+              result.rows.length !== 1 ||
+              scope === undefined ||
+              typeof scope.workspace_id !== "string" ||
+              typeof scope.bot_id !== "string" ||
+              typeof scope.owner_agent_id !== "string" ||
+              !["local", "dev", "staging", "prod"].includes(scope.deployment_environment) ||
+              !["stable", "canary"].includes(scope.release_channel)
+            ) {
+              throw new Error("runtime_control_scope_unavailable");
+            }
+            return Object.freeze({
+              scope_kind: "bot" as const,
+              workspace_id: scope.workspace_id,
+              bot_id: scope.bot_id,
+              owner_agent_id: scope.owner_agent_id,
+              deployment_environment: scope.deployment_environment,
+              release_channel: scope.release_channel,
+            });
+          },
+          runtime_start_delegated_principal: async (request, signal) => {
+            signal?.throwIfAborted();
+            const result = await verifiedPostgres.postgres.query<Readonly<{
+              source: string;
+              authenticated_context: unknown;
+              workspace_id: string;
+              bot_id: string;
+              owner_agent_id: string;
+              deployment_environment: "local" | "dev" | "staging" | "prod";
+              release_channel: "stable" | "canary";
+            }>>(
+              `SELECT trigger.source, trigger.authenticated_context,
+                      process.workspace_id, process.bot_id,
+                      process.owner_agent_id, process.deployment_environment,
+                      process.release_channel
+                 FROM trigger_processor.trigger_processes AS process
+                 JOIN trigger_processor.triggers AS trigger
+                   ON trigger.id = process.trigger_id
+                WHERE process.id = $1::text
+                  AND process.workspace_id = $2::text
+                  AND process.bot_id = $3::text
+                  AND process.owner_agent_id = $4::text
+                  AND process.deployment_environment = $5::text
+                  AND process.release_channel = $6::text`,
+              [
+                request.trigger_process_id,
+                request.workspace_id,
+                request.bot_id,
+                request.owner_agent_id,
+                request.deployment_environment,
+                request.release_channel,
+              ],
+            );
+            signal?.throwIfAborted();
+            const stored = result.rows[0];
+            if (result.rows.length !== 1 || stored === undefined) {
+              throw new Error("runtime_start_delegation_provenance_unavailable");
+            }
+            return runtimeStartDelegatedPrincipalV1(
+              stored.source,
+              stored.authenticated_context,
+              stored,
+            );
+          },
           ...(requestTimeoutMs === undefined
             ? {}
             : { request_timeout_ms: requestTimeoutMs }),
@@ -262,6 +478,7 @@ export async function openProductionTriggerProcessorCompositionV1(
       skill_registry_url: skillRegistryUrl,
       memory_url: memoryUrl,
       knowthat_url: knowThatUrl,
+      timer_trigger_app_url: timerTriggerAppUrl,
       signer: createTriggerProcessorWorkloadSignerFromEnvV1(env),
       context_query: ownerContext,
       ...(requestTimeoutMs === undefined ? {} : { request_timeout_ms: requestTimeoutMs }),
@@ -279,11 +496,14 @@ export async function openProductionTriggerProcessorCompositionV1(
       tool_permissions: http.intent_policy_sources.tool_permissions,
       trigger_input: ownerContext,
     });
+    const confirmationReadRepository = createTriggerConfirmationReadRepositoryV1(
+      postgres.postgres,
+    );
     const lifecycle = createTriggerLifecycleApplicationV1(
       ownerDatabaseApplicationDependenciesV1(postgres),
       {
         confirmations: createAcceptedTriggerConfirmationVerifierV1(
-          createTriggerConfirmationReadRepositoryV1(postgres.postgres),
+          confirmationReadRepository,
         ),
         context_sources: {
           ...http.context_sources,
@@ -320,6 +540,46 @@ export async function openProductionTriggerProcessorCompositionV1(
     const snapshotRepair = createTriggerProcessSnapshotRepairHandlerV1(
       ownerDatabaseApplicationDependenciesV1(postgres),
     );
+    strongFifoPromotionRunner = createTriggerProcessRecoveryRunnerV1(
+      createStrongFifoPromotionWorkerV1(
+        createStrongFifoPromotionRepositoryV1(postgres.postgres),
+        ownerDatabaseApplicationDependenciesV1(postgres),
+        {},
+      ),
+      {
+        ...(recoveryPollMs === undefined
+          ? {}
+          : { poll_interval_ms: recoveryPollMs }),
+        on_error(error: unknown) {
+          const detail =
+            error instanceof Error
+              ? `${error.name}: ${error.message}`
+              : "non-Error Strong FIFO promotion failure";
+          console.error(`trigger_strong_fifo_promotion_failed: ${detail}`);
+        },
+      },
+    );
+    snapshotGapRecoveryRunner = createTriggerProcessRecoveryRunnerV1(
+      createTriggerSnapshotGapRecoveryWorkerV1(
+        createTriggerSnapshotGapRecoveryRepositoryV1(
+          postgres.postgres,
+        ),
+        ownerDatabaseApplicationDependenciesV1(postgres),
+        { worker_id: `${recoveryWorkerId}:snapshot-gap` },
+      ),
+      {
+        ...(recoveryPollMs === undefined
+          ? {}
+          : { poll_interval_ms: recoveryPollMs }),
+        on_error(error: unknown) {
+          const detail =
+            error instanceof Error
+              ? `${error.name}: ${error.message}`
+              : "non-Error snapshot-gap recovery failure";
+          console.error(`trigger_snapshot_gap_recovery_failed: ${detail}`);
+        },
+      },
+    );
     recoveryRunner = createTriggerProcessRecoveryRunnerV1(
       createTriggerProcessRecoveryWorkerV1(
         ownerDatabaseApplicationDependenciesV1(postgres),
@@ -330,15 +590,41 @@ export async function openProductionTriggerProcessorCompositionV1(
         // discarded at the recovery boundary.
         { worker_id: recoveryWorkerId, lease_seconds: 150 },
       ),
-      ...(recoveryPollMs === undefined ? [] : [{ poll_interval_ms: recoveryPollMs }]),
+      {
+        ...(recoveryPollMs === undefined
+          ? {}
+          : { poll_interval_ms: recoveryPollMs }),
+        // Recovery failures are already persisted by the fenced ACK path.
+        // Keep a bounded process-level signal as well: without it an ACK
+        // invariant failure can otherwise leave a lease to expire silently.
+        on_error(error: unknown) {
+          const detail =
+            error instanceof Error
+              ? `${error.name}: ${error.message}`
+              : "non-Error recovery failure";
+          console.error(`trigger_process_recovery_failed: ${detail}`);
+        },
+      },
+    );
+    const processObservation = createTriggerProcessObservationApplicationV1(
+      createTriggerProcessObservationRepositoryV1(postgres.postgres),
     );
     const internalApplications: TriggerProcessorInternalApplicationsV1 = Object.freeze({
       confirmation_response: createTriggerConfirmationResponseApplicationV1(
         ownerDatabaseApplicationDependenciesV1(postgres),
       ),
+      confirmation_pending_read:
+        createTriggerConfirmationPendingReadApplicationV1(
+          confirmationReadRepository,
+        ),
       lifecycle,
       context_snapshot_read: createContextSnapshotReadApplicationV1(contextResolver),
       snapshot_read: snapshotRead,
+      final_response: createTriggerProcessFinalResponseApplicationV1(
+        processObservation,
+        http.runtime_final_results,
+      ),
+      timer_follow_ups: http.timer_follow_ups,
       runtime_start_reservation_validation:
         createRuntimeStartReservationValidationApplicationV1(
           createRuntimeStartReservationValidationRepositoryV1(
@@ -350,13 +636,16 @@ export async function openProductionTriggerProcessorCompositionV1(
     return Object.freeze({
       trigger_admission: createTriggerAdmissionApplicationV1(
         ownerDatabaseApplicationDependenciesV1(postgres),
+        {
+          localInteractiveChat:
+            options.deployment_environment === "local" &&
+            process.env.PAI_LOCAL_CHAT_CONSOLE_ENABLED === "true",
+        },
       ),
       process_control: createTriggerProcessControlApplicationV1(
         ownerDatabaseApplicationDependenciesV1(postgres),
       ),
-      process_observation: createTriggerProcessObservationApplicationV1(
-        createTriggerProcessObservationRepositoryV1(postgres.postgres),
-      ),
+      process_observation: processObservation,
       internal_applications: internalApplications,
       readiness_checks: Object.freeze([
         { name: "owner_postgres", check: postgres.checkReadiness },
@@ -372,6 +661,8 @@ export async function openProductionTriggerProcessorCompositionV1(
         objectStore!.start();
         eventDispatch!.start();
         commandDispatch!.start();
+        strongFifoPromotionRunner?.start();
+        snapshotGapRecoveryRunner?.start();
         recoveryRunner?.start();
       },
       close: closeV1,

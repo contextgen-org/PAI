@@ -182,7 +182,7 @@ export const META_COGNITION_WRITER_ARTIFACTS_V1 = [
     "generator_source": "pai-infra/supabase/generated/permissions/0400_meta_cognition.sql",
     "function_name": "claim_meta_event_outbox_v1",
     "signature_fingerprint": "sha256:60d2c7b3cdcb4e55951565d490b5c1004d5bb26e01026a24b3ace7824bc079a6",
-    "function_body_sha256": "sha256:8072202bd55f150c1ff10f26aeb5a23b51af3702792198e60a742c5baaab96cd"
+    "function_body_sha256": "sha256:ed9acb73845eea97ac8c2e25c90934edf1e8889c7f1a85bc31349d67c9574973"
   },
   {
     "artifact_version": "owner_writer_artifact.v1",
@@ -198,7 +198,7 @@ export const META_COGNITION_WRITER_ARTIFACTS_V1 = [
     "generator_source": "pai-infra/supabase/generated/permissions/0400_meta_cognition.sql",
     "function_name": "claim_meta_command_outbox_v1",
     "signature_fingerprint": "sha256:e571741ea725380afc2047d1339e42be7ea8d3f6d47cb0288b1e36b43fdd8ef0",
-    "function_body_sha256": "sha256:1d0fd86fc12cb9d00d8344bcf110813a6fe51169da36319e1bb6ea3f1d59e219"
+    "function_body_sha256": "sha256:978fc593e0dcb7a9cfea6d343514086912eb1295e16b2a9a2a475cc39f5c87c4"
   },
   {
     "artifact_version": "owner_writer_artifact.v1",

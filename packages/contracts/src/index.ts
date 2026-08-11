@@ -45,6 +45,7 @@ export * from "./action-runtime/tool-permission-profile-current-read.v1.js";
 export * from "./action-runtime/skill-load.v1.js";
 export * from "./action-runtime/runtime-policy-input.v1.js";
 export * from "./action-runtime/runtime-policy-input-read.v1.js";
+export * from "./action-runtime/runtime-final-result-read.v1.js";
 export * from "./action-runtime/runtime-control.v1.js";
 export * from "./action-runtime/tool-events.v1.js";
 export * from "./action-runtime/runtime-events.v1.js";

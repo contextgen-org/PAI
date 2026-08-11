@@ -28,6 +28,7 @@ describe("Action Runtime permission manifest", () => {
         "freeze_unknown_tool_side_effect_v1",
         "reconcile_tool_invocation_v1",
         "record_runtime_control_signal_v1",
+        "record_runtime_already_terminal_control_v1",
         "transition_runtime_control_signal_v1",
         "record_runtime_artifact_v1",
         "finalize_runtime_artifact_v1",
@@ -130,6 +131,14 @@ describe("Action Runtime permission manifest", () => {
         "runtime_control_signals",
         "runtime_control_tombstones",
         "runtime_runs",
+        "runtime_events",
+        "runtime_event_outbox",
+      ],
+    ],
+    [
+      "record_runtime_already_terminal_control_v1",
+      [
+        "runtime_control_signals",
         "runtime_events",
         "runtime_event_outbox",
       ],
@@ -481,6 +490,11 @@ describe("Action Runtime permission manifest", () => {
         "append",
       ],
       [
+        "record_runtime_already_terminal_control_v1",
+        "runtime_control_signals",
+        "append",
+      ],
+      [
         "transition_runtime_control_signal_v1",
         "runtime_control_signals",
         "transition",
@@ -514,6 +528,11 @@ describe("Action Runtime permission manifest", () => {
       ["freeze_unknown_tool_side_effect_v1", "tool_invocations", "transition"],
       ["reconcile_tool_invocation_v1", "tool_invocations", "transition"],
       ["record_runtime_control_signal_v1", "runtime_control_signals", "append"],
+      [
+        "record_runtime_already_terminal_control_v1",
+        "runtime_control_signals",
+        "append",
+      ],
       [
         "transition_runtime_control_signal_v1",
         "runtime_control_signals",

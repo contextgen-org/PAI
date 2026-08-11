@@ -1,4 +1,4 @@
-import { createPrivateKey } from "node:crypto";
+import { createHash, createPrivateKey } from "node:crypto";
 
 import {
   WorkloadJwtSigner,
@@ -13,15 +13,20 @@ import {
   SkillContextCatalogResponseV1Schema,
   ToolPermissionProfileCurrentReadSuccessV1Schema,
   assertKnowThatQueryResponseV1,
+  assertRuntimeFinalResultReadBindingsV1,
   assertSkillCatalogQuerySemanticBindingsV1,
   assertSkillContextCatalogBindingsV1,
   assertToolPermissionProfileCurrentReadBindingV1,
+  RuntimeFinalResultReadContractV1Schema,
+  TimerScheduleQueryResponseV1Schema,
+  assertTimerScheduleQueryResponseBindingsV1,
   type ContextComposeRequestV1,
   type IntentSynthesizeRequestV1,
   type KnowThatQueryResponseV1,
   type MemoryFastRecallResponseV1,
   type RuntimeEventReadContractV1,
   type RuntimeEventResolveRequestV1,
+  type RuntimeFinalResultReadContractV1,
   type SkillCatalogQueryDetailsV1,
   type SkillCatalogQueryRequestV1,
   type SkillContextCatalogDetailsV1,
@@ -50,11 +55,22 @@ export interface TriggerContextQueryPortV1 {
   ): Promise<string>;
 }
 
+type TimerFollowUpRequestV1 = Readonly<{
+  trigger_process_id: string;
+  workspace_id: string;
+  bot_id: string;
+  owner_agent_id: string;
+  deployment_environment: "local" | "dev" | "staging" | "prod";
+  release_channel: "stable" | "canary";
+  trace_id: string;
+}>;
+
 export interface TriggerProcessorHttpPortsOptionsV1 {
   readonly action_runtime_url: string;
   readonly skill_registry_url: string;
   readonly memory_url: string;
   readonly knowthat_url: string;
+  readonly timer_trigger_app_url: string;
   readonly signer: WorkloadCredentialSignerPort;
   readonly context_query: TriggerContextQueryPortV1;
   readonly request_timeout_ms?: number;
@@ -68,6 +84,30 @@ export interface TriggerProcessorHttpPortsV1 {
   >;
   readonly intent_policy_sources: TriggerLifecycleDependenciesV1["intent_policy_sources"];
   readonly runtime_events: TriggerLifecycleDependenciesV1["runtime_events"];
+  readonly runtime_final_results: Readonly<{
+    read(
+      request: Readonly<{
+        runtime_run_id: string;
+        workspace_id: string;
+        bot_id: string;
+        owner_agent_id: string;
+        deployment_environment: "local" | "dev" | "staging" | "prod";
+        release_channel: "stable" | "canary";
+        trace_id: string;
+      }>,
+      signal: AbortSignal,
+    ): Promise<RuntimeFinalResultReadContractV1>;
+  }>;
+  /**
+   * Owner-mediated correlation for replies created by a durable Timer
+   * schedule. The browser never receives Timer credentials or schedule data.
+   */
+  readonly timer_follow_ups: Readonly<{
+    list(
+      request: TimerFollowUpRequestV1,
+      signal: AbortSignal,
+    ): Promise<readonly string[]>;
+  }>;
   checkReadiness(signal: AbortSignal): Promise<void>;
 }
 
@@ -137,6 +177,16 @@ function queryStringV1(value: Record<string, string | number>): string {
   return params.toString();
 }
 
+function transportTraceIdV1(traceId: string, purpose: string): string {
+  return createHash("sha256")
+    .update("trigger-timer-follow-up.v1\0", "utf8")
+    .update(purpose, "utf8")
+    .update("\0", "utf8")
+    .update(traceId, "utf8")
+    .digest("hex")
+    .slice(0, 32);
+}
+
 export function createTriggerProcessorWorkloadSignerFromEnvV1(
   env: NodeJS.ProcessEnv,
 ): WorkloadCredentialSignerPort {
@@ -166,6 +216,10 @@ export function createTriggerProcessorHttpPortsV1(
   const skillRegistryUrl = baseUrlV1(options.skill_registry_url, "Skill Registry URL");
   const memoryUrl = baseUrlV1(options.memory_url, "Memory URL");
   const knowThatUrl = baseUrlV1(options.knowthat_url, "KnowThat URL");
+  const timerTriggerAppUrl = baseUrlV1(
+    options.timer_trigger_app_url,
+    "Timer Trigger App URL",
+  );
   const timeoutMs = options.request_timeout_ms ?? DEFAULT_TIMEOUT_MS_V1;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 300_000) {
     throw new Error("Trigger Processor internal request timeout is outside bounds");
@@ -173,7 +227,12 @@ export function createTriggerProcessorHttpPortsV1(
   const fetchImpl = options.fetch ?? fetch;
 
   const credential = async (
-    audience: "action_runtime" | "skill_registry" | "memory" | "knowthat",
+    audience:
+      | "action_runtime"
+      | "skill_registry"
+      | "memory"
+      | "knowthat"
+      | "timer_trigger_app",
     capabilities: readonly string[],
     scope: Readonly<{
       workspace_id: string;
@@ -459,11 +518,17 @@ export function createTriggerProcessorHttpPortsV1(
         );
         signal.throwIfAborted();
         const response = await requestInternalJson<RuntimeEventReadContractV1>({
-          url: `${actionRuntimeUrl}/internal/runtime-events::resolve`,
+          // `::` escapes the literal colon only while Fastify registers the
+          // route.  It is not part of the HTTP path: emitting it here misses
+          // Action Runtime's route policy and is rejected before the owner
+          // read application sees the request.
+          url: `${actionRuntimeUrl}/internal/runtime-events:resolve`,
           method: "POST",
           workloadCredential,
           json: request,
-          traceId: request.trace_id,
+          // Runtime event trace IDs are business identifiers and may be UUIDs.
+          // Preserve the inbound transport trace (or let the client create one)
+          // instead of treating that business ID as a W3C trace ID.
           timeoutMs,
           idempotent: true,
           maxRetries: 1,
@@ -473,12 +538,130 @@ export function createTriggerProcessorHttpPortsV1(
         return response.body;
       },
     }),
+    runtime_final_results: Object.freeze({
+      async read(
+        request: Readonly<{
+          runtime_run_id: string;
+          workspace_id: string;
+          bot_id: string;
+          owner_agent_id: string;
+          deployment_environment: "local" | "dev" | "staging" | "prod";
+          release_channel: "stable" | "canary";
+          trace_id: string;
+        }>,
+        signal: AbortSignal,
+      ) {
+        const workloadCredential = await credential(
+          "action_runtime",
+          ["runtime.final_result.read"],
+          request,
+        );
+        signal.throwIfAborted();
+        const response = await requestInternalJson<unknown>({
+          url: `${actionRuntimeUrl}/internal/runtime/runs/${encodeURIComponent(request.runtime_run_id)}/final-result`,
+          method: "GET",
+          workloadCredential,
+          traceId: request.trace_id,
+          timeoutMs,
+          idempotent: true,
+          maxRetries: 1,
+          signal,
+          fetchImpl,
+        });
+        if (!Value.Check(RuntimeFinalResultReadContractV1Schema, response.body)) {
+          throw new Error("Action Runtime returned an invalid final result response");
+        }
+        assertRuntimeFinalResultReadBindingsV1(request, response.body);
+        return response.body;
+      },
+    }),
+    timer_follow_ups: Object.freeze({
+      async list(request: TimerFollowUpRequestV1, signal: AbortSignal) {
+        const scope = {
+          workspace_id: request.workspace_id,
+          bot_id: request.bot_id,
+          owner_agent_id: request.owner_agent_id,
+          deployment_environment: request.deployment_environment,
+          release_channel: request.release_channel,
+        };
+        const workloadCredential = await credential(
+          "timer_trigger_app",
+          ["timer.read"],
+          scope,
+        );
+        const listTraceId = transportTraceIdV1(request.trace_id, "list");
+        signal.throwIfAborted();
+        const listed = await requestInternalJson<unknown>({
+          url: `${timerTriggerAppUrl}/internal/agent-timers?${queryStringV1({
+            runtime_run_id: request.trigger_process_id,
+            trace_id: listTraceId,
+            limit: 100,
+          })}`,
+          method: "GET",
+          workloadCredential,
+          traceId: listTraceId,
+          timeoutMs,
+          idempotent: true,
+          maxRetries: 1,
+          signal,
+          fetchImpl,
+        });
+        if (!Value.Check(TimerScheduleQueryResponseV1Schema, listed.body)) {
+          throw new Error("Timer returned an invalid follow-up schedule response");
+        }
+        assertTimerScheduleQueryResponseBindingsV1(listed.body, scope);
+        if (listed.body.next_cursor !== undefined) {
+          throw new Error("Timer follow-up schedule page exceeds the safe limit");
+        }
+        const schedules = listed.body.schedules.filter(
+          (schedule) =>
+            schedule.created_by_trigger_process_id === request.trigger_process_id,
+        );
+        const processIds = new Set<string>();
+        for (const schedule of schedules) {
+          const historyTraceId = transportTraceIdV1(
+            request.trace_id,
+            `history:${schedule.schedule_id}`,
+          );
+          signal.throwIfAborted();
+          const history = await requestInternalJson<unknown>({
+            url: `${timerTriggerAppUrl}/internal/agent-timers/${encodeURIComponent(schedule.schedule_id)}/history?${queryStringV1({
+              runtime_run_id: request.trigger_process_id,
+              trace_id: historyTraceId,
+              limit: 100,
+            })}`,
+            method: "GET",
+            workloadCredential,
+            traceId: historyTraceId,
+            timeoutMs,
+            idempotent: true,
+            maxRetries: 1,
+            signal,
+            fetchImpl,
+          });
+          if (!Value.Check(TimerScheduleQueryResponseV1Schema, history.body)) {
+            throw new Error("Timer returned an invalid follow-up history response");
+          }
+          assertTimerScheduleQueryResponseBindingsV1(history.body, scope);
+          if (history.body.next_cursor !== undefined || history.body.occurrences === undefined) {
+            throw new Error("Timer follow-up history page exceeds the safe limit");
+          }
+          for (const occurrence of history.body.occurrences) {
+            if (occurrence.trigger_process_id !== null) {
+              processIds.add(occurrence.trigger_process_id);
+            }
+          }
+        }
+        return Object.freeze([...processIds].sort((left, right) => left.localeCompare(right)));
+      },
+    }),
     async checkReadiness(signal: AbortSignal) {
       const services = [
         [actionRuntimeUrl, "Action Runtime"],
         [skillRegistryUrl, "Skill Registry"],
         [memoryUrl, "Memory"],
         [knowThatUrl, "KnowThat"],
+        [timerTriggerAppUrl, "Timer Trigger App"],
       ] as const;
       await Promise.all(services.map(async ([url, label]) => {
         const timeoutSignal = AbortSignal.timeout(timeoutMs);

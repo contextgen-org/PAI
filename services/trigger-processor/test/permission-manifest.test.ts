@@ -86,6 +86,7 @@ describe("owner permission manifest lifecycle boundaries", () => {
       "reject_trigger_confirmation_v1",
       "expire_trigger_confirmation_v1",
       "request_trigger_cancel_v1",
+      "requeue_failed_runtime_cancel_command_v1",
       "transition_trigger_cancel_request_v1",
       "create_runtime_start_reservation_v1",
       "record_runtime_started_v1",
@@ -358,6 +359,7 @@ describe("owner permission manifest lifecycle boundaries", () => {
       "finalize_trigger_runtime_terminal_v1",
       "record_runtime_start_uncertain_v1",
       "record_runtime_started_v1",
+      "request_trigger_cancel_v1",
       "schedule_runtime_start_recompose_v1",
     ]);
     const runtimeStartProcessLockWriters = [
@@ -378,6 +380,10 @@ describe("owner permission manifest lifecycle boundaries", () => {
     const cancel = signature(
       TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
       "request_trigger_cancel_v1",
+    );
+    const cancellationRecovery = signature(
+      TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
+      "requeue_failed_runtime_cancel_command_v1",
     );
     const commandClaim = signature(
       TRIGGER_PROCESSOR_REPOSITORY_CONTRACT_V1,
@@ -430,6 +436,25 @@ describe("owner permission manifest lifecycle boundaries", () => {
         order: 1,
       },
     ]);
+    expect(cancellationRecovery?.writes_tables).toEqual([
+      "trigger_command_outbox",
+    ]);
+    expect(cancellationRecovery?.effects).toEqual(
+      expect.arrayContaining([
+        {
+          table_name: "trigger_command_outbox",
+          operation: "redrive_ack",
+          concurrency_control: "advisory_identity_lock",
+          advisory_lock: {
+            key_prefix:
+              "trigger_processor:runtime_start_reservation_process:",
+            identity_arguments: ["p_process_id"],
+            separator: ":",
+            order: 1,
+          },
+        },
+      ]),
+    );
     expect(commandClaim?.reads_tables).toContain("runtime_start_reservations");
     expect(commandClaim?.writes_tables).toContain("runtime_start_reservations");
     expect(commandClaim?.effects).toContainEqual({
@@ -606,7 +631,11 @@ describe("owner permission manifest lifecycle boundaries", () => {
           table_name: "trigger_processes",
           concurrency_control: "expected_state_version",
         }),
-        expect.objectContaining({ table_name: "trigger_command_outbox" }),
+        expect.objectContaining({
+          table_name: "trigger_process_work_items",
+          operation: "enqueue",
+          concurrency_control: "idempotency_key",
+        }),
       ]),
     );
   });
@@ -831,7 +860,7 @@ describe("owner permission manifest lifecycle boundaries", () => {
                 ? {
                     ...writer,
                     effects: writer.effects.filter(
-                      ({ table_name }) => table_name !== "trigger_command_outbox",
+                      ({ table_name }) => table_name !== "trigger_process_work_items",
                     ),
                   }
                 : writer,

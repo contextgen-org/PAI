@@ -258,13 +258,27 @@ export function createRuntimeStartReservationValidationApplicationV1(
           if (reservation.has_tombstone) {
             fail("start_cancelled");
           }
+          const isPrePublicationReservation =
+            (reservation.status === "reserved" ||
+              reservation.status === "dispatching" ||
+              reservation.status === "queued") &&
+            reservation.current_runtime_run_id === null &&
+            reservation.process_phase === "execution" &&
+            reservation.process_status === "waiting";
+          // A replacement worker must revalidate the same immutable Start
+          // fence before it can reclaim an expired Runtime lease.  At that
+          // point Trigger has already published the run, so the only valid
+          // owner state is the exact started/running pair below.  Do not make
+          // this state available to the earlier Start stages: they run before
+          // publication and must remain fenced by the pre-publication shape.
+          const isExpiredRunRecovery =
+            request.validation_stage === "before_running" &&
+            reservation.status === "started" &&
+            reservation.current_runtime_run_id === reservation.runtime_run_id &&
+            reservation.process_phase === "execution" &&
+            reservation.process_status === "running";
           if (
-            (reservation.status !== "reserved" &&
-              reservation.status !== "dispatching" &&
-            reservation.status !== "queued") ||
-            reservation.current_runtime_run_id !== null ||
-            reservation.process_phase !== "execution" ||
-            reservation.process_status !== "waiting" ||
+            (!isPrePublicationReservation && !isExpiredRunRecovery) ||
             !reservation.is_current_fence
           ) {
             fail("reservation_terminal");

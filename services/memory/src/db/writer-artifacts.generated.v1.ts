@@ -238,7 +238,7 @@ export const MEMORY_WRITER_ARTIFACTS_V1 = [
     "generator_source": "pai-infra/supabase/generated/permissions/0600_memory.sql",
     "function_name": "claim_memory_event_outbox_v1",
     "signature_fingerprint": "sha256:e89a1176f4373781e80c2ff7863933abe112f29e006f97b52c48c16f739b5d8d",
-    "function_body_sha256": "sha256:547c75a1e7ec244e40bc4c70a771311dec29a9c534ae0dc51289f9fdde84afa1"
+    "function_body_sha256": "sha256:5647939eb243fcfb528409f3707a48a5746d40ac943ee072525a91e47816bf2b"
   },
   {
     "artifact_version": "owner_writer_artifact.v1",
@@ -254,7 +254,7 @@ export const MEMORY_WRITER_ARTIFACTS_V1 = [
     "generator_source": "pai-infra/supabase/generated/permissions/0600_memory.sql",
     "function_name": "claim_memory_command_outbox_v1",
     "signature_fingerprint": "sha256:30b02ea7a57ee1bec779221aecd2770632dc61dce490519df1c470e0fb65724a",
-    "function_body_sha256": "sha256:571acb8442c8f0d485d8f0b206e71f56bd1154574176a63fd224b0dd3442d783"
+    "function_body_sha256": "sha256:0defb6dfb8fd69dcc44453c5dce5152b2c64924158708eb07165f2e80ad747ef"
   },
   {
     "artifact_version": "owner_writer_artifact.v1",

@@ -4888,6 +4888,15 @@ export const TRIGGER_PROCESSOR_DATABASE_COLUMNS_V1 = [
     "postgres_type": "timestamp with time zone"
   },
   {
+    "table_name": "triggers",
+    "column_name": "authenticated_context",
+    "not_null": false,
+    "default_expression": null,
+    "identity": "",
+    "generated": "",
+    "postgres_type": "jsonb"
+  },
+  {
     "table_name": "weak_trigger_groups",
     "column_name": "id",
     "not_null": true,

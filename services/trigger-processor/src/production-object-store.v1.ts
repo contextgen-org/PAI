@@ -53,7 +53,29 @@ function storageBaseUrlV1(raw: string): string {
   return url.toString().replace(/\/$/u, "");
 }
 
-function safeSecretV1(value: string): string {
+function isLocalStorageServiceRoleJwtV1(value: string): boolean {
+  const parts = value.split(".");
+  if (parts.length !== 3 || parts.some((part) => part.length === 0)) return false;
+  try {
+    const header = JSON.parse(Buffer.from(parts[0]!, "base64url").toString("utf8")) as unknown;
+    const claims = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8")) as unknown;
+    return (
+      typeof header === "object" &&
+      header !== null &&
+      !Array.isArray(header) &&
+      (header as { alg?: unknown }).alg === "HS256" &&
+      typeof claims === "object" &&
+      claims !== null &&
+      !Array.isArray(claims) &&
+      (claims as { iss?: unknown }).iss === "supabase" &&
+      (claims as { role?: unknown }).role === "service_role"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function safeSecretV1(value: string, requireLocalServiceRoleJwt: boolean): string {
   if (
     typeof value !== "string" ||
     value.length < 16 ||
@@ -61,6 +83,15 @@ function safeSecretV1(value: string): string {
     /[\r\n\u0000]/u.test(value)
   ) {
     throw new Error("PAI_SUPABASE_SECRET_KEY is invalid");
+  }
+  // The self-hosted Storage API used by local Docker validates an HS256 JWT.
+  // A cloud project's `sb_secret_...` key otherwise passes the generic shape
+  // check and only fails after a process has been admitted and begins its
+  // durable Context snapshot upload.
+  if (requireLocalServiceRoleJwt && !isLocalStorageServiceRoleJwtV1(value)) {
+    throw new Error(
+      "PAI_SUPABASE_SECRET_KEY must be an HS256 service-role JWT for local Storage",
+    );
   }
   return value;
 }
@@ -76,9 +107,12 @@ export async function openTriggerProcessorObjectStoreV1(
     throw new Error("Trigger Processor ObjectStore interval is invalid");
   }
   const supabaseUrl = storageBaseUrlV1(options.supabase_url);
-  const secretKey = safeSecretV1(options.supabase_secret_key);
   const allowInsecureLocalDockerTransport = isTrustedLocalDockerHttpOriginV1(
     new URL(supabaseUrl),
+  );
+  const secretKey = safeSecretV1(
+    options.supabase_secret_key,
+    allowInsecureLocalDockerTransport,
   );
   const fetchImpl = options.fetch ?? fetch;
   const clock = options.now ?? (() => new Date());

@@ -4,8 +4,15 @@ packages:
 
 overrides:
   '@hono/node-server@1.19.14': 2.0.10
-  fast-uri@3.1.3: 3.1.4
+  # Keep each major line inside the range declared by its direct consumer,
+  # while pinning the first upstream release that fixes GHSA-7p8r-x3mc-p8w7.
+  fast-uri@^3.0.0: 3.1.5
+  fast-uri@^4.0.0: 4.1.2
   find-my-way@9.6.0: 9.7.0
+  # Claude Agent SDK's MCP transport reaches these only transitively.  Both
+  # pins remain inside their consumers' declared major version ranges.
+  ip-address: 10.4.0
+  hono: 4.13.0
 
 catalog:
   '@opentelemetry/api': 1.9.0

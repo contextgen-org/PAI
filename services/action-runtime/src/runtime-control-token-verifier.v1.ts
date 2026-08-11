@@ -1,7 +1,10 @@
 import {
   createRemoteJWKSet,
+  decodeJwt,
+  errors,
   jwtVerify,
   type JWTVerifyGetKey,
+  type JWTPayload,
 } from "jose";
 import { isTrustedLocalDockerHttpOriginV1 } from "@pai/service-kit";
 
@@ -18,6 +21,10 @@ export interface RuntimeControlTokenVerifierOptionsV1 {
 }
 
 const tokenIdPatternV1 = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
+
+function isNumericDateV1(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value);
+}
 
 export function createRuntimeControlTokenVerifierV1(
   options: RuntimeControlTokenVerifierOptionsV1,
@@ -54,14 +61,44 @@ export function createRuntimeControlTokenVerifierV1(
       ) {
         throw new Error("Runtime control token is malformed");
       }
-      const verified = await jwtVerify(token, options.get_key, {
-        issuer,
-        audience: "action_runtime",
-        algorithms,
-        clockTolerance: tolerance,
-        requiredClaims: ["iat", "exp", "jti", "sub"],
-      });
-      const payload = verified.payload;
+      let payload: JWTPayload;
+      try {
+        payload = (
+          await jwtVerify(token, options.get_key, {
+            issuer,
+            audience: "action_runtime",
+            algorithms,
+            clockTolerance: tolerance,
+            requiredClaims: ["iat", "exp", "jti", "sub"],
+          })
+        ).payload;
+      } catch (error) {
+        if (
+          !expected.allow_expired_terminal_replay ||
+          !(error instanceof errors.JWTExpired)
+        ) {
+          throw error;
+        }
+        const expiredPayload = decodeJwt(token);
+        if (!isNumericDateV1(expiredPayload.exp)) {
+          throw new Error("Runtime control token expiry is invalid");
+        }
+        // Re-verify every normal JWT claim with a time inside the token's
+        // original validity window. The first verification above established
+        // that its only failure was expiry at the current time.
+        payload = (
+          await jwtVerify(token, options.get_key, {
+            issuer,
+            audience: "action_runtime",
+            algorithms,
+            clockTolerance: tolerance,
+            requiredClaims: ["iat", "exp", "jti", "sub"],
+            currentDate: new Date(
+              (expiredPayload.exp - tolerance - 1) * 1_000,
+            ),
+          })
+        ).payload;
+      }
       const keys = Object.keys(payload).sort();
       const allowed = [
         "aud",

@@ -62,7 +62,7 @@ export const TRIGGER_PROCESSOR_WRITER_ARTIFACTS_V1 = [
     "generator_source": "pai-infra/supabase/generated/permissions/0100_trigger_processor.sql",
     "function_name": "create_trigger_admission_v1",
     "signature_fingerprint": "sha256:4291e59ba50f5976154c7381f324253b88cdeaa499e0b525be2dce8596d99756",
-    "function_body_sha256": "sha256:70a16ef2e3c8926783703fa79c280c18adad036d64f87905b7797b4c24bee61f"
+    "function_body_sha256": "sha256:e0595e83989abbd10aa162e47d047a9c06bc54b584ad27120f0cff5c20551e32"
   },
   {
     "artifact_version": "owner_writer_artifact.v1",
@@ -118,7 +118,7 @@ export const TRIGGER_PROCESSOR_WRITER_ARTIFACTS_V1 = [
     "generator_source": "pai-infra/supabase/generated/permissions/0100_trigger_processor.sql",
     "function_name": "create_runtime_start_reservation_v1",
     "signature_fingerprint": "sha256:3cf43b318f866d31edc8a27bb4364744143b7c323d0f397d97c72aa766b2f254",
-    "function_body_sha256": "sha256:2098b351b6197f507c4d56b4a62cafb1d67e9fd487a863fe650f96569d64de0e"
+    "function_body_sha256": "sha256:11b9eef861ab553834bc9cb9d1ff1e9a869fddddb795f307106507d8be27f7d4"
   },
   {
     "artifact_version": "owner_writer_artifact.v1",
@@ -126,7 +126,7 @@ export const TRIGGER_PROCESSOR_WRITER_ARTIFACTS_V1 = [
     "generator_source": "pai-infra/supabase/generated/permissions/0100_trigger_processor.sql",
     "function_name": "record_runtime_started_v1",
     "signature_fingerprint": "sha256:3ca26ba1cf06a966c82fc300b67c73e00c6e5962e5d0ed1aa534fd1e6387ba1d",
-    "function_body_sha256": "sha256:f47a76fb454fc3b5218e604e876d3792856966d09cf7063aecce6c56450453de"
+    "function_body_sha256": "sha256:349b5fb86475ba72476dc062407cf3f818b3164ff51ac66e9e22608f8211f5d4"
   },
   {
     "artifact_version": "owner_writer_artifact.v1",
@@ -166,7 +166,7 @@ export const TRIGGER_PROCESSOR_WRITER_ARTIFACTS_V1 = [
     "generator_source": "pai-infra/supabase/generated/permissions/0100_trigger_processor.sql",
     "function_name": "accept_trigger_confirmation_v1",
     "signature_fingerprint": "sha256:cdbc57b7514c6437ff821f908ab52ece8e1ce5e59ad26098d8cf993080ac5f4a",
-    "function_body_sha256": "sha256:519784be1775733c2647123d04be5a3c8ac72c59baeea8bfd67e1675b9bc63e6"
+    "function_body_sha256": "sha256:b4fbaed6a65bb7b1311b3aff5a043386fa6a5b0b6876fa7cb199f3dbd4b79d80"
   },
   {
     "artifact_version": "owner_writer_artifact.v1",
@@ -189,8 +189,8 @@ export const TRIGGER_PROCESSOR_WRITER_ARTIFACTS_V1 = [
     "generator": "pai-infra-owner-writer.v1",
     "generator_source": "pai-infra/supabase/generated/permissions/0100_trigger_processor.sql",
     "function_name": "request_trigger_cancel_v1",
-    "signature_fingerprint": "sha256:f01be5824ac03ca67f8b0f1b26d012850603614febd79c72479b1e624844d703",
-    "function_body_sha256": "sha256:f8efb002dd5da7c201ebfea6a958fb274d7282baf7accdb52eeedabbf33884c5"
+    "signature_fingerprint": "sha256:b31de38f7d33134da5d0c94c06d00fa7dc68d931bfbba7de5bda9c1177d97f62",
+    "function_body_sha256": "sha256:36c5ab1b6d88a6590d7dd7b889e619113fecd3fdfaa37382c70e031ca3edf05a"
   },
   {
     "artifact_version": "owner_writer_artifact.v1",
@@ -204,17 +204,25 @@ export const TRIGGER_PROCESSOR_WRITER_ARTIFACTS_V1 = [
     "artifact_version": "owner_writer_artifact.v1",
     "generator": "pai-infra-owner-writer.v1",
     "generator_source": "pai-infra/supabase/generated/permissions/0100_trigger_processor.sql",
+    "function_name": "requeue_failed_runtime_cancel_command_v1",
+    "signature_fingerprint": "sha256:9e856155d8dc5962e16abe57a2eed67b726fafae6df7dbf282ca57964cda70d6",
+    "function_body_sha256": "sha256:c91d1d90a0ef800d56b6656de61222b31dd0ef59750ed1a9c5b15bebc0cbf8ba"
+  },
+  {
+    "artifact_version": "owner_writer_artifact.v1",
+    "generator": "pai-infra-owner-writer.v1",
+    "generator_source": "pai-infra/supabase/generated/permissions/0100_trigger_processor.sql",
     "function_name": "enter_trigger_cooldown_v1",
     "signature_fingerprint": "sha256:993f7e46483ae8d069003ab7993f67107b7ed9735a8670bc638af6bde91cb93c",
-    "function_body_sha256": "sha256:fc4a64d2b11aece402031d5377fd4bdad874d417e8fcad5b91e316eaabed1cb5"
+    "function_body_sha256": "sha256:e989873074fdbffc47d5193a5acd48d17fdd6d6c10ab1db38199db36a255c3ab"
   },
   {
     "artifact_version": "owner_writer_artifact.v1",
     "generator": "pai-infra-owner-writer.v1",
     "generator_source": "pai-infra/supabase/generated/permissions/0100_trigger_processor.sql",
     "function_name": "finalize_trigger_runtime_terminal_v1",
-    "signature_fingerprint": "sha256:1a1026a590782a492bc3dce1e8be3d123ceb611dbd2e98eb5a6e888593291250",
-    "function_body_sha256": "sha256:1ba28fd36ad2f983414f6b96b9ebefac99b370d8aae3bcd4b243c7ed0abe910e"
+    "signature_fingerprint": "sha256:11d70dbc0080467a3134ad9593cd9a71b4cdb314e86c79f6523925a939df0829",
+    "function_body_sha256": "sha256:c0ca5254b6ef9b72025ce440e2c9a504958a5bd853fe7e382dc9558b618b045f"
   },
   {
     "artifact_version": "owner_writer_artifact.v1",
@@ -222,7 +230,7 @@ export const TRIGGER_PROCESSOR_WRITER_ARTIFACTS_V1 = [
     "generator_source": "pai-infra/supabase/generated/permissions/0100_trigger_processor.sql",
     "function_name": "apply_runtime_control_handled_v1",
     "signature_fingerprint": "sha256:9efb447da460f0cee4093f446150e18f6193ecced18f2466d09900fadb774304",
-    "function_body_sha256": "sha256:300aa0e59d81fed6f6b0d0da3ef6a6176b3555f7537962d660bc5d4db6b95667"
+    "function_body_sha256": "sha256:b932acb9dcd94a5ce83ff43b7ffa1e2a7ab5a50b04b13bf1c6252b3adc50e374"
   },
   {
     "artifact_version": "owner_writer_artifact.v1",
@@ -293,8 +301,8 @@ export const TRIGGER_PROCESSOR_WRITER_ARTIFACTS_V1 = [
     "generator": "pai-infra-owner-writer.v1",
     "generator_source": "pai-infra/supabase/generated/permissions/0100_trigger_processor.sql",
     "function_name": "promote_strong_fifo_head_v1",
-    "signature_fingerprint": "sha256:3d05b8bbc297dbc1972c9c890a60c8e9c013b00a534ddb4894fcd57fbe1c4a8e",
-    "function_body_sha256": "sha256:bebc24ef728ff326f09e2687369fbf54ec59da672dc4a58ecb01d80d888c19a6"
+    "signature_fingerprint": "sha256:c26eecbd8f3f5549a90bbe13a24e366a3aab5c99f772e0ba207b702c95efdaec",
+    "function_body_sha256": "sha256:3c00d1fb8e8187fc6a192f73b41261b5ad24a1539a67c35afd54609ef5581139"
   },
   {
     "artifact_version": "owner_writer_artifact.v1",
@@ -318,7 +326,7 @@ export const TRIGGER_PROCESSOR_WRITER_ARTIFACTS_V1 = [
     "generator_source": "pai-infra/supabase/generated/permissions/0100_trigger_processor.sql",
     "function_name": "append_trigger_snapshot_v1",
     "signature_fingerprint": "sha256:ac148ff13738d5444623b4e258c99f9a645d8f47a4f57d19fc1b7d6d4f53e43a",
-    "function_body_sha256": "sha256:f21ce31aea424af5320313d88eecd70407dc95dd918f8066574e537577f64ffa"
+    "function_body_sha256": "sha256:0453f0a44cff8893bf65e5cfb52917975bbcc514372031aa660d96d3054830d0"
   },
   {
     "artifact_version": "owner_writer_artifact.v1",
@@ -358,7 +366,7 @@ export const TRIGGER_PROCESSOR_WRITER_ARTIFACTS_V1 = [
     "generator_source": "pai-infra/supabase/generated/permissions/0100_trigger_processor.sql",
     "function_name": "claim_trigger_event_outbox_v1",
     "signature_fingerprint": "sha256:fca62747c18a7b3ac23663a49eee9533ab3ec08e592dcaceff19b3de77d8393c",
-    "function_body_sha256": "sha256:d88f4e4537aaf06e45bdf4df7b6a7f128cd5a2be5c4841ecac1b7a448f30cc00"
+    "function_body_sha256": "sha256:9f63d2a873814b5f3e505aa742d47292b910b84f33760cbb27e9a6f380124b90"
   },
   {
     "artifact_version": "owner_writer_artifact.v1",
@@ -382,7 +390,7 @@ export const TRIGGER_PROCESSOR_WRITER_ARTIFACTS_V1 = [
     "generator_source": "pai-infra/supabase/generated/permissions/0100_trigger_processor.sql",
     "function_name": "ack_trigger_command_outbox_v1",
     "signature_fingerprint": "sha256:471f0f7bd4c8145d4c64634195f9dc7e77697c7db43503345a03f43811d99c40",
-    "function_body_sha256": "sha256:f5f567094e147529053031edbfccecee179b25645dc06233b369eea8924437c8"
+    "function_body_sha256": "sha256:b5cc691ad9561c43a7c6680501d72e3e8e1b126e44e1da6039a54295895ef420"
   },
   {
     "artifact_version": "owner_writer_artifact.v1",

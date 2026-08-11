@@ -269,6 +269,19 @@ export function createActionRuntimeCallbackV1(
           true,
         );
       }
+      if (response.body.code === "snapshot_pending_gap") {
+        // The Trigger owner has durably recorded the callback, but it cannot
+        // advance the per-source cursor until its bounded gap timeout has
+        // elapsed.  ACKing Action Runtime's outbox here would strand that
+        // source event forever: no producer retry would remain to replay it
+        // once the owner appends the explicit gap marker.  Retain the event
+        // under the existing fenced outbox retry protocol instead.
+        throw new RuntimeExecutionErrorV1(
+          "runtime_adapter_failed",
+          "Trigger Processor queued the runtime callback behind a source gap",
+          true,
+        );
+      }
       const version =
         "snapshot_version" in response.body.details
           ? response.body.details.snapshot_version

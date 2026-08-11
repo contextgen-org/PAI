@@ -35,6 +35,9 @@ const LOCAL_DOCKER_INTERNAL_ORIGINS_V1 = new Set([
   "timer-trigger-app:3006",
   "meta-cognition:3003",
   "observation-gateway:3008",
+  // Deployment-owned connector boundary for the fixed personal-assistant MCP
+  // bridge. This is not a general localhost or arbitrary Docker exception.
+  "assistant-mcp-gateway:3010",
   "storage-edge-runtime:8080",
   "jwks:8080",
 ]);

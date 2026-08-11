@@ -20,7 +20,6 @@ import {
   type VerifiedOwnerPostgresCompositionV1,
 } from "@pai/persistence";
 
-import { ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 } from "@pai/action-runtime/db/permission-manifest.v1";
 import { KNOWTHAT_REPOSITORY_CONTRACT_V1 } from "@pai/knowthat/db/permission-manifest.v1";
 import { MEMORY_REPOSITORY_CONTRACT_V1 } from "@pai/memory/db/permission-manifest.v1";
 import { META_COGNITION_REPOSITORY_CONTRACT_V1 } from "@pai/meta-cognition/db/permission-manifest.v1";
@@ -61,11 +60,9 @@ interface OwnerRedriverSpecV1 {
 }
 
 const OWNER_REDRIVER_SPECS_V1 = Object.freeze([
-  Object.freeze({
-    owner_service: "action_runtime",
-    database_url_env: "PAI_ACTION_RUNTIME_DATABASE_URL",
-    contract: ACTION_RUNTIME_REPOSITORY_CONTRACT_V1,
-  }),
+  // Action Runtime's event outbox is reconciled by its callback worker, not
+  // by the generic Redis transport.  A Redis probe cannot validate an HTTP
+  // callback receipt and would otherwise corrupt its recovery authority.
   Object.freeze({
     owner_service: "trigger_processor",
     database_url_env: "PAI_TRIGGER_PROCESSOR_DATABASE_URL",
@@ -99,7 +96,6 @@ const OWNER_REDRIVER_SPECS_V1 = Object.freeze([
 ] satisfies readonly OwnerRedriverSpecV1[]);
 
 type RedrivenOwnerServiceV1 =
-  | "action_runtime"
   | "trigger_processor"
   | "memory"
   | "meta_cognition"

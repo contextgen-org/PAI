@@ -3,6 +3,7 @@ import { Type, type Static } from "@sinclair/typebox";
 import {
   TriggerProcessorIdentifierV1Schema,
   TriggerProcessorStringSetV1Schema,
+  TriggerProcessorUtcTimestampV1Schema,
 } from "./contract-primitives.v1.js";
 
 export const StructuredIntentActionStepV1Schema = Type.Object(
@@ -51,6 +52,23 @@ export const StructuredIntentV1Schema = Type.Object(
       Type.String({ minLength: 1, maxLength: 4096 }),
       { maxItems: 1_000 },
     ),
+    /**
+     * A host-normalized parent run which may only create its durable timer.
+     * The timer child receives `deferred_instruction` and performs the actual
+     * lookup at its due time.  This is deliberately an optional, restrictive
+     * execution marker: it can only remove immediate capabilities.
+     */
+    execution_mode: Type.Optional(Type.Literal("deferred_timer_parent")),
+    deferred_instruction: Type.Optional(
+      Type.String({ minLength: 1, maxLength: 16_384 }),
+    ),
+    /**
+     * Trigger-owned absolute deadline for a normalized relative reminder.
+     * This is derived from the durable ingress timestamp rather than the
+     * later Action Runtime start time, so queue and model latency cannot
+     * silently extend the user's requested delay.
+     */
+    deferred_fire_at: Type.Optional(TriggerProcessorUtcTimestampV1Schema),
     safety_notes: Type.Array(
       Type.String({ minLength: 1, maxLength: 4096 }),
       { maxItems: 1_000 },
@@ -76,6 +94,23 @@ export type StructuredIntentV1 = Static<typeof StructuredIntentV1Schema>;
 export function assertStructuredIntentSemanticBindingsV1(
   intent: StructuredIntentV1,
 ): void {
+  const deferredParent =
+    intent.execution_mode === "deferred_timer_parent";
+  if (
+    deferredParent !== (intent.deferred_instruction !== undefined) ||
+    deferredParent !== (intent.deferred_fire_at !== undefined) ||
+    (deferredParent &&
+      !Number.isFinite(Date.parse(intent.deferred_fire_at ?? ""))) ||
+    (deferredParent &&
+      (intent.required_skills.length !== 0 ||
+        intent.action_plan.some(
+          (step) =>
+            step.action_type === "tool_use" &&
+            step.candidate_tool !== "timer.remind_after",
+        )))
+  ) {
+    throw new Error("StructuredIntentV1 deferred timer parent is invalid");
+  }
   const stepNumbers = new Set<number>();
   for (const [index, step] of intent.action_plan.entries()) {
     const expectedStep = index + 1;

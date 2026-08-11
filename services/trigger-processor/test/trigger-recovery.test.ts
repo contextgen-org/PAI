@@ -8,6 +8,7 @@ import {
   createTriggerProcessRecoveryWorkerV1,
   createTriggerProcessRecoveryRunnerV1,
   createTriggerProcessSnapshotRepairHandlerV1,
+  createTriggerSnapshotGapRecoveryWorkerV1,
   type TriggerProcessRecoveryClaimV1,
 } from "../src/application/trigger-recovery.v1.js";
 import type { TriggerProcessorOwnerDatabaseV1 } from "../src/application/trigger-admission.v1.js";
@@ -120,6 +121,43 @@ function database(
 }
 
 describe("Trigger Process recovery worker", () => {
+  it("advances only an eligible pending source gap through its fenced owner writer", async () => {
+    const writes: Array<Readonly<Record<string, unknown>>> = [];
+    const worker = createTriggerSnapshotGapRecoveryWorkerV1(
+      {
+        async listEligible(limit) {
+          expect(limit).toBe(16);
+          return [{
+            pending_event_id: "pending-1",
+            status: "pending",
+            updated_at: "2026-08-07T00:00:15.000000Z",
+          }];
+        },
+      },
+      database([], writes),
+      { worker_id: "worker-1:snapshot-gap" },
+    );
+
+    await expect(worker.runOnce()).resolves.toMatchObject({
+      claimed: 1,
+      transitioned: 1,
+      raced: 0,
+    });
+    expect(writes).toEqual([
+      expect.objectContaining({
+        p_pending_event_id: "pending-1",
+        p_expected_status: "pending",
+        p_expected_updated_at: "2026-08-07T00:00:15.000000Z",
+        p_next_status: "gap_skipped",
+        p_worker_id: "worker-1:snapshot-gap",
+        p_retry_delay_ms: null,
+        p_last_error: expect.objectContaining({
+          reason_code: "source_sequence_gap_timeout",
+        }),
+      }),
+    ]);
+  });
+
   it("keeps the default claim batch within the durable writer bound", async () => {
     const claimRequests: Array<Readonly<Record<string, unknown>>> = [];
     const worker = createTriggerProcessRecoveryWorkerV1(
@@ -494,6 +532,53 @@ describe("Trigger Process recovery worker", () => {
     });
     expect(handled).toHaveLength(1);
     expect(acknowledgements).toEqual([]);
+  });
+
+  it("terminally quarantines an invalid legacy payload without starving valid work in its lease batch", async () => {
+    const acknowledgements: Array<Record<string, unknown>> = [];
+    const handled: TriggerProcessRecoveryClaimV1[] = [];
+    const legacyPayload = {
+      ...stageRetryPayload(),
+      schema_version: "trigger_meta_enqueue_work.v0",
+    } as const;
+    const worker = createTriggerProcessRecoveryWorkerV1(
+      database(
+        [
+          claim({
+            work_item_id: "legacy-work-1",
+            work_kind: "meta_enqueue",
+            payload: legacyPayload,
+            payload_hash: hash(legacyPayload),
+          }),
+          claim({ work_item_id: "valid-work-1", claim_token: "claim-2" }),
+        ],
+        acknowledgements,
+      ),
+      {
+        async handle(work) {
+          handled.push(work);
+          return "owner_writer_committed" as const;
+        },
+      },
+      { worker_id: "worker-1" },
+    );
+
+    await expect(worker.runOnce()).resolves.toEqual({
+      claimed: 2,
+      completed: 1,
+      retried: 0,
+      failed: 1,
+      lease_expired: 0,
+    });
+    expect(handled.map((work) => work.work_item_id)).toEqual(["valid-work-1"]);
+    expect(acknowledgements).toEqual([
+      expect.objectContaining({
+        p_work_item_id: "legacy-work-1",
+        p_outcome: "failed",
+        p_retry_delay_ms: null,
+        p_error: { reason_code: "invalid_recovery_payload" },
+      }),
+    ]);
   });
 
   it("durably schedules retry and fails only after the bounded attempt budget", async () => {

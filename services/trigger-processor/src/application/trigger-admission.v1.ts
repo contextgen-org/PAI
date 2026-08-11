@@ -11,6 +11,7 @@ import {
   AdmitTriggerWriterResponseV1Schema,
   assertCanonicalTimerTriggerTimeV1,
   assertTimerTriggerBusinessPayloadV1,
+  type DelegatedPrincipalContextV1,
   type AdmitTriggerCommandV1,
   type AdmitTriggerWriterResponseV1,
   type TriggerSubmitRequestV1,
@@ -56,6 +57,37 @@ function bindingPrincipalType(
   principalType: VerifiedSupabaseIngress["principal"]["principal_type"],
 ): "user" | "developer" | "agent" | "operator" {
   return principalType === "bot" ? "agent" : principalType;
+}
+
+/**
+ * Capture the exact user authority which was verified at public ingress so it
+ * can later be delegated through the short-lived Trigger -> Runtime workload
+ * credential.  The durable Runtime Start body deliberately remains free of
+ * user identity; the snapshot is retained only in Trigger-owned provenance.
+ *
+ * A Supabase bot is a workload-like actor, not a human principal.  It must
+ * never gain personal-assistant authority merely by entering through the
+ * public ingress endpoint, so its delegation is explicitly absent.
+ */
+function delegatedPrincipalForSupabaseIngressV1(
+  principal: VerifiedSupabaseIngress["principal"],
+  command: AdmitTriggerCommandV1,
+): DelegatedPrincipalContextV1 | null {
+  if (
+    principal.principal_type !== "user" &&
+    principal.principal_type !== "developer"
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    principal_type: principal.principal_type,
+    principal_id: principal.principal_id,
+    roles: [...principal.roles],
+    source_issuer: principal.source_issuer,
+    source_subject: principal.source_subject,
+    auth_time: principal.auth_time,
+    ...botScope(command),
+  }) as DelegatedPrincipalContextV1;
 }
 
 export type VerifiedTriggerIngressV1 =
@@ -121,6 +153,7 @@ function authenticatedIdentity(
         principal_id: claims.sub,
         principal_type: "service",
         permission_scope: permissionScopeForSource(command.source),
+        delegated_principal: null,
         workload_subject: claims.sub,
         credential_jti: claims.jti,
         credential_kid: ingress.credential.protectedHeader.kid,
@@ -187,6 +220,10 @@ function authenticatedIdentity(
       principal_id: principal.principal_id,
       principal_type: bindingPrincipalType(principal.principal_type),
       permission_scope: permissionScopeForSource(command.source),
+      delegated_principal: delegatedPrincipalForSupabaseIngressV1(
+        principal,
+        command,
+      ),
       verified_principal: Object.freeze({
         ...principal,
         roles: [...principal.roles],
@@ -432,7 +469,10 @@ function assertCanonicalCommand(command: AdmitTriggerCommandV1): void {
   }
 }
 
-function admissionRequest(command: AdmitTriggerCommandV1) {
+function admissionRequest(
+  command: AdmitTriggerCommandV1,
+  localInteractiveChat: boolean,
+) {
   if (command.source === "timer") {
     return {
       is_catch_up: command.payload.is_catch_up,
@@ -446,7 +486,11 @@ function admissionRequest(command: AdmitTriggerCommandV1) {
   return {
     is_catch_up: false,
     catch_up_batch_id: null,
-    trusted_strong_hint: command.priority_hint === "strong",
+    // This is derived only by the server for its explicitly enabled local
+    // console; it is never a browser-provided priority escalation.
+    trusted_strong_hint:
+      (localInteractiveChat && command.source === "chat") ||
+      command.priority_hint === "strong",
     priority_hint: command.priority_hint ?? null,
     explicit_interrupt: false,
     requested_explicit_interrupt: false,
@@ -461,9 +505,13 @@ function admissionRequest(command: AdmitTriggerCommandV1) {
  */
 export function createTriggerAdmissionApplicationV1(
   database: TriggerProcessorOwnerDatabaseV1,
-  dependencies: Readonly<{ generateId?: () => string }> = {},
+  dependencies: Readonly<{
+    generateId?: () => string;
+    localInteractiveChat?: boolean;
+  }> = {},
 ): TriggerAdmissionApplicationV1 {
   const generateId = dependencies.generateId ?? randomUUID;
+  const localInteractiveChat = dependencies.localInteractiveChat === true;
   return Object.freeze({
     async recordPreAdmissionFailure(
       failure: TriggerPreAdmissionFailureV1,
@@ -643,7 +691,10 @@ export function createTriggerAdmissionApplicationV1(
               p_dedupe_key: command.dedupe_key,
               p_request_hash: requestHash,
               p_authenticated_context: identity.authenticated_context,
-              p_admission_request: admissionRequest(command),
+              p_admission_request: admissionRequest(
+                command,
+                localInteractiveChat,
+              ),
               p_idempotency_key: command.dedupe_key,
               p_trace_id: command.trace_id,
             },

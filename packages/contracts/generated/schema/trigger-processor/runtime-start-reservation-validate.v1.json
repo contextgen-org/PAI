@@ -171,6 +171,10 @@
             {
               "const": "queued",
               "type": "string"
+            },
+            {
+              "const": "started",
+              "type": "string"
             }
           ]
         },

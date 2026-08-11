@@ -32,8 +32,12 @@ export function assertTriggerAdmissionCommitPreconditionV1(
   currentSlot: { readonly process_id: string | null; readonly generation: number },
   currentProcess: {
     readonly process_id: string;
-    readonly phase: "execution" | "cooldown";
-    readonly status: "running" | "waiting";
+    readonly phase: "context" | "intent" | "execution" | "cooldown";
+    readonly status:
+      | "running"
+      | "waiting"
+      | "preempt_requested"
+      | "cancelling";
     readonly state_version: number;
   } | null,
   currentStrongFifo: {
@@ -173,56 +177,93 @@ const waitingAdmissionState = (
     terminal_reason: null,
   }) as const;
 
+type AcceptedAdmissionPreconditionV1 = Extract<
+  TriggerAdmissionDecisionV1,
+  { trigger_status: "accepted" }
+>["admission_precondition"];
+
+/**
+ * The foreground slot remains owned across Runtime Start recovery and a
+ * preempt handoff. Only an executing Runtime in `running` has the immutable
+ * Runtime Start binding required to safely emit a Runtime preempt command.
+ */
+function admissionPreconditionForFactsV1(
+  facts: TrustedAdmissionFactsV1,
+): AcceptedAdmissionPreconditionV1 {
+  const fifo = {
+    strong_fifo_revision: facts.strong_fifo_revision,
+    strong_fifo_head_process_id: facts.strong_fifo_head_process_id,
+    strong_fifo_head_admission_time: facts.strong_fifo_head_admission_time,
+    strong_fifo_preempt_commit_process_id:
+      facts.strong_fifo_preempt_commit_process_id,
+  } as const;
+  switch (facts.active_process) {
+    case "none":
+      return {
+        kind: "idle",
+        process_id: null,
+        slot_generation: facts.foreground_slot_generation,
+        ...fifo,
+      };
+    case "context_running":
+      return occupiedAdmissionPreconditionV1(facts, "context", "running", fifo);
+    case "context_waiting":
+      return occupiedAdmissionPreconditionV1(facts, "context", "waiting", fifo);
+    case "intent_running":
+      return occupiedAdmissionPreconditionV1(facts, "intent", "running", fifo);
+    case "intent_waiting":
+      return occupiedAdmissionPreconditionV1(facts, "intent", "waiting", fifo);
+    case "execution_running":
+      return occupiedAdmissionPreconditionV1(facts, "execution", "running", fifo);
+    case "execution_waiting":
+      return occupiedAdmissionPreconditionV1(facts, "execution", "waiting", fifo);
+    case "execution_preempt_requested":
+      return occupiedAdmissionPreconditionV1(
+        facts,
+        "execution",
+        "preempt_requested",
+        fifo,
+      );
+    case "execution_cancelling":
+      return occupiedAdmissionPreconditionV1(facts, "execution", "cancelling", fifo);
+    case "cooldown_waiting":
+      return occupiedAdmissionPreconditionV1(facts, "cooldown", "waiting", fifo);
+  }
+}
+
+function occupiedAdmissionPreconditionV1(
+  facts: Exclude<TrustedAdmissionFactsV1, { active_process: "none" }>,
+  phase: "context" | "intent" | "execution" | "cooldown",
+  status: "running" | "waiting" | "preempt_requested" | "cancelling",
+  fifo: Pick<
+    AcceptedAdmissionPreconditionV1,
+    | "strong_fifo_revision"
+    | "strong_fifo_head_process_id"
+    | "strong_fifo_head_admission_time"
+    | "strong_fifo_preempt_commit_process_id"
+  >,
+): AcceptedAdmissionPreconditionV1 {
+  return {
+    kind: "occupied",
+    process_id: facts.active_process_id,
+    slot_generation: facts.foreground_slot_generation,
+    phase,
+    status,
+    process_state_version: facts.active_process_state_version,
+    ...fifo,
+  } as AcceptedAdmissionPreconditionV1;
+}
+
+function isPreemptibleExecutionV1(facts: TrustedAdmissionFactsV1): boolean {
+  return facts.active_process === "execution_running";
+}
+
 function decideTriggerAdmissionUncheckedV1(
   facts: TrustedAdmissionFactsV1,
 ): TriggerAdmissionDecisionV1 {
   assertConsistentForegroundState(facts);
   const priority = calculateTriggerPriorityV1(facts);
-  const admissionPrecondition: Extract<
-    TriggerAdmissionDecisionV1,
-    { trigger_status: "accepted" }
-  >["admission_precondition"] =
-    facts.active_process === "none"
-      ? {
-          kind: "idle" as const,
-          process_id: null,
-          slot_generation: facts.foreground_slot_generation,
-          strong_fifo_revision: facts.strong_fifo_revision,
-          strong_fifo_head_process_id: facts.strong_fifo_head_process_id,
-          strong_fifo_head_admission_time:
-            facts.strong_fifo_head_admission_time,
-          strong_fifo_preempt_commit_process_id:
-            facts.strong_fifo_preempt_commit_process_id,
-        }
-      : facts.active_process === "execution_running"
-        ? {
-            kind: "occupied" as const,
-            process_id: facts.active_process_id,
-            slot_generation: facts.foreground_slot_generation,
-            phase: "execution",
-            status: "running",
-            process_state_version: facts.active_process_state_version,
-            strong_fifo_revision: facts.strong_fifo_revision,
-            strong_fifo_head_process_id: facts.strong_fifo_head_process_id,
-            strong_fifo_head_admission_time:
-              facts.strong_fifo_head_admission_time,
-            strong_fifo_preempt_commit_process_id:
-              facts.strong_fifo_preempt_commit_process_id,
-          }
-        : {
-            kind: "occupied" as const,
-            process_id: facts.active_process_id,
-            slot_generation: facts.foreground_slot_generation,
-            phase: "cooldown",
-            status: "waiting",
-            process_state_version: facts.active_process_state_version,
-            strong_fifo_revision: facts.strong_fifo_revision,
-            strong_fifo_head_process_id: facts.strong_fifo_head_process_id,
-            strong_fifo_head_admission_time:
-              facts.strong_fifo_head_admission_time,
-            strong_fifo_preempt_commit_process_id:
-              facts.strong_fifo_preempt_commit_process_id,
-          };
+  const admissionPrecondition = admissionPreconditionForFactsV1(facts);
   const commitPrecondition = {
     admission_precondition: admissionPrecondition,
   } as const;
@@ -295,14 +336,32 @@ function decideTriggerAdmissionUncheckedV1(
           reason_code: "timer_due",
           initial_process_state: runningAdmissionState,
         }
-      : {
+      : facts.active_process === "cooldown_waiting"
+        ? {
+            ...commitPrecondition,
+            trigger_status: "accepted",
+            priority: "strong",
+            action: "dispatch",
+            reason_code: "timer_due_supersede_cooldown",
+            initial_process_state: runningAdmissionState,
+          }
+      : isPreemptibleExecutionV1(facts)
+        ? {
           ...commitPrecondition,
           trigger_status: "accepted",
           priority: "strong",
           action: "dispatch_or_preempt",
           reason_code: "timer_due_preempt_active",
           initial_process_state: waitingAdmissionState("preempt_commit"),
-        };
+        }
+        : {
+            ...commitPrecondition,
+            trigger_status: "accepted",
+            priority: "strong",
+            action: "enqueue_strong_fifo",
+            reason_code: "strong_fifo_waiting",
+            initial_process_state: waitingAdmissionState("deferred_strong_queue"),
+          };
   }
 
   if (priority === "strong") {
@@ -326,7 +385,19 @@ function decideTriggerAdmissionUncheckedV1(
         initial_process_state: runningAdmissionState,
       };
     }
-    if (facts.explicit_interrupt) {
+    // Cooldown is post-execution learning, not an executing Runtime. A
+    // trusted strong signal may replace it without a meaningless preempt.
+    if (facts.active_process === "cooldown_waiting") {
+      return {
+        ...commitPrecondition,
+        trigger_status: "accepted",
+        priority: "strong",
+        action: "dispatch",
+        reason_code: "strong_supersede_cooldown",
+        initial_process_state: runningAdmissionState,
+      };
+    }
+    if (isPreemptibleExecutionV1(facts) && facts.explicit_interrupt) {
       return {
         ...commitPrecondition,
         trigger_status: "accepted",
@@ -336,13 +407,23 @@ function decideTriggerAdmissionUncheckedV1(
         initial_process_state: waitingAdmissionState("preempt_commit"),
       };
     }
+    if (isPreemptibleExecutionV1(facts)) {
+      return {
+        ...commitPrecondition,
+        trigger_status: "accepted",
+        priority: "strong",
+        action: "dispatch_or_preempt",
+        reason_code: "strong_preempt_active",
+        initial_process_state: waitingAdmissionState("preempt_commit"),
+      };
+    }
     return {
       ...commitPrecondition,
       trigger_status: "accepted",
       priority: "strong",
-      action: "dispatch_or_preempt",
-      reason_code: "strong_preempt_active",
-      initial_process_state: waitingAdmissionState("preempt_commit"),
+      action: "enqueue_strong_fifo",
+      reason_code: "strong_fifo_waiting",
+      initial_process_state: waitingAdmissionState("deferred_strong_queue"),
     };
   }
 

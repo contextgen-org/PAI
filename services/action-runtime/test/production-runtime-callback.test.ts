@@ -102,6 +102,46 @@ describe("Action Runtime production callback", () => {
     });
   });
 
+  it("keeps a durably pending source-gap callback retryable", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(
+      canonicalJsonV1({
+        code: "snapshot_pending_gap",
+        message: "runtime event is queued behind a source gap",
+        retryable: false,
+        trace_id: event.trace_id,
+        details: {
+          trigger_process_id: "process-1",
+          source_service: "action_runtime",
+          source_event_id: "event-1",
+          source_sequence_no: 1,
+          expected_source_sequence_no: 0,
+          pending_event_id: "pending-1",
+          duplicate_replayed: false,
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ));
+    const callback = createActionRuntimeCallbackV1({
+      trigger_processor_url: "https://trigger.example.test",
+      signer: { sign: async () => "header.payload.signature" },
+      worker_id: "worker-1:callback",
+      lease_seconds: 30,
+      transport_epoch: "epoch-1",
+      transport_generation: 2,
+      fetch: fetchImpl,
+    });
+
+    await expect(
+      callback.deliver(event, {
+        outbox_id: "outbox-1",
+        claim_token: "claim-1",
+        attempt_count: 1,
+        transport_epoch: "epoch-1",
+        transport_generation: 2,
+      }),
+    ).rejects.toMatchObject({ retryable: true });
+  });
+
   it("rejects a stale callback transport generation before I/O", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const callback = createActionRuntimeCallbackV1({

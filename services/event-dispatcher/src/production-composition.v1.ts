@@ -15,7 +15,6 @@ import {
   type VerifiedOwnerPostgresCompositionV1,
 } from "@pai/persistence";
 
-import { ACTION_RUNTIME_REPOSITORY_CONTRACT_V1 } from "@pai/action-runtime/db/permission-manifest.v1";
 import { KNOWTHAT_REPOSITORY_CONTRACT_V1 } from "@pai/knowthat/db/permission-manifest.v1";
 import { MEMORY_REPOSITORY_CONTRACT_V1 } from "@pai/memory/db/permission-manifest.v1";
 import { META_COGNITION_REPOSITORY_CONTRACT_V1 } from "@pai/meta-cognition/db/permission-manifest.v1";
@@ -52,11 +51,10 @@ interface OwnerDispatcherRuntimeV1 {
 }
 
 const OWNER_DISPATCHER_SPECS_V1 = Object.freeze([
-  Object.freeze({
-    owner_service: "action_runtime",
-    database_url_env: "PAI_ACTION_RUNTIME_DATABASE_URL",
-    contract: ACTION_RUNTIME_REPOSITORY_CONTRACT_V1,
-  }),
+  // Action Runtime drains its own runtime_event_outbox through the fenced
+  // workload-authenticated callback to Trigger Processor.  Adding it here
+  // would let the generic Redis dispatcher acknowledge the same row before
+  // that callback observes it, stranding the owning Trigger process.
   Object.freeze({
     owner_service: "trigger_processor",
     database_url_env: "PAI_TRIGGER_PROCESSOR_DATABASE_URL",
@@ -90,7 +88,6 @@ const OWNER_DISPATCHER_SPECS_V1 = Object.freeze([
 ] satisfies readonly OwnerDispatcherSpecV1[]);
 
 type DispatchOwnerServiceV1 =
-  | "action_runtime"
   | "trigger_processor"
   | "memory"
   | "meta_cognition"
@@ -130,6 +127,11 @@ function requiredPositiveIntegerV1(
     throw new Error(`${key} is outside its supported range`);
   }
   return parsed;
+}
+
+function dispatchLoopErrorSummaryV1(error: unknown): string {
+  const message = error instanceof Error ? error.message : "unknown error";
+  return message.replace(/[\u0000-\u001f\u007f]/gu, " ").slice(0, 512);
 }
 
 function ownerServicesFromEnvV1(
@@ -215,6 +217,15 @@ async function openOwnerDispatcherRuntimeV1(
       stream_epoch: options.stream_epoch,
       stream_generation: options.stream_generation,
       worker_id: `${options.worker_id}:${spec.owner_service}`,
+      on_error(error) {
+        console.error(
+          JSON.stringify({
+            event: "durable_event_dispatch_loop_error",
+            owner_service: spec.owner_service,
+            error: dispatchLoopErrorSummaryV1(error),
+          }),
+        );
+      },
     });
     return Object.freeze({
       owner_service: spec.owner_service,

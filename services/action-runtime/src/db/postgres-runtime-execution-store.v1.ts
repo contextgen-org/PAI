@@ -193,6 +193,30 @@ function validationRowV1(
   };
 }
 
+export function runtimeEventRetentionUntilV1(
+  policyExpiresAtValue: string,
+  occurredAtValue: string,
+): string {
+  const policyExpiresAt = Date.parse(policyExpiresAtValue);
+  const occurredAt = Date.parse(occurredAtValue);
+  if (!Number.isFinite(policyExpiresAt) || !Number.isFinite(occurredAt)) {
+    throw new RuntimeExecutionErrorV1(
+      "schema_validation_failed",
+      "Runtime event retention timestamps are invalid",
+    );
+  }
+  // A normal Run event retains the original policy horizon exactly. A terminal
+  // control replay is allowed only after the Run has already become terminal;
+  // at that point the original horizon can be in the past. Keep its immutable
+  // audit envelope readable for the control window instead of emitting an
+  // immediately expired row that PostgreSQL correctly rejects.
+  return (
+    policyExpiresAt > occurredAt
+      ? policyExpiresAtValue
+      : new Date(occurredAt + 15 * 60 * 1_000).toISOString()
+  );
+}
+
 function eventPersistenceV1(
   run: Pick<RuntimeRunRecordV1, "request">,
   event: RuntimeDomainEventV1,
@@ -202,11 +226,20 @@ function eventPersistenceV1(
   canonical_bytes: string;
   payload_hash: string;
 }> {
-  const payloadHash = canonicalPayloadHashV1(event);
+  // The event row binds the complete immutable envelope for owner reads,
+  // while the durable outbox binds only its payload. Eventing validates the
+  // latter before publishing to Redis, so reusing the envelope hash here
+  // makes newly emitted runtime events fail closed at dispatch time.
+  const eventHash = canonicalPayloadHashV1(event);
+  const outboxPayloadHash = canonicalPayloadHashV1(event.payload);
   const payloadRef = `runtime_event:${event.event_id}`;
+  const retentionUntil = runtimeEventRetentionUntilV1(
+    run.request.policy.expires_at,
+    event.occurred_at,
+  );
   return {
     canonical_bytes: canonicalJsonV1(event),
-    payload_hash: payloadHash,
+    payload_hash: eventHash,
     event: {
       id: event.event_id,
       runtime_run_id: run.request.runtime_run_id,
@@ -217,8 +250,8 @@ function eventPersistenceV1(
       envelope: event,
       created_at: event.occurred_at,
       payload_ref: payloadRef,
-      payload_hash: payloadHash,
-      retention_until: run.request.policy.expires_at,
+      payload_hash: eventHash,
+      retention_until: retentionUntil,
       redaction_state: "not_required",
     },
     outbox: {
@@ -231,9 +264,9 @@ function eventPersistenceV1(
       source_sequence_no: event.payload.sequence_no,
       append_type: event.event_type,
       payload_ref: payloadRef,
-      payload_hash: payloadHash,
+      payload_hash: outboxPayloadHash,
       idempotency_key: event.idempotency_key,
-      target: "trigger_processor",
+      target: "trigger_processor.trigger_event_append",
       status: "pending",
       attempt_count: 0,
       created_at: event.occurred_at,
@@ -743,6 +776,15 @@ export function createPostgresRuntimeExecutionStoreV1(
     status: "pending" | "dispatching" | "sent" | "retry_wait" | "failed";
     attempt_count: number;
     event: RuntimeDomainEventV1;
+  }>;
+
+  type RuntimeOutboxClaimWriterStateV1 = Readonly<{
+    outbox_id: string;
+    claim_token: string;
+    attempt_count: number;
+    target: string;
+    envelope: RuntimeDomainEventV1;
+    payload_hash: string;
   }>;
 
   type RuntimeOutboxWriterStateV1 = Readonly<{
@@ -1432,6 +1474,82 @@ export function createPostgresRuntimeExecutionStoreV1(
     async claimQueuedRun(request) {
       const run = await readRun(request.runtime_run_id);
       if (run === undefined) throw new RuntimeExecutionErrorV1("runtime_not_found");
+      if (run.status === "running") {
+        const previousLease = run.lease;
+        if (
+          previousLease === undefined ||
+          Date.parse(previousLease.expires_at) > request.now.getTime()
+        ) {
+          throw new RuntimeExecutionErrorV1("stale_lease_generation");
+        }
+        const nextLeaseGeneration = previousLease.generation + 1;
+        if (!Number.isSafeInteger(nextLeaseGeneration)) {
+          throw new RuntimeExecutionErrorV1("numeric_boundary_exhausted");
+        }
+        const nowIso = request.now.toISOString();
+        await composition.unit_of_work.withTransaction(
+          {
+            operation: "takeover_expired_runtime_run",
+            idempotency_key:
+              `${request.runtime_run_id}:takeover:${previousLease.generation}:${nextLeaseGeneration}`,
+            trace_id: run.request.trace_id,
+            isolation: "serializable",
+            retry: "serialization_failures",
+          },
+          async (transaction, { owner }) =>
+            owner.executeWriter<unknown, "cas_runtime_run_lease_v1">(
+              transaction,
+              {
+                writer: "cas_runtime_run_lease_v1",
+                arguments: {
+                  p_runtime_run_id: request.runtime_run_id,
+                  p_expected_start_fence_generation: bigintArgumentV1(
+                    run.start_fence_generation,
+                  ),
+                  p_expected_lease_generation: bigintArgumentV1(
+                    previousLease.generation,
+                  ),
+                  p_next_lease_generation: bigintArgumentV1(
+                    nextLeaseGeneration,
+                  ),
+                  p_expected_recovery_state: previousLease.recovery_state,
+                  p_next_recovery_state: "active",
+                  p_lease_id:
+                    `runtime_lease:${request.runtime_run_id}:${nextLeaseGeneration}`,
+                  p_owner_id: request.worker_id,
+                  p_lease_expires_at: addSecondsV1(
+                    request.now,
+                    request.lease_seconds,
+                  ),
+                  p_now: nowIso,
+                  // The Security Definer writer rechecks expiry while holding
+                  // the Runtime row lock. This caller-side check only avoids
+                  // spending a transaction on a known-active lease.
+                  p_request_hash: canonicalPayloadHashV1({
+                    runtime_run_id: request.runtime_run_id,
+                    expected_start_fence_generation:
+                      run.start_fence_generation,
+                    expected_lease_generation: previousLease.generation,
+                    next_lease_generation: nextLeaseGeneration,
+                    worker_id: request.worker_id,
+                    lease_seconds: request.lease_seconds,
+                    now: nowIso,
+                  }),
+                  p_trace_id: run.request.trace_id,
+                },
+                expected_rows: 1,
+              },
+            ),
+        );
+        const reclaimed = await readRun(request.runtime_run_id);
+        if (reclaimed === undefined) {
+          throw new RuntimeExecutionErrorV1("runtime_not_found");
+        }
+        return reclaimed;
+      }
+      if (run.status !== "queued") {
+        throw new RuntimeExecutionErrorV1("stale_lease_generation");
+      }
       if (request.internal_safety !== undefined) {
         await composition.unit_of_work.withTransaction(
           {
@@ -1601,7 +1719,18 @@ export function createPostgresRuntimeExecutionStoreV1(
                   request.lease_seconds,
                 ),
                 p_now: request.now.toISOString(),
-                p_request_hash: canonicalPayloadHashV1(request),
+                // The execution port deliberately accepts a Date for clock
+                // injection. Writer request hashes, however, are canonical
+                // JSON and therefore must bind its wire representation, not
+                // a JavaScript Date object. Passing request directly makes a
+                // live heartbeat fail before the CAS writer is called.
+                p_request_hash: canonicalPayloadHashV1({
+                  runtime_run_id: request.runtime_run_id,
+                  worker_id: request.worker_id,
+                  lease_generation: request.lease_generation,
+                  lease_seconds: request.lease_seconds,
+                  now: request.now.toISOString(),
+                }),
                 p_trace_id: run.request.trace_id,
               },
               expected_rows: 1,
@@ -1620,6 +1749,28 @@ export function createPostgresRuntimeExecutionStoreV1(
       if (run === undefined) throw new RuntimeExecutionErrorV1("runtime_not_found");
       const persisted = eventPersistenceV1(run, request.event);
       const nextStatus = request.next_status;
+      // PostgreSQL enforces a non-empty terminal_reason for every terminal
+      // Runtime Run. The event is the durable truth for a normal completion,
+      // so preserve an explicit reason when supplied and deterministically
+      // derive the only valid fallback for runtime.run.completed. This keeps a
+      // caller omission from becoming a post-artifact adapter failure.
+      const terminalReason =
+        request.terminal_reason ??
+        (nextStatus === "completed" &&
+        request.event.event_type === "runtime.run.completed"
+          ? "runtime_completed"
+          : undefined);
+      if (
+        (nextStatus === "completed" ||
+          nextStatus === "failed" ||
+          nextStatus === "cancelled") &&
+        (terminalReason === undefined || terminalReason.length === 0)
+      ) {
+        throw new RuntimeExecutionErrorV1(
+          "schema_validation_failed",
+          "Runtime terminal transitions require a terminal reason",
+        );
+      }
       await composition.unit_of_work.withTransaction(
         {
           operation: "append_runtime_event",
@@ -1673,9 +1824,9 @@ export function createPostgresRuntimeExecutionStoreV1(
                 p_next_status: nextStatus,
                 p_transition: {
                   runtime_runs: {
-                    ...(request.terminal_reason === undefined
+                    ...(terminalReason === undefined
                       ? {}
-                      : { terminal_reason: request.terminal_reason }),
+                      : { terminal_reason: terminalReason }),
                   },
                 },
                 p_event: { runtime_events: persisted.event },
@@ -1957,6 +2108,24 @@ export function createPostgresRuntimeExecutionStoreV1(
       return Object.freeze(claimed);
     },
     readArtifact,
+    async readArtifactByReference(runtimeRunId, artifactRef) {
+      const result = await composition.postgres.query<Readonly<{ id: string }>>(
+        `SELECT artifact.id
+           FROM action_runtime.runtime_artifacts AS artifact
+          WHERE artifact.runtime_run_id = $1::text
+            AND artifact.artifact_ref = $2::text
+          LIMIT 2`,
+        [runtimeRunId, artifactRef],
+      );
+      if (result.rows.length > 1) {
+        throw new RuntimeExecutionErrorV1(
+          "runtime_adapter_failed",
+          "PostgreSQL Runtime artifact reference is not unique within its run",
+        );
+      }
+      const row = result.rows[0];
+      return row === undefined ? undefined : readArtifact(runtimeRunId, row.id);
+    },
     async recordToolRequested(request) {
       const run = await readRun(request.runtime_run_id);
       if (run === undefined) throw new RuntimeExecutionErrorV1("runtime_not_found");
@@ -2805,6 +2974,110 @@ export function createPostgresRuntimeExecutionStoreV1(
     },
 
     async finalizeAlreadyTerminalControl(request) {
+      const before = await readRun(request.runtime_run_id);
+      if (before === undefined) {
+        throw new RuntimeExecutionErrorV1("runtime_not_found");
+      }
+      const replayed = before.controls.some(
+        ({ request: current, request_hash: currentHash }) =>
+          current.runtime_signal_id === request.runtime_signal_id &&
+          currentHash === request.request_hash,
+      );
+      const receivedPersistence = eventBatchPersistenceV1(
+        before,
+        request.received_event,
+      );
+      const handledPersistence = eventBatchPersistenceV1(
+        before,
+        request.handled_event,
+      );
+      const handled = request.handled_event.payload as Readonly<{
+        target_lease_generation: number | null;
+        handled_lease_generation: number | null;
+        final_fencing_generation: number | null;
+        last_runtime_sequence_no: number | null;
+        isolation_proof_ref: string | null;
+      }>;
+      await composition.unit_of_work.withTransaction(
+        {
+          operation: "record_runtime_already_terminal_control",
+          idempotency_key: request.request.idempotency_key,
+          trace_id: request.request.trace_id,
+          isolation: "serializable",
+          retry: "serialization_failures",
+        },
+        async (transaction, { owner }) =>
+          owner.executeWriter<
+            unknown,
+            "record_runtime_already_terminal_control_v1"
+          >(transaction, {
+            writer: "record_runtime_already_terminal_control_v1",
+            arguments: {
+              p_runtime_signal_id: request.runtime_signal_id,
+              p_runtime_run_id: request.runtime_run_id,
+              p_trigger_process_id: request.request.trigger_process_id,
+              p_start_attempt_no: request.request.start_attempt_no,
+              p_expected_start_fence_generation: bigintArgumentV1(
+                request.verification.start_fence_generation,
+              ),
+              p_verified_control_claims: {
+                ...request.verification,
+                ...(request.terminal_replay_compatibility
+                  ? { terminal_replay_compatibility: true }
+                  : {}),
+              },
+              p_signal_result: {
+                runtime_control_signals: {
+                  runtime_signal_id: request.runtime_signal_id,
+                  trigger_process_id: request.request.trigger_process_id,
+                  runtime_run_id: request.runtime_run_id,
+                  start_attempt_no: request.request.start_attempt_no,
+                  start_fence_generation:
+                    request.verification.start_fence_generation,
+                  signal_type: request.control_type,
+                  idempotency_key: request.request.idempotency_key,
+                  request_hash: request.request_hash,
+                  requested_by: "trigger_processor",
+                  reason_code: request.request.reason_code,
+                  control_token_hash:
+                    request.request.preempt_token_hash,
+                  control_valid_until:
+                    request.verification.control_valid_until,
+                  status: "handled",
+                  handled_status: "already_terminal",
+                  target_lease_generation:
+                    handled.target_lease_generation,
+                  handled_lease_generation:
+                    handled.handled_lease_generation,
+                  final_fencing_generation:
+                    handled.final_fencing_generation,
+                  safe_point_reached: false,
+                  late_events_isolated: true,
+                  last_runtime_sequence_no:
+                    handled.last_runtime_sequence_no,
+                  isolation_proof_ref: handled.isolation_proof_ref,
+                  trace_id: request.request.trace_id,
+                  requested_at: request.request.requested_at,
+                  handled_at: request.handled_event.occurred_at,
+                  created_at: request.received_event.occurred_at,
+                  updated_at: request.handled_event.occurred_at,
+                },
+              },
+              p_event_batch: [
+                receivedPersistence.event,
+                handledPersistence.event,
+              ],
+              p_outbox_batch: [
+                receivedPersistence.outbox,
+                handledPersistence.outbox,
+              ],
+              p_idempotency_key: request.request.idempotency_key,
+              p_request_hash: request.request_hash,
+              p_trace_id: request.request.trace_id,
+            },
+            expected_rows: 1,
+          }),
+      );
       const run = await readRun(request.runtime_run_id);
       const control = run?.controls.find(
         ({ request: current }) =>
@@ -2815,23 +3088,9 @@ export function createPostgresRuntimeExecutionStoreV1(
         control?.status !== "handled" ||
         control.handled_status !== "already_terminal"
       ) {
-        throw new RuntimeExecutionErrorV1("idempotency_conflict");
+        throw new RuntimeExecutionErrorV1("runtime_adapter_failed");
       }
-      const received = run.events.find(
-        ({ event_id }) => event_id === request.received_event.event_id,
-      );
-      const handled = run.events.find(
-        ({ event_id }) => event_id === request.handled_event.event_id,
-      );
-      if (
-        received === undefined ||
-        handled === undefined ||
-        canonicalJsonV1(received) !== canonicalJsonV1(request.received_event) ||
-        canonicalJsonV1(handled) !== canonicalJsonV1(request.handled_event)
-      ) {
-        throw new RuntimeExecutionErrorV1("runtime_terminal");
-      }
-      return run;
+      return Object.freeze({ control, run, replayed });
     },
     async claimOutbox(request): Promise<readonly RuntimeOutboxClaimRecordV1[]> {
       const rows = await composition.unit_of_work.withTransaction(
@@ -2844,7 +3103,7 @@ export function createPostgresRuntimeExecutionStoreV1(
         },
         async (transaction, { owner }) =>
           owner.executeWriter<
-            readonly RuntimeOutboxWriterStateV1[],
+            readonly RuntimeOutboxClaimWriterStateV1[],
             "claim_runtime_event_outbox_v1"
           >(transaction, {
             writer: "claim_runtime_event_outbox_v1",
@@ -2863,27 +3122,37 @@ export function createPostgresRuntimeExecutionStoreV1(
       );
       const claims: RuntimeOutboxClaimRecordV1[] = [];
       for (const row of rows) {
-        const state = await readOutboxState(row.id);
+        const attemptCount = safeIntegerV1(
+          row.attempt_count,
+          "outbox_claim_attempt_count",
+        );
         if (
-          state === undefined ||
-          row.status !== "dispatching" ||
-          row.claimed_by !== request.worker_id ||
-          row.claim_token === null ||
-          row.locked_until === null ||
-          state.runtime_run_id !== row.runtime_run_id ||
-          state.source_event_id !== row.source_event_id ||
-          state.attempt_count !== row.attempt_count
+          typeof row.outbox_id !== "string" ||
+          row.outbox_id.length < 1 ||
+          typeof row.claim_token !== "string" ||
+          row.claim_token.length < 1 ||
+          typeof row.target !== "string" ||
+          row.target.length < 1 ||
+          canonicalPayloadHashV1(row.envelope.payload) !== row.payload_hash
         ) {
           throw new RuntimeExecutionErrorV1("runtime_adapter_failed");
         }
-        const record = outboxRecordV1(state);
+        // `claim_runtime_event_outbox_v1` intentionally returns this narrow,
+        // SECURITY DEFINER claim receipt. The LOGIN role may read the
+        // immutable event payload but must not read the mutable claim token
+        // or lock timestamp from the table. The acknowledgement writer fences
+        // the token again, so a locally derived, conservative expiry is only
+        // used to avoid attempting a callback after its lease window.
+        const claimedAt = toIsoV1(request.now, "outbox_claimed_at");
         claims.push(Object.freeze({
-          ...record,
+          id: row.outbox_id,
+          event: Object.freeze(row.envelope),
           status: "pending",
+          attempt_count: attemptCount,
           worker_id: request.worker_id,
           claim_token: row.claim_token,
           lease_expires_at: toIsoV1(
-            row.locked_until,
+            addSecondsV1(new Date(claimedAt), request.lease_seconds),
             "outbox_lease_expires_at",
           ),
           transport_epoch: request.current_transport_epoch,

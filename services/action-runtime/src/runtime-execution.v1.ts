@@ -52,6 +52,7 @@ import {
   type ObjectRefV1,
   type ObjectStorePortV1,
 } from "@pai/object-store";
+import { InternalClientError } from "@pai/service-kit";
 import { Value } from "@sinclair/typebox/value";
 
 export type RuntimeControlTypeV1 = "cancel" | "preempt" | "user_retract";
@@ -414,6 +415,80 @@ function safeRuntimeFailureSummaryV1(
   _code: RuntimeExecutionErrorCodeV1 | "runtime_adapter_failed",
 ): string {
   return "Runtime execution failed at a protected boundary";
+}
+
+function protectedAdapterSnapshotDiagnosticV1(
+  stage: string,
+  error: unknown,
+): string | undefined {
+  // These labels deliberately describe only Runtime-owned validation paths.
+  // Do not surface provider messages, tool output, or request content through
+  // worker logs when diagnosing a fail-closed adapter boundary.
+  if (
+    stage !== "adapter_next_snapshot" ||
+    !(error instanceof RuntimeExecutionErrorV1)
+  ) {
+    return undefined;
+  }
+  if (error.code === "tool_policy_denied") {
+    switch (error.message) {
+      case "Runtime tool profile changed before dispatch":
+        return "tool_profile_changed";
+      case "Adapter emitted a tool outside the frozen request":
+        return "tool_not_requested";
+      case "Adapter emitted a tool outside the frozen profile":
+        return "tool_not_profiled";
+      case "Adapter emitted arguments outside the frozen profile":
+        return "tool_arguments_rejected";
+      case "No durable runtime permission projection authorizes the tool call":
+        return "tool_permission_missing";
+      default:
+        return "tool_policy_rejected";
+    }
+  }
+  if (error.code !== "runtime_adapter_failed") return undefined;
+  switch (error.message) {
+    case "Runtime adapter turn is not a plain inspectable object":
+      return "adapter_turn_not_plain";
+    case "Runtime adapter turn cannot be snapshotted":
+      return "adapter_turn_unsnapshotable";
+    case "Runtime adapter turn has an unknown shape":
+      return "adapter_turn_unknown_shape";
+    case "Runtime adapter turn must contain only enumerable own data properties":
+      return "adapter_turn_non_data_property";
+    case "Runtime adapter artifact bytes are not an isolated bounded Uint8Array":
+      return "adapter_artifact_bytes_invalid";
+    case "Runtime adapter artifact metadata is invalid":
+      return "adapter_artifact_metadata_invalid";
+    case "Runtime adapter turn is not bounded canonical JSON":
+      return "adapter_turn_noncanonical";
+    case "Runtime adapter turn snapshot is invalid":
+      return "adapter_turn_snapshot_invalid";
+    case "Runtime adapter returned an invalid closed-union turn":
+      return "adapter_turn_invalid_union";
+    default:
+      return "adapter_turn_snapshot_rejected";
+  }
+}
+
+function protectedAdapterSnapshotFingerprintV1(
+  stage: string,
+  error: unknown,
+): string | undefined {
+  if (
+    stage !== "adapter_next_snapshot" ||
+    !(error instanceof RuntimeExecutionErrorV1) ||
+    error.code !== "runtime_adapter_failed"
+  ) {
+    return undefined;
+  }
+  // This short digest lets an operator match a Runtime-owned message against
+  // source without logging the message itself. It is never derived from a
+  // provider response, user input, credential, or tool output.
+  return createHash("sha256")
+    .update(error.message, "utf8")
+    .digest("hex")
+    .slice(0, 16);
 }
 
 export type RuntimeDelegatedPrincipalV1 = Extract<
@@ -859,6 +934,12 @@ export interface RuntimeControlTokenVerifierPortV1 {
       trigger_process_id: string;
       start_attempt_no: number;
       scope: RuntimeStartPrincipalV1["scope"];
+      /**
+       * A completed, failed, or cancelled run may acknowledge the exact
+       * original control after its JWT expiry. This never authorizes a
+       * control against a non-terminal run.
+       */
+      allow_expired_terminal_replay?: boolean;
     }>,
   ): Promise<RuntimeControlTokenClaimsV1>;
 }
@@ -1215,6 +1296,11 @@ export interface RuntimeExecutionStoreV1 {
     runtimeRunId: string,
     artifactId: string,
   ): Promise<RuntimeArtifactRecordV1 | undefined>;
+  /** Resolves an opaque artifact reference only inside its owning run. */
+  readArtifactByReference(
+    runtimeRunId: string,
+    artifactRef: string,
+  ): Promise<RuntimeArtifactRecordV1 | undefined>;
   recordToolRequested(request: Readonly<{
     runtime_run_id: string;
     lease_generation: number;
@@ -1328,11 +1414,28 @@ export interface RuntimeExecutionStoreV1 {
     terminal_reason: string;
   }>): Promise<RuntimeRunRecordV1>;
   finalizeAlreadyTerminalControl(request: Readonly<{
+    request: RuntimeStoredControlRequestV1;
+    request_hash: string;
+    control_type: RuntimeControlTypeV1;
+    verification: RuntimeControlTokenClaimsV1;
+    /**
+     * The caller set this only after it has established that the target Run is
+     * terminal and the original control token was otherwise verified. It
+     * allows the owner writer to reconcile a terminal control after its normal
+     * control-validity window without authorizing a live Run.
+     */
+    terminal_replay_compatibility: boolean;
     runtime_run_id: string;
     runtime_signal_id: string;
     received_event: RuntimeDomainEventV1;
     handled_event: RuntimeDomainEventV1;
-  }>): Promise<RuntimeRunRecordV1>;
+  }>): Promise<
+    Readonly<{
+      control: RuntimeControlRecordV1;
+      run: RuntimeRunRecordV1;
+      replayed: boolean;
+    }>
+  >;
   claimOutbox(
     request: RuntimeOutboxClaimRequestV1,
   ): Promise<readonly RuntimeOutboxClaimRecordV1[]>;
@@ -1484,9 +1587,12 @@ async function sleepAbortableV1(
 
 function assertToolResult(result: RuntimeToolResultV1): void {
   const safeRef = (value: string) =>
+    // ObjectStore returns opaque `objv1_` references. They are as durable as
+    // the legacy namespaced proof references, but contain no transport URL or
+    // provider data and therefore are safe to retain in the Runtime ledger.
     /^(?:artifact|evidence|object|runtime_event|runtime_tool_audit):[A-Za-z0-9._:/-]{1,2000}$/u.test(
       value,
-    ) && !value.includes("://");
+    ) || /^objv1_[a-f0-9]{32,128}$/u.test(value);
   if (
     (result.outcome !== "completed" && result.outcome !== "failed") ||
     typeof result.retryable !== "boolean" ||
@@ -1496,7 +1602,11 @@ function assertToolResult(result: RuntimeToolResultV1): void {
     (result.side_effect_status !== "none" && result.retryable) ||
     (result.external_response_ref !== undefined &&
       (result.outcome !== "completed" ||
-        result.side_effect_status !== "produced" ||
+        // A completed read-only operation has no external side effect, but
+        // still needs an immutable response/evidence reference.  `produced`
+        // distinguishes a committed write from that read-only case; it is not
+        // a prerequisite for preserving proof of a successful response.
+        result.side_effect_status === "unknown" ||
         !safeRef(result.external_response_ref))) ||
     (result.external_error_ref !== undefined &&
       (result.outcome !== "failed" ||
@@ -1943,11 +2053,47 @@ function runtimeScopeMatches(
   );
 }
 
+const legacyTerminalPreemptTokenPatternV1 = /^[a-f0-9]{64}$/u;
+
+function legacyTerminalControlClaimsV1(
+  observed: RuntimeRunRecordV1,
+  principal: RuntimeStartPrincipalV1,
+  request: RuntimeControlRequestV1,
+): RuntimeControlTokenClaimsV1 | undefined {
+  if (
+    !legacyTerminalPreemptTokenPatternV1.test(request.preempt_token) ||
+    observed.request.runtime_run_id !== request.runtime_run_id ||
+    observed.request.trigger_process_id !== request.trigger_process_id ||
+    observed.request.start_attempt_no !== request.start_attempt_no ||
+    !secureDigestEqualsV1(
+      observed.request.preempt_token_hash,
+      sha256TextV1(request.preempt_token),
+    ) ||
+    !runtimeScopeMatches(principal.scope, observed.request)
+  ) {
+    return undefined;
+  }
+  const controlValidUntil = addMilliseconds(
+    new Date(observed.request.policy.expires_at),
+    15 * 60 * 1_000,
+  );
+  if (!Number.isFinite(Date.parse(controlValidUntil))) return undefined;
+  return Object.freeze({
+    runtime_run_id: observed.request.runtime_run_id,
+    trigger_process_id: observed.request.trigger_process_id,
+    start_attempt_no: observed.request.start_attempt_no,
+    start_fence_generation: observed.start_fence_generation,
+    ...principal.scope,
+    control_valid_until: controlValidUntil,
+  });
+}
+
 async function verifyControlTokenV1(
   verifier: RuntimeControlTokenVerifierPortV1,
   principal: RuntimeStartPrincipalV1,
   request: RuntimeControlRequestV1,
   currentTime: Date,
+  allowExpiredTerminalReplay: boolean,
 ): Promise<RuntimeControlTokenClaimsV1> {
   let claims: RuntimeControlTokenClaimsV1;
   try {
@@ -1956,6 +2102,7 @@ async function verifyControlTokenV1(
       trigger_process_id: request.trigger_process_id,
       start_attempt_no: request.start_attempt_no,
       scope: principal.scope,
+      allow_expired_terminal_replay: allowExpiredTerminalReplay,
     });
   } catch {
     throw new RuntimeExecutionErrorV1("control_token_invalid");
@@ -1977,7 +2124,10 @@ async function verifyControlTokenV1(
   ) {
     throw new RuntimeExecutionErrorV1("control_token_invalid");
   }
-  if (currentTime.getTime() > Date.parse(claims.control_valid_until)) {
+  if (
+    !allowExpiredTerminalReplay &&
+    currentTime.getTime() > Date.parse(claims.control_valid_until)
+  ) {
     throw new RuntimeExecutionErrorV1("control_expired");
   }
   return Object.freeze(structuredClone(claims));
@@ -2108,12 +2258,17 @@ const RUNTIME_RESERVATION_STATUS_RANK_V1 = Object.freeze({
   reserved: 0,
   dispatching: 1,
   queued: 2,
+  started: 3,
 } as const);
 
 const RUNTIME_RESERVATION_ALLOWED_STATUS_BY_STAGE_V1 = Object.freeze({
   request_received: new Set(["reserved", "dispatching", "queued"]),
   preflight_completed: new Set(["dispatching", "queued"]),
-  before_running: new Set(["dispatching", "queued"]),
+  // A replacement worker validates an already-published Start immediately
+  // before taking an expired Runtime lease.  Trigger returns `started` only
+  // for that exact same current run/fence; see its validator for the paired
+  // process-state and tombstone checks.
+  before_running: new Set(["dispatching", "queued", "started"]),
 } satisfies Readonly<
   Record<RuntimeReservationValidationStageV1, ReadonlySet<string>>
 >);
@@ -2947,7 +3102,11 @@ function runtimePermissionsForV1(
   actorBindingHash: string,
   createdAt: string,
 ): readonly RuntimePermissionProjectionV1[] {
-  const permissions = request.allowed_tools.flatMap((toolName) => {
+  const toolNames =
+    request.structured_intent.execution_mode === "deferred_timer_parent"
+      ? request.allowed_tools.filter((toolName) => toolName === "timer.remind_after")
+      : request.allowed_tools;
+  const permissions = toolNames.flatMap((toolName) => {
     if (!profile.allowed_tools.includes(toolName)) {
       throw new RuntimeExecutionErrorV1("tool_policy_denied");
     }
@@ -3935,6 +4094,7 @@ const RUNTIME_STORE_METHODS_V1 = {
   finalizeArtifact: true,
   claimPendingArtifacts: true,
   readArtifact: true,
+  readArtifactByReference: true,
   recordToolRequested: true,
   markToolRunning: true,
   recordToolResult: true,
@@ -4033,6 +4193,11 @@ export function createRuntimeExecutionApplicationV1(
     retry_max_backoff_ms?: number;
     retry_jitter?: "none" | "full";
     tool_timeout_ms?: number;
+    /**
+     * Keep the durable Runtime Run lease alive while a provider turn is in
+     * flight. The worker cannot do this itself because it awaits execution.
+     */
+    heartbeat_interval_ms?: number;
     random?: () => number;
     validation_call_id_factory?: () => string;
     sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
@@ -4223,6 +4388,7 @@ export function createRuntimeExecutionApplicationV1(
   const retryMaxBackoffMs = options.retry_max_backoff_ms ?? 30_000;
   const retryJitter = options.retry_jitter ?? "full";
   const toolTimeoutMs = options.tool_timeout_ms ?? 300_000;
+  const heartbeatIntervalMs = options.heartbeat_interval_ms ?? 5_000;
   const random = options.random ?? Math.random;
   const validationCallIdFactory =
     options.validation_call_id_factory ??
@@ -4243,7 +4409,10 @@ export function createRuntimeExecutionApplicationV1(
     (retryJitter !== "none" && retryJitter !== "full") ||
     !Number.isSafeInteger(toolTimeoutMs) ||
     toolTimeoutMs < 1_000 ||
-    toolTimeoutMs > 3_600_000
+    toolTimeoutMs > 3_600_000 ||
+    !Number.isSafeInteger(heartbeatIntervalMs) ||
+    heartbeatIntervalMs < 1 ||
+    heartbeatIntervalMs > 20_000
   ) {
     throw new Error(
       "Action Runtime retry or tool timeout configuration is invalid",
@@ -4748,18 +4917,30 @@ export function createRuntimeExecutionApplicationV1(
     claim: RuntimeOutboxClaimRecordV1,
     outcome:
       | Readonly<{ kind: "sent"; transport_ref: string }>
-      | Readonly<{ kind: "retry_wait" }>,
+      | Readonly<{
+        kind: "retry_wait";
+        error: Readonly<Record<string, unknown>>;
+      }>
+      | Readonly<{
+        kind: "failed";
+        error: Readonly<Record<string, unknown>>;
+      }>,
   ): Promise<void> {
     const acknowledgedAt = now().toISOString();
     const sent = outcome.kind === "sent";
+    const failed = outcome.kind === "failed";
     const request = Object.freeze({
       outbox_id: claim.id,
       claim_token: claim.claim_token,
-      outcome: sent ? ("sent" as const) : ("retry_wait" as const),
-      next_retry_at: sent ? null : acknowledgedAt,
+      outcome: sent
+        ? ("sent" as const)
+        : failed
+          ? ("failed" as const)
+          : ("retry_wait" as const),
+      next_retry_at: sent || failed ? null : acknowledgedAt,
       error: sent
         ? null
-        : Object.freeze({ code: "callback_delivery_failed" }),
+        : outcome.error,
       transport_ref: sent ? outcome.transport_ref : null,
       transport_epoch: sent ? claim.transport_epoch : null,
       transport_generation: sent
@@ -4802,6 +4983,32 @@ export function createRuntimeExecutionApplicationV1(
     }
   }
 
+  function callbackFailureDetailsV1(
+    error: unknown,
+  ): Readonly<Record<string, unknown>> {
+    if (error instanceof InternalClientError) {
+      return Object.freeze({
+        code: error.code,
+        retryable: error.retryable,
+        ...(error.status === undefined ? {} : { status: error.status }),
+      });
+    }
+    if (error instanceof RuntimeExecutionErrorV1) {
+      return Object.freeze({
+        code: error.code,
+        retryable: error.retryable,
+      });
+    }
+    return Object.freeze({ code: "callback_delivery_failed", retryable: true });
+  }
+
+  function isPermanentCallbackFailureV1(error: unknown): boolean {
+    return (
+      (error instanceof InternalClientError && !error.retryable) ||
+      (error instanceof RuntimeExecutionErrorV1 && !error.retryable)
+    );
+  }
+
   async function deliverClaimedOutboxV1(
     claimValue: RuntimeOutboxClaimRecordV1,
     signal?: AbortSignal,
@@ -4835,9 +5042,13 @@ export function createRuntimeExecutionApplicationV1(
       );
     } catch (deliveryError) {
       if (signal?.aborted === true) throw signal.reason;
+      const error = callbackFailureDetailsV1(deliveryError);
       try {
         await acknowledgeOutboxClaimV1(claim, {
-          kind: "retry_wait",
+          kind: isPermanentCallbackFailureV1(deliveryError)
+            ? "failed"
+            : "retry_wait",
+          error,
         });
       } catch {
         // The claim remains leased when retry scheduling is commit-unknown.
@@ -6225,6 +6436,37 @@ export function createRuntimeExecutionApplicationV1(
       const observed = await dependencies.store.readRun(
         request.runtime_run_id,
       );
+      const allowExpiredTerminalReplay =
+        observed !== undefined &&
+        (observed.status === "completed" ||
+          observed.status === "failed" ||
+          observed.status === "cancelled");
+      let verification: RuntimeControlTokenClaimsV1;
+      try {
+        verification = await verifyControlTokenV1(
+          dependencies.control_tokens,
+          principal,
+          request,
+          now(),
+          allowExpiredTerminalReplay,
+        );
+      } catch (error) {
+        if (
+          !allowExpiredTerminalReplay ||
+          observed === undefined ||
+          !(error instanceof RuntimeExecutionErrorV1) ||
+          error.code !== "control_token_invalid"
+        ) {
+          throw error;
+        }
+        const legacyClaims = legacyTerminalControlClaimsV1(
+          observed,
+          principal,
+          request,
+        );
+        if (legacyClaims === undefined) throw error;
+        verification = legacyClaims;
+      }
       if (
         observed !== undefined &&
         (observed.status === "completed" ||
@@ -6249,17 +6491,116 @@ export function createRuntimeExecutionApplicationV1(
             replayed: true,
           });
         }
-        throw new RuntimeExecutionErrorV1(
-          "runtime_terminal",
-          "A terminal Runtime rejects new control commands",
+        if (
+          observed.request.trigger_process_id !== request.trigger_process_id ||
+          observed.request.start_attempt_no !== request.start_attempt_no ||
+          !secureDigestEqualsV1(
+            observed.request.preempt_token_hash,
+            sha256TextV1(request.preempt_token),
+          ) ||
+          observed.start_fence_generation !==
+            verification.start_fence_generation ||
+          verification.control_valid_until !==
+            addMilliseconds(
+              new Date(observed.request.policy.expires_at),
+              15 * 60 * 1_000,
+            ) ||
+          observed.request.workspace_id !== principal.scope.workspace_id ||
+          observed.request.bot_id !== principal.scope.bot_id ||
+          observed.request.owner_agent_id !==
+            principal.scope.owner_agent_id ||
+          observed.request.deployment_environment !==
+            principal.scope.deployment_environment ||
+          observed.request.release_channel !==
+            principal.scope.release_channel
+        ) {
+          throw new RuntimeExecutionErrorV1("stale_start_fence");
+        }
+        const handledLeaseGeneration = observed.lease?.generation ?? null;
+        const terminalReplayCompatibility =
+          allowExpiredTerminalReplay &&
+          Date.parse(verification.control_valid_until) <= now().getTime();
+        const handledControl: RuntimeControlRecordV1 = Object.freeze({
+          request: storedRequest,
+          control_type: controlType(request),
+          requested_by: "trigger_processor",
+          control_valid_until: verification.control_valid_until,
+          target_lease_generation: handledLeaseGeneration,
+          request_hash: requestHash,
+          status: "handled",
+          handled_status: "already_terminal",
+          handled_lease_generation: handledLeaseGeneration,
+          final_fencing_generation: Math.max(
+            incrementSafeIntegerV1(
+              observed.start_fence_generation,
+              "start_fence_generation",
+            ),
+            incrementSafeIntegerV1(
+              handledLeaseGeneration ?? 0,
+              "lease_generation",
+            ),
+          ),
+        });
+        const {
+          handled_status: _handledStatus,
+          handled_lease_generation: _handledLeaseGeneration,
+          final_fencing_generation: _finalFencingGeneration,
+          ...receivedControlBase
+        } = handledControl;
+        const receivedControl: RuntimeControlRecordV1 = Object.freeze({
+          ...receivedControlBase,
+          status: "received",
+        });
+        const occurredAt = now().toISOString();
+        const receivedEvent = controlReceivedEventFor(
+          observed,
+          receivedControl,
+          occurredAt,
         );
+        const afterReceived: RuntimeRunRecordV1 = Object.freeze({
+          ...observed,
+          next_sequence_no: incrementSafeIntegerV1(
+            observed.next_sequence_no,
+            "runtime_sequence_no",
+          ),
+        });
+        const handledEvent = controlHandledEventFor(
+          afterReceived,
+          handledControl,
+          occurredAt,
+          "already_terminal",
+          handledLeaseGeneration,
+        );
+        const terminalOutcome =
+          await dependencies.store.finalizeAlreadyTerminalControl({
+            request: storedRequest,
+            request_hash: requestHash,
+            control_type: controlType(request),
+            verification,
+            terminal_replay_compatibility: terminalReplayCompatibility,
+            runtime_run_id: request.runtime_run_id,
+            runtime_signal_id: request.runtime_signal_id,
+            received_event: receivedEvent,
+            handled_event: handledEvent,
+          });
+        if (
+          !terminalOutcome.replayed &&
+          terminalOutcome.run.outbox.some(
+            ({ status }) => status === "pending",
+          )
+        ) {
+          try {
+            await claimAndDeliverPendingCallbacksV1(16);
+          } catch {
+            // The owner transaction committed both terminal-control events;
+            // bounded outbox recovery remains the only retry authority.
+          }
+        }
+        return Object.freeze({
+          accepted: true as const,
+          replayed: terminalOutcome.replayed,
+        });
       }
-      const verification = await verifyControlTokenV1(
-        dependencies.control_tokens,
-        principal,
-        request,
-        now(),
-      );
       let after: RuntimeRunRecordV1;
       let received: RuntimeControlRecordV1;
       let replayed: boolean;
@@ -6893,6 +7234,62 @@ export function createRuntimeExecutionApplicationV1(
           2_147_483_647,
         ),
       );
+      // A worker awaits the full provider interaction, so its outer polling
+      // loop cannot renew this run's lease. Keep the lease durable for the
+      // entire execution scope instead of relying on a stale local snapshot.
+      let heartbeatTimer: NodeJS.Timeout | undefined;
+      let heartbeatInFlight: Promise<void> | undefined;
+      let heartbeatFailure: unknown;
+      let heartbeatsStopped = false;
+      const runningLeaseGeneration = lease.generation;
+      const assertHeartbeat = (): void => {
+        if (heartbeatFailure !== undefined) throw heartbeatFailure;
+      };
+      const renewLease = (): void => {
+        if (
+          heartbeatsStopped ||
+          adapterAbort.signal.aborted ||
+          heartbeatInFlight !== undefined
+        ) {
+          return;
+        }
+        heartbeatInFlight = (async () => {
+          const renewedLease = await dependencies.store.heartbeat({
+            runtime_run_id: run.request.runtime_run_id,
+            worker_id: executionRequest.worker_id,
+            lease_generation: runningLeaseGeneration,
+            lease_seconds: executionRequest.lease_seconds,
+            now: now(),
+          });
+          const snapshot = canonicalJsonSnapshotV1<RuntimeLeaseV1>(
+            renewedLease,
+            "runtime_adapter_failed",
+            "Runtime owner returned a non-canonical background heartbeat lease",
+          );
+          if (
+            snapshot.runtime_run_id !== run.request.runtime_run_id ||
+            snapshot.owner_id !== executionRequest.worker_id ||
+            snapshot.generation !== runningLeaseGeneration
+          ) {
+            throw new RuntimeExecutionErrorV1("stale_lease_generation");
+          }
+        })()
+          .catch((error: unknown) => {
+            heartbeatFailure =
+              error instanceof RuntimeExecutionErrorV1
+                ? error
+                : new RuntimeExecutionErrorV1(
+                    "runtime_adapter_failed",
+                    "Runtime lease heartbeat failed",
+                  );
+            adapterAbort.abort(heartbeatFailure);
+          })
+          .finally(() => {
+            heartbeatInFlight = undefined;
+          });
+      };
+      heartbeatTimer = setInterval(renewLease, heartbeatIntervalMs);
+      heartbeatTimer.unref?.();
       let session: RuntimeAdapterSessionV1 | undefined;
       let lastToolCallId: string | undefined;
       let lastToolResult: RuntimeToolResultV1 | undefined;
@@ -6903,6 +7300,10 @@ export function createRuntimeExecutionApplicationV1(
       let lastSkillAuditEventId: string | undefined;
       let lastArtifactId: string | undefined;
       let lastArtifactRef: string | undefined;
+      // This is deliberately an enum-like boundary marker, never an error
+      // message. It gives production operators a safe way to distinguish a
+      // provider turn from an artifact persistence failure.
+      let diagnosticStage = "adapter_start";
       const adapterContext = (): RuntimeAdapterContextV1 => ({
         runtime_run_id: run.request.runtime_run_id,
         trigger_process_id: run.request.trigger_process_id,
@@ -6934,6 +7335,7 @@ export function createRuntimeExecutionApplicationV1(
           : { last_artifact_ref: lastArtifactRef }),
       });
       try {
+        assertHeartbeat();
         runtimeActorBindingForRunV1(run);
         session = await awaitAbortable(
           adapterStart(
@@ -6947,6 +7349,7 @@ export function createRuntimeExecutionApplicationV1(
           adapterAbort.signal,
         );
         for (let turnIndex = 0; turnIndex < maxAdapterTurns; turnIndex += 1) {
+          assertHeartbeat();
           const controlled = await handlePendingControl(
             run,
             lease.generation,
@@ -7016,12 +7419,14 @@ export function createRuntimeExecutionApplicationV1(
             return controlledAfterRefresh;
           }
           assertLease(run, lease.generation, now());
-          let turn = snapshotRuntimeAdapterTurnV1(
-            await awaitAbortable(
-              adapterNext(session, adapterContext()),
-              adapterAbort.signal,
-            ),
+          diagnosticStage = "adapter_next_wait";
+          const nextAdapterValue = await awaitAbortable(
+            adapterNext(session, adapterContext()),
+            adapterAbort.signal,
           );
+          diagnosticStage = "adapter_next_snapshot";
+          let turn = snapshotRuntimeAdapterTurnV1(nextAdapterValue);
+          assertHeartbeat();
           let retryAttempt = 0;
           while (
             turn.kind === "failed" &&
@@ -7038,12 +7443,14 @@ export function createRuntimeExecutionApplicationV1(
             }
             await waitBeforeRetry(retryAttempt, adapterAbort.signal);
             retryAttempt += 1;
-            turn = snapshotRuntimeAdapterTurnV1(
-              await awaitAbortable(
-                adapterNext(session, adapterContext()),
-                adapterAbort.signal,
-              ),
+            diagnosticStage = "adapter_next_wait";
+            const retryAdapterValue = await awaitAbortable(
+              adapterNext(session, adapterContext()),
+              adapterAbort.signal,
             );
+            diagnosticStage = "adapter_next_snapshot";
+            turn = snapshotRuntimeAdapterTurnV1(retryAdapterValue);
+            assertHeartbeat();
           }
           if (turn.kind === "checkpoint") continue;
           if (turn.kind === "tool_call") {
@@ -7094,12 +7501,30 @@ export function createRuntimeExecutionApplicationV1(
                 run.request.intent_policy_snapshot
                   .tool_permission_profile_hash ||
               profile.policy_epoch !==
-                run.request.intent_policy_snapshot.tool_policy_epoch ||
-              !run.request.allowed_tools.includes(call.tool_name) ||
-              !profile.allowed_tools.includes(call.tool_name) ||
-              !profile.validateArguments(call.tool_name, call.arguments)
+                run.request.intent_policy_snapshot.tool_policy_epoch
             ) {
-              throw new RuntimeExecutionErrorV1("tool_policy_denied");
+              throw new RuntimeExecutionErrorV1(
+                "tool_policy_denied",
+                "Runtime tool profile changed before dispatch",
+              );
+            }
+            if (!run.request.allowed_tools.includes(call.tool_name)) {
+              throw new RuntimeExecutionErrorV1(
+                "tool_policy_denied",
+                "Adapter emitted a tool outside the frozen request",
+              );
+            }
+            if (!profile.allowed_tools.includes(call.tool_name)) {
+              throw new RuntimeExecutionErrorV1(
+                "tool_policy_denied",
+                "Adapter emitted a tool outside the frozen profile",
+              );
+            }
+            if (!profile.validateArguments(call.tool_name, call.arguments)) {
+              throw new RuntimeExecutionErrorV1(
+                "tool_policy_denied",
+                "Adapter emitted arguments outside the frozen profile",
+              );
             }
             const invocationRequest = Object.freeze({
               schema_version:
@@ -7482,6 +7907,7 @@ export function createRuntimeExecutionApplicationV1(
               signal,
             );
             run = outputArtifact.run;
+            diagnosticStage = "tool_result_bind";
             result = bindToolEvidenceRefV1(
               run.request.runtime_run_id,
               call.tool_call_id,
@@ -7500,6 +7926,11 @@ export function createRuntimeExecutionApplicationV1(
                 outputArtifact.artifact_ref,
               );
             }
+            // Keep the durable tool-result commit separately observable from
+            // the next adapter turn. A completed output artifact alone is not
+            // enough: the owner ledger and its outbox event must commit before
+            // the provider can be resumed safely.
+            diagnosticStage = "tool_result_event";
             const resultEvent = toolEventFor(
               run,
               call,
@@ -7517,6 +7948,7 @@ export function createRuntimeExecutionApplicationV1(
               },
               auditResult,
             );
+            diagnosticStage = "tool_result_commit";
             run = await dependencies.store.recordToolResult({
               runtime_run_id: run.request.runtime_run_id,
               lease_generation: lease.generation,
@@ -7525,6 +7957,7 @@ export function createRuntimeExecutionApplicationV1(
               result: auditResult,
               event: resultEvent,
             });
+            diagnosticStage = "tool_result_callback";
             run = await tryCallbackForCommittedEvent(
               run,
               resultEvent,
@@ -7748,6 +8181,7 @@ export function createRuntimeExecutionApplicationV1(
             continue;
           }
           if (turn.kind === "artifact") {
+            diagnosticStage = "artifact_persist";
             const suppliedArtifact = turn.artifact;
             const artifact: RuntimeArtifactRequestV1 = Object.freeze({
               ...suppliedArtifact,
@@ -7768,6 +8202,7 @@ export function createRuntimeExecutionApplicationV1(
             continue;
           }
           if (turn.kind === "complete") {
+            diagnosticStage = "terminal_event";
             if (
               turn.terminal_artifact_ref !== null &&
               !isCommittedAvailableArtifactRefV1(
@@ -7794,13 +8229,19 @@ export function createRuntimeExecutionApplicationV1(
               lease.generation,
               event,
               "completed",
-              undefined,
+              // Runtime terminal rows require an explicit reason for every
+              // terminal status.  Without this, PostgreSQL correctly rejects
+              // the completed transition after the final artifact is already
+              // durable, and the generic catch path incorrectly reports an
+              // adapter failure instead of delivering the result.
+              "runtime_completed",
               signal,
             );
           }
           const safeFailure = safeAdapterFailureV1(
             turn.reason_code,
           );
+          diagnosticStage = "terminal_event";
           const event = eventFor(
             run,
             "runtime.run.failed",
@@ -7828,6 +8269,7 @@ export function createRuntimeExecutionApplicationV1(
           "Runtime adapter exceeded its bounded turn limit",
           null,
         );
+        diagnosticStage = "terminal_event";
         return await appendAndTryCallback(
           run.request.runtime_run_id,
           lease.generation,
@@ -7837,6 +8279,39 @@ export function createRuntimeExecutionApplicationV1(
           signal,
         );
       } catch (error) {
+        const attachDiagnosticStage = <T extends object>(failure: T): T => {
+          Object.defineProperty(failure, "diagnostic_stage", {
+            value: diagnosticStage,
+            enumerable: true,
+            configurable: false,
+            writable: false,
+          });
+          const protectedDetail = protectedAdapterSnapshotDiagnosticV1(
+            diagnosticStage,
+            error,
+          );
+          if (protectedDetail !== undefined) {
+            Object.defineProperty(failure, "diagnostic_detail", {
+              value: protectedDetail,
+              enumerable: true,
+              configurable: false,
+              writable: false,
+            });
+          }
+          const protectedFingerprint = protectedAdapterSnapshotFingerprintV1(
+            diagnosticStage,
+            error,
+          );
+          if (protectedFingerprint !== undefined) {
+            Object.defineProperty(failure, "diagnostic_fingerprint", {
+              value: protectedFingerprint,
+              enumerable: true,
+              configurable: false,
+              writable: false,
+            });
+          }
+          return failure;
+        };
         if (
           error instanceof RuntimeExecutionErrorV1 &&
           (error.code === "tool_side_effect_unknown" ||
@@ -7844,6 +8319,23 @@ export function createRuntimeExecutionApplicationV1(
             error.code === "artifact_reconciliation_required")
         ) {
           throw error;
+        }
+        if (
+          error instanceof ObjectStoreErrorV1 &&
+          diagnosticStage === "artifact_persist" &&
+          !error.retryable &&
+          error.details.reconciliation_required !== true
+        ) {
+          // `persistRuntimeArtifact` has already committed the matching
+          // runtime.artifact.failed event and marked the owner row failed.
+          // Leaving the Runtime run active here would permanently occupy the
+          // Trigger foreground slot, even though its final result can never
+          // become available. Convert only this durable, non-reconcilable
+          // artifact rejection into the normal fenced terminal path below.
+          error = new RuntimeExecutionErrorV1(
+            "artifact_integrity_mismatch",
+            "Runtime final artifact was durably rejected by ObjectStore",
+          );
         }
         if (error instanceof ObjectStoreErrorV1) throw error;
         if (signal.aborted) {
@@ -7901,18 +8393,18 @@ export function createRuntimeExecutionApplicationV1(
           current.lease?.generation !== lease.generation
         ) {
           if (error instanceof RuntimeExecutionErrorV1) {
-            throw new RuntimeExecutionErrorV1(
+            throw attachDiagnosticStage(new RuntimeExecutionErrorV1(
               error.code,
               safeRuntimeFailureSummaryV1(error.code),
               error.retryable,
-            );
+            ));
           }
-          throw new RuntimeExecutionErrorV1(
+          throw attachDiagnosticStage(new RuntimeExecutionErrorV1(
             "runtime_adapter_failed",
             safeRuntimeFailureSummaryV1(
               "runtime_adapter_failed",
             ),
-          );
+          ));
         }
         const terminalFailureCode =
           error instanceof RuntimeExecutionErrorV1
@@ -7936,17 +8428,20 @@ export function createRuntimeExecutionApplicationV1(
           signal,
         );
         if (error instanceof RuntimeExecutionErrorV1) {
-          throw new RuntimeExecutionErrorV1(
+          throw attachDiagnosticStage(new RuntimeExecutionErrorV1(
             error.code,
             safeRuntimeFailureSummaryV1(error.code),
             error.retryable,
-          );
+          ));
         }
-        throw new RuntimeExecutionErrorV1(
+        throw attachDiagnosticStage(new RuntimeExecutionErrorV1(
           "runtime_adapter_failed",
           safeRuntimeFailureSummaryV1("runtime_adapter_failed"),
-        );
+        ));
       } finally {
+        heartbeatsStopped = true;
+        if (heartbeatTimer !== undefined) clearInterval(heartbeatTimer);
+        await heartbeatInFlight?.catch(() => undefined);
         clearTimeout(deadlineTimer);
         signal.removeEventListener("abort", onAbort);
         if (!adapterAbort.signal.aborted) {
@@ -9810,6 +10305,18 @@ export function createInMemoryRuntimeExecutionStoreV1(
         : snapshot(artifact);
     },
 
+    async readArtifactByReference(runtimeRunId, artifactRef) {
+      for (const artifact of artifacts.values()) {
+        if (
+          artifact.runtime_run_id === runtimeRunId &&
+          artifact.artifact_ref === artifactRef
+        ) {
+          return snapshot(artifact);
+        }
+      }
+      return undefined;
+    },
+
     async recordToolRequested(request) {
       return snapshot(replace(request.runtime_run_id, (run) => {
         activeLease(run, request.lease_generation);
@@ -10709,105 +11216,193 @@ export function createInMemoryRuntimeExecutionStoreV1(
     },
 
     async finalizeAlreadyTerminalControl(request) {
-      return snapshot(
-        replace(request.runtime_run_id, (run) => {
+      let result: RuntimeControlRecordV1 | undefined;
+      let replayed = false;
+      const updated = replace(request.runtime_run_id, (run) => {
+        if (
+          run.status !== "completed" &&
+          run.status !== "failed" &&
+          run.status !== "cancelled"
+        ) {
+          throw new RuntimeExecutionErrorV1("stale_lease_generation");
+        }
+        if (
+          run.request.trigger_process_id !== request.request.trigger_process_id ||
+          run.request.start_attempt_no !== request.request.start_attempt_no ||
+          !secureDigestEqualsV1(
+            run.request.preempt_token_hash,
+            request.request.preempt_token_hash,
+          ) ||
+          run.start_fence_generation !==
+            request.verification.start_fence_generation ||
+          request.verification.control_valid_until !==
+            addMilliseconds(
+              new Date(run.request.policy.expires_at),
+              15 * 60 * 1_000,
+            )
+        ) {
+          throw new RuntimeExecutionErrorV1("stale_start_fence");
+        }
+        const requestedEvents = [
+          snapshot(request.received_event),
+          snapshot(request.handled_event),
+        ];
+        const receivedPayload = requestedEvents[0]!.payload as Readonly<
+          Record<string, unknown>
+        >;
+        const handledPayload = requestedEvents[1]!.payload as Readonly<{
+          runtime_run_id: string;
+          trigger_process_id: string;
+          runtime_signal_id: string;
+          status: string;
+          handled_status: string | null;
+          target_lease_generation: number | null;
+          handled_lease_generation: number | null;
+          final_fencing_generation: number | null;
+          safe_point_reached: boolean | null;
+          late_events_isolated: boolean | null;
+          last_runtime_sequence_no: number | null;
+          isolation_proof_ref: string | null;
+        }>;
+        if (
+          requestedEvents[0]!.event_type !==
+            "runtime.control_signal.received" ||
+          requestedEvents[1]!.event_type !==
+            "runtime.control_signal.handled" ||
+          requestedEvents[0]!.idempotency_key !==
+            `${request.request.idempotency_key}:received` ||
+          requestedEvents[1]!.idempotency_key !==
+            `${request.request.idempotency_key}:handled` ||
+          receivedPayload.runtime_run_id !== run.request.runtime_run_id ||
+          receivedPayload.trigger_process_id !==
+            run.request.trigger_process_id ||
+          receivedPayload.runtime_signal_id !== request.runtime_signal_id ||
+          receivedPayload.status !== "received" ||
+          handledPayload.runtime_run_id !== run.request.runtime_run_id ||
+          handledPayload.trigger_process_id !==
+            run.request.trigger_process_id ||
+          handledPayload.runtime_signal_id !== request.runtime_signal_id ||
+          handledPayload.status !== "handled" ||
+          handledPayload.handled_status !== "already_terminal" ||
+          handledPayload.safe_point_reached !== false ||
+          handledPayload.late_events_isolated !== true ||
+          handledPayload.final_fencing_generation === null ||
+          !Number.isSafeInteger(
+            handledPayload.final_fencing_generation,
+          ) ||
+          handledPayload.last_runtime_sequence_no === null ||
+          !Number.isSafeInteger(
+            handledPayload.last_runtime_sequence_no,
+          )
+        ) {
+          throw new RuntimeExecutionErrorV1("idempotency_conflict");
+        }
+        const existing = run.controls.find(
+          ({ request: candidate }) =>
+            candidate.runtime_signal_id === request.runtime_signal_id,
+        );
+        if (existing !== undefined) {
           if (
-            run.status !== "completed" &&
-            run.status !== "failed" &&
-            run.status !== "cancelled"
-          ) {
-            throw new RuntimeExecutionErrorV1(
-              "stale_lease_generation",
-            );
-          }
-          const control = run.controls.find(
-            ({ request: candidate }) =>
-              candidate.runtime_signal_id ===
-              request.runtime_signal_id,
-          );
-          if (
-            control?.status !== "handled" ||
-            control.handled_status !== "already_terminal"
-          ) {
-            throw new RuntimeExecutionErrorV1(
-              "idempotency_conflict",
-            );
-          }
-          const requestedEvents = [
-            snapshot(request.received_event),
-            snapshot(request.handled_event),
-          ];
-          if (
-            requestedEvents[0]!.payload.sequence_no !==
-              run.next_sequence_no ||
-            requestedEvents[1]!.payload.sequence_no !==
-              incrementSafeIntegerV1(
-                run.next_sequence_no,
-                "runtime_sequence_no",
-              )
+            existing.request_hash !== request.request_hash ||
+            existing.status !== "handled" ||
+            existing.handled_status !== "already_terminal"
           ) {
             throw new RuntimeExecutionErrorV1("idempotency_conflict");
           }
-          const existingEvents = requestedEvents.map((event) =>
-            run.events.find(
-              ({ event_id }) => event_id === event.event_id,
-            ),
-          );
-          if (existingEvents.some((event) => event !== undefined)) {
-            if (
-              existingEvents.every((event) => event !== undefined) &&
-              existingEvents.every(
-                (event, index) =>
-                  canonicalJsonV1(event) ===
-                  canonicalJsonV1(requestedEvents[index]),
-              )
-            ) {
-              return run;
-            }
-            throw new RuntimeExecutionErrorV1(
-              "idempotency_conflict",
-            );
-          }
-          for (const event of requestedEvents) {
-            if (
-              run.events.some(
-                ({ idempotency_key }) =>
-                  idempotency_key === event.idempotency_key,
-              )
-            ) {
-              throw new RuntimeExecutionErrorV1(
-                "idempotency_conflict",
-              );
-            }
-          }
-          const outboxRecords = requestedEvents.map((event) => {
-            const id = `runtime_outbox:${event.event_id}`;
-            outboxOwner.set(id, request.runtime_run_id);
-            return Object.freeze({
-              id,
-              event,
-              status: "pending" as const,
-              attempt_count: 0,
-            });
+          result = existing;
+          replayed = true;
+        } else {
+          const control: RuntimeControlRecordV1 = Object.freeze({
+            request: snapshot(request.request),
+            control_type: request.control_type,
+            requested_by: "trigger_processor",
+            control_valid_until: request.verification.control_valid_until,
+            target_lease_generation:
+              handledPayload.target_lease_generation,
+            request_hash: request.request_hash,
+            status: "handled",
+            handled_status: "already_terminal",
+            handled_lease_generation:
+              handledPayload.handled_lease_generation,
+            final_fencing_generation:
+              handledPayload.final_fencing_generation,
           });
-          return {
-            ...run,
-            next_sequence_no: incrementSafeIntegerV1(
+          result = control;
+          controlById.set(
+            request.runtime_signal_id,
+            request.runtime_run_id,
+          );
+          controlByIdempotency.set(
+            request.request.idempotency_key,
+            request.runtime_signal_id,
+          );
+        }
+        const existingEvents = requestedEvents.map((event) =>
+          run.events.find(({ event_id }) => event_id === event.event_id),
+        );
+        if (existingEvents.some((event) => event !== undefined)) {
+          if (
+            existingEvents.every((event) => event !== undefined) &&
+            existingEvents.every(
+              (event, index) =>
+                canonicalJsonV1(event) ===
+                canonicalJsonV1(requestedEvents[index]),
+            )
+          ) {
+            return run;
+          }
+          throw new RuntimeExecutionErrorV1("idempotency_conflict");
+        }
+        if (
+          requestedEvents[0]!.payload.sequence_no !== run.next_sequence_no ||
+          requestedEvents[1]!.payload.sequence_no !==
+            incrementSafeIntegerV1(
               run.next_sequence_no,
               "runtime_sequence_no",
-              2,
-            ),
-            events: Object.freeze([
-              ...run.events,
-              ...requestedEvents,
-            ]),
-            outbox: Object.freeze([
-              ...run.outbox,
-              ...outboxRecords,
-            ]),
-          };
-        }),
-      );
+            )
+        ) {
+          throw new RuntimeExecutionErrorV1("idempotency_conflict");
+        }
+        for (const event of requestedEvents) {
+          if (
+            run.events.some(
+              ({ idempotency_key }) =>
+                idempotency_key === event.idempotency_key,
+            )
+          ) {
+            throw new RuntimeExecutionErrorV1("idempotency_conflict");
+          }
+        }
+        const outboxRecords = requestedEvents.map((event) => {
+          const id = `runtime_outbox:${event.event_id}`;
+          outboxOwner.set(id, request.runtime_run_id);
+          return Object.freeze({
+            id,
+            event,
+            status: "pending" as const,
+            attempt_count: 0,
+          });
+        });
+        return {
+          ...run,
+          controls:
+            existing === undefined
+              ? Object.freeze([...run.controls, result!])
+              : run.controls,
+          next_sequence_no: incrementSafeIntegerV1(
+            run.next_sequence_no,
+            "runtime_sequence_no",
+            2,
+          ),
+          events: Object.freeze([...run.events, ...requestedEvents]),
+          outbox: Object.freeze([...run.outbox, ...outboxRecords]),
+        };
+      });
+      return Object.freeze({
+        control: snapshot(result!),
+        run: snapshot(updated),
+        replayed,
+      });
     },
 
     async claimOutbox(request) {

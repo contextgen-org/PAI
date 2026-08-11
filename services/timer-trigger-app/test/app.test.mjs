@@ -22,11 +22,11 @@ const scope = Object.freeze({
   release_channel: "stable",
 });
 
-function credential(capabilities = ["timer.write"]) {
+function credential(capabilities = ["timer.write"], subject = "action_runtime") {
   return {
     claims: {
       iss: "pai-workload",
-      sub: "action_runtime",
+      sub: subject,
       aud: "timer_trigger_app",
       jti: "credential_1",
       iat: 100,
@@ -151,6 +151,36 @@ test("HTTP errors expose only closed Timer summaries", async () => {
   assert.equal(response.json().message, "Timer request is invalid");
   assert.equal(response.body.includes(secret), false);
   assert.equal(response.body.includes("timer-http-super-secret"), false);
+});
+
+test("Trigger may read Timer follow-up state but cannot mutate Timer schedules", async () => {
+  const timer = application();
+  const app = buildTimerTriggerApp(
+    {
+      logger: false,
+      auth: {
+        verifier: {
+          async verify() {
+            return credential(["timer.read"], "trigger_processor");
+          },
+        },
+      },
+    },
+    { timer },
+  );
+  const read = await app.inject({
+    method: "GET",
+    url: "/internal/agent-timers?runtime_run_id=origin_1&trace_id=followup_1",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(read.statusCode, 200);
+  const write = await app.inject({
+    method: "POST",
+    url: "/internal/agent-timers",
+    headers: { authorization: `Bearer ${token}` },
+    payload: command(),
+  });
+  assert.equal(write.statusCode, 403);
 });
 
 test("Fastify schema rejection never reaches the Timer owner handler", async () => {

@@ -254,6 +254,29 @@ describe("Trigger admission contracts", () => {
         details: { trigger_id: "trigger-1" },
       }),
     ).toBe(false);
+    const strongFifoResponse = {
+      ...acceptedResponse,
+      details: {
+        ...acceptedResponse.details,
+        process_status: "waiting",
+        wait_reason: "deferred_strong_queue",
+        blocked_by_process_id: null,
+        action: "enqueue_strong_fifo",
+        reason_code: "strong_fifo_waiting",
+      },
+    } as const;
+    expect(
+      Value.Check(AdmitTriggerAcceptedResponseV1Schema, strongFifoResponse),
+    ).toBe(true);
+    expect(
+      Value.Check(AdmitTriggerAcceptedResponseV1Schema, {
+        ...strongFifoResponse,
+        details: {
+          ...strongFifoResponse.details,
+          blocked_by_process_id: "process-not-a-fifo-edge",
+        },
+      }),
+    ).toBe(false);
     for (const impossible of [
       {
         ...acceptedResponse,
@@ -441,6 +464,26 @@ describe("Trigger admission contracts", () => {
         caller_priority: "strong",
       }),
     ).toBe(false);
+    expect(
+      Value.Check(TrustedAdmissionFactsV1Schema, {
+        ...idleFacts,
+        active_process: "execution_waiting",
+        active_process_id: "process-runtime-start",
+        active_process_slot_generation: 7,
+        active_process_state_version: 9,
+        foreground_slot_process_id: "process-runtime-start",
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(TrustedAdmissionFactsV1Schema, {
+        ...idleFacts,
+        active_process: "context_running",
+        active_process_id: "process-recompose",
+        active_process_slot_generation: 7,
+        active_process_state_version: 9,
+        foreground_slot_process_id: "process-recompose",
+      }),
+    ).toBe(true);
   });
 
   it("binds every accepted decision to slot, process and FIFO preconditions", () => {
@@ -484,6 +527,34 @@ describe("Trigger admission contracts", () => {
           slot_generation: 7,
           phase: "execution",
           status: "waiting",
+          process_state_version: 9,
+          ...fifoSnapshot,
+        },
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(TriggerAdmissionDecisionV1Schema, {
+        ...acceptedDecision,
+        admission_precondition: {
+          kind: "occupied",
+          process_id: "process-a",
+          slot_generation: 7,
+          phase: "execution",
+          status: "preempt_requested",
+          process_state_version: 9,
+          ...fifoSnapshot,
+        },
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(TriggerAdmissionDecisionV1Schema, {
+        ...acceptedDecision,
+        admission_precondition: {
+          kind: "occupied",
+          process_id: "process-a",
+          slot_generation: 7,
+          phase: "execution",
+          status: "not-a-state",
           process_state_version: 9,
           ...fifoSnapshot,
         },

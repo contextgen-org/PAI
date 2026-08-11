@@ -31,6 +31,18 @@ describe("Trigger Process snapshot retention repository", () => {
     );
   });
 
+  it("reports an unset retention on an existing Process as the bootstrap state", async () => {
+    const repository = createTriggerProcessSnapshotRetentionRepositoryV1({
+      async query() {
+        return { rows: [{ snapshot_retention_until: null }] };
+      },
+    } as never);
+
+    await expect(
+      repository.readCurrent(request, new AbortController().signal),
+    ).resolves.toBeUndefined();
+  });
+
   it("fails closed for a missing, ambiguous, invalid, or aborted owner read", async () => {
     for (const rows of [
       [],

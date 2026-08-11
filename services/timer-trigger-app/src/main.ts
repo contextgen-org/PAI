@@ -10,6 +10,10 @@ import { buildTimerTriggerApp } from "./app.js";
 import { TIMER_REPOSITORY_CONTRACT_V1 } from "./db/permission-manifest.v1.js";
 import { createPostgresTimerStateRepositoryV1 } from "./db/postgres-timer-state-repository.v1.js";
 import {
+  TimerDispatchWorkerV1,
+  timerPollIntervalFromEnvV1,
+} from "./timer-dispatch-worker.v1.js";
+import {
   createTimerTriggerProcessorHttpPortV1,
   createTimerWorkloadSignerFromEnvV1,
 } from "./production-trigger-processor.v1.js";
@@ -50,6 +54,15 @@ const ownerEventDispatch = postgresComposition === undefined
       transport_epoch_postgres: postgresComposition.postgres,
     });
 ownerEventDispatch?.start();
+const timerDispatchWorker =
+  timerApplication === undefined
+    ? undefined
+    : new TimerDispatchWorkerV1({
+        timer: timerApplication,
+        poll_interval_ms: timerPollIntervalFromEnvV1(process.env),
+        worker_id: `timer-dispatcher-${process.env.HOSTNAME ?? "local"}`,
+      });
+timerDispatchWorker?.start();
 try {
   await startService({
     serviceId: "timer_trigger_app",
@@ -83,9 +96,13 @@ try {
       if (postgresComposition !== undefined) {
         app.addHook("onClose", async () => {
           try {
-            await ownerEventDispatch?.close();
+            await timerDispatchWorker?.close();
           } finally {
-            await postgresComposition.close();
+            try {
+              await ownerEventDispatch?.close();
+            } finally {
+              await postgresComposition.close();
+            }
           }
         });
       }
@@ -94,9 +111,13 @@ try {
   });
 } catch (error) {
   try {
-    await ownerEventDispatch?.close();
+    await timerDispatchWorker?.close();
   } finally {
-    await postgresComposition?.close();
+    try {
+      await ownerEventDispatch?.close();
+    } finally {
+      await postgresComposition?.close();
+    }
   }
   throw error;
 }

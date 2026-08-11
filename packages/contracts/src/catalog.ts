@@ -64,6 +64,7 @@ import { TriggerProcessQueryDetailsV1Schema } from "./trigger-processor/process-
 import { TriggerProcessGetResponseV1Schema } from "./trigger-processor/process-get-response.v1.js";
 import {
   TriggerConfirmationChallengeV1Schema,
+  TriggerConfirmationPendingViewV1Schema,
   TriggerConfirmationResponseV1Schema,
 } from "./trigger-processor/confirmation.v1.js";
 import { TriggerProcessSseEventV1Schema } from "./trigger-processor/process-sse.v1.js";
@@ -587,6 +588,14 @@ export const TRIGGER_PROCESSOR_SCHEMA_CATALOG = [
     "generated/schema/trigger-processor/confirmation-challenge.v1.json",
     "services/trigger-processor/test/contracts/confirmation-challenge.contract.ts",
     TriggerConfirmationChallengeV1Schema,
+  ),
+  triggerProcessorEntry(
+    "TriggerConfirmationPendingViewV1",
+    "urn:pai:trigger-processor:confirmation-pending-view:v1",
+    "packages/contracts/src/trigger-processor/confirmation.v1.ts",
+    "generated/schema/trigger-processor/confirmation-pending-view.v1.json",
+    "services/trigger-processor/test/contracts/confirmation-pending-view.contract.ts",
+    TriggerConfirmationPendingViewV1Schema,
   ),
   triggerProcessorEntry(
     "TriggerConfirmationResponseV1",

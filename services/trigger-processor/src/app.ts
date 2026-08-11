@@ -26,6 +26,8 @@ import {
   TriggerProcessGetResponseV1Schema,
   TriggerProcessCancelRequestV1Schema,
   TriggerProcessCancelResponseV1Schema,
+  TriggerConfirmationChallengeV1Schema,
+  TriggerConfirmationPendingViewV1Schema,
   TriggerConfirmationResponseV1Schema,
   TriggerConfirmationResponseResultV1Schema,
   TriggerProcessSseRequestV1Schema,
@@ -36,6 +38,7 @@ import {
   type TriggerProcessCancelResponseV1,
 } from "@pai/contracts";
 import { OwnerRepositoryTransientErrorV1 } from "@pai/persistence";
+import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import {
   createServiceApp,
@@ -52,6 +55,7 @@ import {
 } from "./application/trigger-admission.v1.js";
 import {
   TriggerConfirmationResponseErrorV1,
+  type TriggerConfirmationPendingReadApplicationV1,
   type TriggerConfirmationResponseApplicationV1,
 } from "./application/confirmation.v1.js";
 import {
@@ -63,6 +67,10 @@ import {
   type DelegatedProcessReadPrincipalV1,
   type TriggerProcessObservationApplicationV1,
 } from "./application/process-observation.v1.js";
+import {
+  TriggerProcessFinalResponseErrorV1,
+  type TriggerProcessFinalResponseApplicationV1,
+} from "./application/process-final-response.v1.js";
 import {
   TriggerLifecycleStageErrorV1,
   type TriggerLifecycleApplicationV1,
@@ -81,13 +89,23 @@ import {
   TriggerProcessSnapshotResolveErrorV1,
   type TriggerProcessSnapshotReadApplicationV1,
 } from "./application/process-snapshot-read.v1.js";
+import {
+  LOCAL_CHAT_AUTH_CONFIG_ROUTE_V1,
+  LOCAL_CHAT_CONSOLE_ROUTE_V1,
+  localChatConsoleHtmlV1,
+  type LocalChatConsoleOptionsV1,
+} from "./local-chat-console.v1.js";
 
 const admissionRoutes = TRIGGER_PROCESSOR_HTTP_OPERATIONS_V1;
 const processCancelRoute = "/v1/trigger-processes/:id/cancel";
 const processGetRoute = "/v1/trigger-processes/:id";
 const processEventsRoute = "/v1/trigger-processes/:id/events";
+const processFinalResponseRoute = "/v1/trigger-processes/:id/final-response";
+const processTimerFollowUpsRoute = "/v1/trigger-processes/:id/timer-follow-ups";
 const confirmationResponseRoute =
   "/v1/trigger-processes/:id/confirmations/:challengeId";
+const confirmationPendingRoute =
+  "/v1/trigger-processes/:id/confirmations/pending";
 const contextComposeRoute = "/internal/context/compose" as const;
 const contextSnapshotResolveRoute = "/internal/context-snapshots:resolve" as const;
 const intentSynthesizeRoute = "/internal/intent/synthesize" as const;
@@ -99,12 +117,32 @@ const runtimeStartReservationValidateRoute =
 
 export interface TriggerProcessorInternalApplicationsV1 {
   readonly confirmation_response?: TriggerConfirmationResponseApplicationV1;
+  readonly confirmation_pending_read?: TriggerConfirmationPendingReadApplicationV1;
   readonly lifecycle?: TriggerLifecycleApplicationV1;
   readonly context_snapshot_read?: ContextSnapshotReadApplicationV1;
+  readonly final_response?: TriggerProcessFinalResponseApplicationV1;
   readonly snapshot_read?: TriggerProcessSnapshotReadApplicationV1;
   readonly runtime_start_reservation_validation?:
     RuntimeStartReservationValidationApplicationV1;
   readonly recovery_runner?: TriggerProcessRecoveryRunnerV1;
+  /**
+   * Resolves Timer-created child processes only after the caller is
+   * authorized to read the originating process.
+   */
+  readonly timer_follow_ups?: Readonly<{
+    list(
+      request: Readonly<{
+        trigger_process_id: string;
+        workspace_id: string;
+        bot_id: string;
+        owner_agent_id: string;
+        deployment_environment: "local" | "dev" | "staging" | "prod";
+        release_channel: "stable" | "canary";
+        trace_id: string;
+      }>,
+      signal: AbortSignal,
+    ): Promise<readonly string[]>;
+  }>;
 }
 
 export interface TriggerProcessorCompositionRequirementsV1 {
@@ -235,6 +273,8 @@ function requiredWorkClaimV1(headers: Readonly<Record<string, unknown>>):
 
 export interface TriggerProcessorAppOptionsV1 extends ServiceAppOptions {
   readonly supabaseIngressVerifier?: SupabaseIngressVerifierPort;
+  /** A local-only, credential-forwarding UI; never enabled in production. */
+  readonly localChatConsole?: LocalChatConsoleOptionsV1;
 }
 
 const triggerProcessorAppOptionKeys = new Set([
@@ -245,6 +285,7 @@ const triggerProcessorAppOptionKeys = new Set([
   "readinessChecks",
   "runtimeConfig",
   "supabaseIngressVerifier",
+  "localChatConsole",
 ]);
 
 function ownEnumerableDataSnapshot(
@@ -1581,6 +1622,7 @@ export function buildTriggerProcessorApp(
   const stableOptions = snapshotTriggerProcessorAppOptionsV1(options);
   const {
     supabaseIngressVerifier: suppliedSupabaseIngressVerifier,
+    localChatConsole,
     ...suppliedServiceOptions
   } = stableOptions;
   const workloadIngressVerifier = captureVerifyPort(
@@ -1792,6 +1834,67 @@ export function buildTriggerProcessorApp(
       }
     },
   });
+  if (localChatConsole?.enabled === true) {
+    const runtime = serviceOptions.runtimeConfig;
+    if (runtime?.deployment_environment !== "local") {
+      throw new Error("local chat console may only be enabled for local deployment");
+    }
+    const supabaseAuthOrigin = localChatConsole.supabaseAuthOrigin;
+    if (supabaseAuthOrigin !== undefined) {
+      let parsed: URL;
+      try {
+        parsed = new URL(supabaseAuthOrigin);
+      } catch {
+        throw new Error("local chat console Supabase Auth origin must be an HTTPS origin");
+      }
+      if (
+        parsed.protocol !== "https:" ||
+        parsed.username.length > 0 ||
+        parsed.password.length > 0 ||
+        parsed.origin !== supabaseAuthOrigin
+      ) {
+        throw new Error("local chat console Supabase Auth origin must be an HTTPS origin");
+      }
+    }
+    const connectSource =
+      supabaseAuthOrigin === undefined
+        ? "'self'"
+        : "'self' " + supabaseAuthOrigin;
+    const supabasePublishableKey = localChatConsole.supabasePublishableKey;
+    app.get(LOCAL_CHAT_AUTH_CONFIG_ROUTE_V1, async (_request, reply) => {
+      if (
+        supabaseAuthOrigin === undefined ||
+        supabasePublishableKey === undefined
+      ) {
+        return reply
+          .code(503)
+          .header("cache-control", "no-store")
+          .send({
+            message:
+              "local chat Supabase login is not configured; set PAI_SUPABASE_PUBLISHABLE_KEY",
+          });
+      }
+      return reply
+        .header("cache-control", "no-store")
+        .send({
+          schema_version: "local_chat_supabase_auth_config.v1",
+          auth_origin: supabaseAuthOrigin,
+          publishable_key: supabasePublishableKey,
+        });
+    });
+    app.get(LOCAL_CHAT_CONSOLE_ROUTE_V1, async (_request, reply) =>
+      reply
+        .header("cache-control", "no-store")
+        .header(
+          "content-security-policy",
+          "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; connect-src " +
+            connectSource +
+            "; img-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'",
+        )
+        .type("text/html; charset=utf-8")
+        .send(localChatConsoleHtmlV1()),
+    );
+  }
   app.addHook("preValidation", async (request) => {
     if (request.body === undefined) return;
     try {
@@ -2021,12 +2124,87 @@ export function buildTriggerProcessorApp(
       },
     );
   }
+  if (internalApplications.confirmation_pending_read !== undefined) {
+    const confirmationPendingRead = internalApplications.confirmation_pending_read;
+    app.addHook("onRequest", async (request) => {
+      if (
+        request.method !== "GET" ||
+        request.routeOptions.url !== confirmationPendingRoute
+      ) {
+        return;
+      }
+      if (supabaseIngressVerifier === undefined) {
+        throw new ServiceError({
+          code: "unauthenticated",
+          message: "Supabase confirmation ingress is unavailable",
+          statusCode: 401,
+          retryable: false,
+          details: {},
+        });
+      }
+      try {
+        const credential = await supabaseIngressVerifier.verify(
+          triggerBearerToken(request),
+        );
+        triggerIngressContexts.set(
+          request,
+          Object.freeze({
+            authentication_kind: "supabase_ingress" as const,
+            credential: snapshotVerifiedSupabaseIngressV1(credential),
+          }),
+        );
+      } catch (error) {
+        if (error instanceof ServiceError) throw error;
+        throw new ServiceError({
+          code: "unauthenticated",
+          message: "confirmation credential was rejected",
+          statusCode: 401,
+          retryable: false,
+          details: {},
+          cause: error,
+        });
+      }
+    });
+    app.get(
+      confirmationPendingRoute,
+      {
+        schema: {
+          response: {
+            200: Type.Union([
+              TriggerConfirmationPendingViewV1Schema,
+              Type.Null(),
+            ]),
+          },
+        },
+      },
+      async (request, reply) => {
+        const params = request.params as Readonly<{ id?: unknown }>;
+        if (typeof params.id !== "string") {
+          throw new TriggerConfirmationResponseErrorV1(
+            "schema_validation_failed",
+          );
+        }
+        try {
+          const challenge = await confirmationPendingRead.getPending(
+            getTriggerIngressContext(request),
+            params.id,
+            AbortSignal.timeout(5_000),
+          );
+          return reply.code(200).send(challenge ?? null);
+        } catch (error) {
+          throw confirmationResponseHttpErrorV1(error) ?? error;
+        }
+      },
+    );
+  }
   if (processObservation !== undefined) {
     app.addHook("onRequest", async (request) => {
       if (
         request.method !== "GET" ||
         (request.routeOptions.url !== processGetRoute &&
-          request.routeOptions.url !== processEventsRoute)
+          request.routeOptions.url !== processEventsRoute &&
+          request.routeOptions.url !== processFinalResponseRoute &&
+          request.routeOptions.url !== processTimerFollowUpsRoute)
       ) {
         return;
       }
@@ -2061,6 +2239,129 @@ export function buildTriggerProcessorApp(
         return reply.code(200).send(response);
       },
     );
+    if (internalApplications.timer_follow_ups !== undefined) {
+      const timerFollowUps = internalApplications.timer_follow_ups;
+      app.get(
+        processTimerFollowUpsRoute,
+        {
+          schema: {
+            params: Type.Object(
+              { id: Type.String({ minLength: 1, maxLength: 512 }) },
+              { additionalProperties: false },
+            ),
+            response: {
+              200: Type.Object(
+                {
+                  origin_process_id: Type.String({ minLength: 1, maxLength: 512 }),
+                  child_process_ids: Type.Array(
+                    Type.String({ minLength: 1, maxLength: 512 }),
+                    { maxItems: 100, uniqueItems: true },
+                  ),
+                },
+                { additionalProperties: false },
+              ),
+            },
+          },
+        },
+        async (request, reply) => {
+          const params = request.params as Readonly<{ id?: unknown }>;
+          if (typeof params.id !== "string") {
+            throw new TriggerProcessObservationErrorV1("process_not_found");
+          }
+          const principal = delegatedReadPrincipal(
+            getTriggerIngressContext(request),
+            "trigger.process.read",
+          );
+          // This owner read is the authorization boundary. The Timer service
+          // is asked only after it proves the caller may observe the origin.
+          const origin = await processObservation.getProcess(
+            principal,
+            params.id,
+            request.id,
+          );
+          const details = origin.details;
+          const childProcessIds = await timerFollowUps.list(
+            {
+              trigger_process_id: details.id,
+              workspace_id: details.workspace_id,
+              bot_id: details.bot_id,
+              owner_agent_id: details.owner_agent_id,
+              deployment_environment: details.deployment_environment,
+              release_channel: details.release_channel,
+              trace_id: request.id,
+            },
+            AbortSignal.timeout(5_000),
+          );
+          return reply.code(200).send({
+            origin_process_id: details.id,
+            child_process_ids: [...childProcessIds],
+          });
+        },
+      );
+    }
+    if (internalApplications.final_response !== undefined) {
+      const finalResponse = internalApplications.final_response;
+      app.get(
+        processFinalResponseRoute,
+        {
+          schema: {
+            params: Type.Object(
+              { id: Type.String({ minLength: 1, maxLength: 512 }) },
+              { additionalProperties: false },
+            ),
+            response: {
+              200: Type.Object(
+                {
+                  process_id: Type.String({ minLength: 1, maxLength: 512 }),
+                  runtime_run_id: Type.String({ minLength: 1, maxLength: 512 }),
+                  content_type: Type.Literal("text/plain"),
+                  content: Type.String({ minLength: 1, maxLength: 1_048_576 }),
+                },
+                { additionalProperties: false },
+              ),
+              409: Type.Object(
+                {
+                  code: Type.String({ minLength: 1, maxLength: 128 }),
+                  message: Type.String({ minLength: 1, maxLength: 128 }),
+                  retryable: Type.Boolean(),
+                },
+                { additionalProperties: false },
+              ),
+              503: Type.Object(
+                {
+                  code: Type.String({ minLength: 1, maxLength: 128 }),
+                  message: Type.String({ minLength: 1, maxLength: 128 }),
+                  retryable: Type.Boolean(),
+                },
+                { additionalProperties: false },
+              ),
+            },
+          },
+        },
+        async (request, reply) => {
+          const params = request.params as Readonly<{ id?: unknown }>;
+          if (typeof params.id !== "string") {
+            throw new TriggerProcessObservationErrorV1("process_not_found");
+          }
+          const principal = delegatedReadPrincipal(
+            getTriggerIngressContext(request),
+            "trigger.process.read",
+          );
+          try {
+            return reply.code(200).send(
+              await finalResponse.read(principal, params.id, request.id),
+            );
+          } catch (error) {
+            if (!(error instanceof TriggerProcessFinalResponseErrorV1)) throw error;
+            return reply.code(error.retryable ? 503 : 409).send({
+              code: error.code,
+              message: error.code,
+              retryable: error.retryable,
+            });
+          }
+        },
+      );
+    }
     app.get(
       processEventsRoute,
       async (request, reply) => {

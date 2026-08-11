@@ -1,4 +1,4 @@
-import { createPrivateKey } from "node:crypto";
+import { createHash, createPrivateKey } from "node:crypto";
 
 import {
   WorkloadJwtSigner,
@@ -51,7 +51,30 @@ function baseUrlV1(raw: string): string {
 }
 
 function botScopeV1(scope: TimerScopeV1): AuthorizationScopeV1 {
-  return Object.freeze({ scope_kind: "bot" as const, ...scope });
+  // `submit` receives a wider request object than the authorization scope.
+  // Construct the credential scope explicitly instead of spreading the caller
+  // object: the workload signer rejects unknown own properties fail-closed.
+  return Object.freeze({
+    scope_kind: "bot" as const,
+    workspace_id: scope.workspace_id,
+    bot_id: scope.bot_id,
+    owner_agent_id: scope.owner_agent_id,
+    deployment_environment: scope.deployment_environment,
+    release_channel: scope.release_channel,
+  });
+}
+
+/**
+ * Timer command and occurrence identifiers are valid durable audit keys but
+ * are not necessarily W3C trace IDs.  Keep that audit identity at the Timer
+ * boundary and derive a valid, deterministic transport trace for HTTP.
+ */
+function transportTraceIdV1(timerTraceId: string): string {
+  return createHash("sha256")
+    .update("timer-trigger-processor.v1\u0000", "utf8")
+    .update(timerTraceId, "utf8")
+    .digest("hex")
+    .slice(0, 32);
 }
 
 export function createTimerWorkloadSignerFromEnvV1(
@@ -92,6 +115,7 @@ export function createTimerTriggerProcessorHttpPortV1(input: Readonly<{
   const fetchImpl = input.fetch ?? fetch;
   const port: TimerTriggerProcessorPortV1 = {
     async submit(request, traceId) {
+      const transportTraceId = transportTraceIdV1(traceId);
       const credential = await input.signer.sign({
         audience: "trigger_processor",
         capabilities: ["trigger.submit.timer"],
@@ -101,8 +125,12 @@ export function createTimerTriggerProcessorHttpPortV1(input: Readonly<{
         url: `${triggerProcessorUrl}/v1/triggers`,
         method: "POST",
         workloadCredential: credential,
-        json: { ...request, trace_id: traceId },
+        // Trace identity is injected by requestWorkloadJson as x-trace-id.
+        // TriggerSubmitRequestV1 is closed and must not receive transport
+        // metadata in its JSON body.
+        json: request,
         timeoutMs,
+        traceId: transportTraceId,
         idempotent: true,
         maxRetries: 2,
         fetchImpl,
@@ -110,9 +138,13 @@ export function createTimerTriggerProcessorHttpPortV1(input: Readonly<{
       if (!Value.Check(TriggerSubmitResponseV1Schema, response.body)) {
         throw new Error("Trigger Processor returned an invalid Timer submit response");
       }
-      return response.body;
+      if (response.body.trace_id !== transportTraceId) {
+        throw new Error("Trigger Processor returned a mismatched Timer transport trace");
+      }
+      return Object.freeze({ ...response.body, trace_id: traceId });
     },
     async getProcess(processId, scope, traceId) {
+      const transportTraceId = transportTraceIdV1(traceId);
       const credential = await input.signer.sign({
         audience: "trigger_processor",
         capabilities: ["trigger.process.read"],
@@ -123,13 +155,14 @@ export function createTimerTriggerProcessorHttpPortV1(input: Readonly<{
         method: "GET",
         workloadCredential: credential,
         timeoutMs,
+        traceId: transportTraceId,
         idempotent: true,
         maxRetries: 2,
         fetchImpl,
       });
       if (
         !Value.Check(TriggerProcessGetResponseV1Schema, response.body) ||
-        response.body.trace_id !== traceId ||
+        response.body.trace_id !== transportTraceId ||
         response.body.details.id !== processId
       ) {
         throw new Error("Trigger Processor returned an invalid Timer process projection");

@@ -111,7 +111,9 @@ function principal(
   const claims = getWorkloadAuthContext(request).claims;
   if (
     claims.scope_kind !== "bot" ||
-    (claims.sub !== "action_runtime" && claims.sub !== "timer_trigger_app")
+    (claims.sub !== "action_runtime" &&
+      claims.sub !== "timer_trigger_app" &&
+      claims.sub !== "trigger_processor")
   ) {
     throw new TimerApplicationErrorV1(
       "forbidden",
@@ -136,49 +138,52 @@ function policies(): readonly InternalRouteAuthPolicy[] {
     method: string,
     route: InternalRouteAuthPolicy["route"],
     capability: string,
-    caller: "action_runtime" | "timer_trigger_app",
+    callers: readonly ("action_runtime" | "timer_trigger_app" | "trigger_processor")[],
   ): InternalRouteAuthPolicy =>
     Object.freeze({
       method,
       route,
       requiredCapabilities: Object.freeze([capability]),
-      allowedCallers: Object.freeze([caller]),
+      allowedCallers: Object.freeze([...callers]),
       requiredScope: verifiedScope,
     });
   return Object.freeze([
-    policy("POST", routes.create, "timer.write", "action_runtime"),
-    policy("PATCH", routes.update, "timer.write", "action_runtime"),
-    policy("POST", routes.pause, "timer.write", "action_runtime"),
-    policy("POST", routes.resume, "timer.write", "action_runtime"),
-    policy("POST", routes.cancel, "timer.write", "action_runtime"),
-    policy("POST", routes.snooze, "timer.write", "action_runtime"),
-    policy("GET", routes.list, "timer.read", "action_runtime"),
-    policy("GET", routes.get, "timer.read", "action_runtime"),
-    policy("GET", routes.history, "timer.read", "action_runtime"),
-    policy("POST", routes.scan, "timer.worker.scan", "timer_trigger_app"),
+    policy("POST", routes.create, "timer.write", ["action_runtime"]),
+    policy("PATCH", routes.update, "timer.write", ["action_runtime"]),
+    policy("POST", routes.pause, "timer.write", ["action_runtime"]),
+    policy("POST", routes.resume, "timer.write", ["action_runtime"]),
+    policy("POST", routes.cancel, "timer.write", ["action_runtime"]),
+    policy("POST", routes.snooze, "timer.write", ["action_runtime"]),
+    // Trigger only receives the scoped read capability on behalf of a
+    // browser principal already authorized to read the originating process.
+    // It cannot create, update, or dispatch timers.
+    policy("GET", routes.list, "timer.read", ["action_runtime", "trigger_processor"]),
+    policy("GET", routes.get, "timer.read", ["action_runtime", "trigger_processor"]),
+    policy("GET", routes.history, "timer.read", ["action_runtime", "trigger_processor"]),
+    policy("POST", routes.scan, "timer.worker.scan", ["timer_trigger_app"]),
     policy(
       "POST",
       routes.claim,
       "timer.worker.dispatch",
-      "timer_trigger_app",
+      ["timer_trigger_app"],
     ),
     policy(
       "POST",
       routes.dispatch,
       "timer.worker.dispatch",
-      "timer_trigger_app",
+      ["timer_trigger_app"],
     ),
     policy(
       "POST",
       routes.catchUpCreate,
       "timer.worker.catch_up",
-      "timer_trigger_app",
+      ["timer_trigger_app"],
     ),
     policy(
       "POST",
       routes.catchUpAdvance,
       "timer.worker.catch_up",
-      "timer_trigger_app",
+      ["timer_trigger_app"],
     ),
   ]);
 }

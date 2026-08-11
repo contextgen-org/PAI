@@ -57,9 +57,11 @@ export const ACCEPTED_TRIGGER_ADMISSION_REASON_CODES_V1 = [
   "catch_up_foreground_busy",
   "timer_catch_up",
   "timer_due",
+  "timer_due_supersede_cooldown",
   "timer_due_preempt_active",
   "explicit_interrupt",
   "strong_no_active_dispatch",
+  "strong_supersede_cooldown",
   "strong_preempt_active",
   "strong_fifo_waiting",
   "weak_no_active_dispatch",
@@ -203,8 +205,10 @@ function acceptedDetailsSchemaFor(duplicateReplayed: boolean) {
       false,
       Type.Union([
         Type.Literal("timer_due"),
+        Type.Literal("timer_due_supersede_cooldown"),
         Type.Literal("explicit_interrupt"),
         Type.Literal("strong_no_active_dispatch"),
+        Type.Literal("strong_supersede_cooldown"),
       ]),
       duplicateReplayed,
     ),
@@ -244,7 +248,9 @@ function acceptedDetailsSchemaFor(duplicateReplayed: boolean) {
       "strong",
       "waiting",
       "deferred_strong_queue",
-      true,
+      // Strong FIFO admission is fenced by immutable queue order and the
+      // queue-head revision, not by a mutable direct blocker edge.
+      false,
       Type.Union([
         Type.Literal("catch_up_foreground_busy"),
         Type.Literal("strong_fifo_waiting"),
@@ -611,6 +617,118 @@ export const TrustedAdmissionFactsV1Schema = Type.Union(
     ),
     ...trustedAdmissionStateVariants(
       {
+        // A Runtime Start reservation owns the foreground slot before a
+        // Runtime exists. It is occupied, but cannot be preempted because a
+        // preempt command has no durable Runtime binding yet.
+        active_process: Type.Literal("execution_waiting"),
+        active_process_id: Type.String({ minLength: 1 }),
+        active_process_slot_generation: Type.Integer({
+          minimum: 0,
+          maximum: MAX_SAFE_SLOT_GENERATION_V1,
+        }),
+        active_process_state_version: Type.Integer({
+          minimum: 1,
+          maximum: Number.MAX_SAFE_INTEGER,
+        }),
+        foreground_slot_process_id: Type.String({ minLength: 1 }),
+      },
+    ),
+    ...trustedAdmissionStateVariants(
+      {
+        // The foreground Runtime has already entered a terminal-control
+        // transition. A second preempt must queue behind that fenced action.
+        active_process: Type.Literal("execution_preempt_requested"),
+        active_process_id: Type.String({ minLength: 1 }),
+        active_process_slot_generation: Type.Integer({
+          minimum: 0,
+          maximum: MAX_SAFE_SLOT_GENERATION_V1,
+        }),
+        active_process_state_version: Type.Integer({
+          minimum: 1,
+          maximum: Number.MAX_SAFE_INTEGER,
+        }),
+        foreground_slot_process_id: Type.String({ minLength: 1 }),
+      },
+    ),
+    ...trustedAdmissionStateVariants(
+      {
+        active_process: Type.Literal("execution_cancelling"),
+        active_process_id: Type.String({ minLength: 1 }),
+        active_process_slot_generation: Type.Integer({
+          minimum: 0,
+          maximum: MAX_SAFE_SLOT_GENERATION_V1,
+        }),
+        active_process_state_version: Type.Integer({
+          minimum: 1,
+          maximum: Number.MAX_SAFE_INTEGER,
+        }),
+        foreground_slot_process_id: Type.String({ minLength: 1 }),
+      },
+    ),
+    ...trustedAdmissionStateVariants(
+      {
+        // A preempt handoff or Runtime Start recompose can retain the slot
+        // while Context is rebuilt. It is occupied but has no preempt target.
+        active_process: Type.Literal("context_running"),
+        active_process_id: Type.String({ minLength: 1 }),
+        active_process_slot_generation: Type.Integer({
+          minimum: 0,
+          maximum: MAX_SAFE_SLOT_GENERATION_V1,
+        }),
+        active_process_state_version: Type.Integer({
+          minimum: 1,
+          maximum: Number.MAX_SAFE_INTEGER,
+        }),
+        foreground_slot_process_id: Type.String({ minLength: 1 }),
+      },
+    ),
+    ...trustedAdmissionStateVariants(
+      {
+        active_process: Type.Literal("context_waiting"),
+        active_process_id: Type.String({ minLength: 1 }),
+        active_process_slot_generation: Type.Integer({
+          minimum: 0,
+          maximum: MAX_SAFE_SLOT_GENERATION_V1,
+        }),
+        active_process_state_version: Type.Integer({
+          minimum: 1,
+          maximum: Number.MAX_SAFE_INTEGER,
+        }),
+        foreground_slot_process_id: Type.String({ minLength: 1 }),
+      },
+    ),
+    ...trustedAdmissionStateVariants(
+      {
+        active_process: Type.Literal("intent_running"),
+        active_process_id: Type.String({ minLength: 1 }),
+        active_process_slot_generation: Type.Integer({
+          minimum: 0,
+          maximum: MAX_SAFE_SLOT_GENERATION_V1,
+        }),
+        active_process_state_version: Type.Integer({
+          minimum: 1,
+          maximum: Number.MAX_SAFE_INTEGER,
+        }),
+        foreground_slot_process_id: Type.String({ minLength: 1 }),
+      },
+    ),
+    ...trustedAdmissionStateVariants(
+      {
+        active_process: Type.Literal("intent_waiting"),
+        active_process_id: Type.String({ minLength: 1 }),
+        active_process_slot_generation: Type.Integer({
+          minimum: 0,
+          maximum: MAX_SAFE_SLOT_GENERATION_V1,
+        }),
+        active_process_state_version: Type.Integer({
+          minimum: 1,
+          maximum: Number.MAX_SAFE_INTEGER,
+        }),
+        foreground_slot_process_id: Type.String({ minLength: 1 }),
+      },
+    ),
+    ...trustedAdmissionStateVariants(
+      {
         active_process: Type.Literal("cooldown_waiting"),
         active_process_id: Type.String({ minLength: 1 }),
         active_process_slot_generation: Type.Integer({
@@ -679,7 +797,78 @@ const admissionCommitPreconditionSchema = Type.Union([
         maximum: MAX_SAFE_SLOT_GENERATION_V1,
       }),
       phase: Type.Literal("execution"),
-      status: Type.Literal("running"),
+      status: Type.Union([
+        Type.Literal("running"),
+        Type.Literal("waiting"),
+        Type.Literal("preempt_requested"),
+        Type.Literal("cancelling"),
+      ]),
+      process_state_version: Type.Integer({
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+      }),
+      strong_fifo_revision: Type.Integer({
+        minimum: 0,
+        maximum: MAX_SAFE_SLOT_GENERATION_V1,
+      }),
+      strong_fifo_head_process_id: Type.Union([
+        Type.String({ minLength: 1 }),
+        Type.Null(),
+      ]),
+      strong_fifo_head_admission_time: Type.Union([
+        Type.String({ minLength: 1, pattern: canonicalTimestampPattern }),
+        Type.Null(),
+      ]),
+      strong_fifo_preempt_commit_process_id: Type.Union([
+        Type.String({ minLength: 1 }),
+        Type.Null(),
+      ]),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("occupied"),
+      process_id: Type.String({ minLength: 1 }),
+      slot_generation: Type.Integer({
+        minimum: 0,
+        maximum: MAX_SAFE_SLOT_GENERATION_V1,
+      }),
+      phase: Type.Literal("context"),
+      status: Type.Union([Type.Literal("running"), Type.Literal("waiting")]),
+      process_state_version: Type.Integer({
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+      }),
+      strong_fifo_revision: Type.Integer({
+        minimum: 0,
+        maximum: MAX_SAFE_SLOT_GENERATION_V1,
+      }),
+      strong_fifo_head_process_id: Type.Union([
+        Type.String({ minLength: 1 }),
+        Type.Null(),
+      ]),
+      strong_fifo_head_admission_time: Type.Union([
+        Type.String({ minLength: 1, pattern: canonicalTimestampPattern }),
+        Type.Null(),
+      ]),
+      strong_fifo_preempt_commit_process_id: Type.Union([
+        Type.String({ minLength: 1 }),
+        Type.Null(),
+      ]),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("occupied"),
+      process_id: Type.String({ minLength: 1 }),
+      slot_generation: Type.Integer({
+        minimum: 0,
+        maximum: MAX_SAFE_SLOT_GENERATION_V1,
+      }),
+      phase: Type.Literal("intent"),
+      status: Type.Union([Type.Literal("running"), Type.Literal("waiting")]),
       process_state_version: Type.Integer({
         minimum: 1,
         maximum: Number.MAX_SAFE_INTEGER,
@@ -811,6 +1000,12 @@ export const TriggerAdmissionDecisionV1Schema = Type.Union(
     ),
     acceptedDecisionSchema(
       "strong",
+      "dispatch",
+      "timer_due_supersede_cooldown",
+      runningAdmissionStateSchema,
+    ),
+    acceptedDecisionSchema(
+      "strong",
       "dispatch_or_preempt",
       "timer_due_preempt_active",
       waitingAdmissionStateSchema("preempt_commit"),
@@ -831,6 +1026,12 @@ export const TriggerAdmissionDecisionV1Schema = Type.Union(
       "strong",
       "dispatch",
       "strong_no_active_dispatch",
+      runningAdmissionStateSchema,
+    ),
+    acceptedDecisionSchema(
+      "strong",
+      "dispatch",
+      "strong_supersede_cooldown",
       runningAdmissionStateSchema,
     ),
     acceptedDecisionSchema(

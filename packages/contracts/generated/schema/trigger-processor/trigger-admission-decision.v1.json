@@ -158,8 +158,206 @@
                   "type": "string"
                 },
                 "status": {
-                  "const": "running",
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    {
+                      "const": "preempt_requested",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelling",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
                   "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "context",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "intent",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
                 },
                 "process_state_version": {
                   "minimum": 1,
@@ -451,8 +649,206 @@
                   "type": "string"
                 },
                 "status": {
-                  "const": "running",
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    {
+                      "const": "preempt_requested",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelling",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
                   "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "context",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "intent",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
                 },
                 "process_state_version": {
                   "minimum": 1,
@@ -743,8 +1139,206 @@
                   "type": "string"
                 },
                 "status": {
-                  "const": "running",
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    {
+                      "const": "preempt_requested",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelling",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
                   "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "context",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "intent",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
                 },
                 "process_state_version": {
                   "minimum": 1,
@@ -1035,8 +1629,696 @@
                   "type": "string"
                 },
                 "status": {
-                  "const": "running",
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    {
+                      "const": "preempt_requested",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelling",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
                   "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "context",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "intent",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "cooldown",
+                  "type": "string"
+                },
+                "status": {
+                  "const": "waiting",
+                  "type": "string"
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "trigger_status",
+        "priority",
+        "action",
+        "reason_code",
+        "initial_process_state",
+        "admission_precondition"
+      ],
+      "properties": {
+        "trigger_status": {
+          "const": "accepted",
+          "type": "string"
+        },
+        "priority": {
+          "const": "strong",
+          "type": "string"
+        },
+        "action": {
+          "const": "dispatch",
+          "type": "string"
+        },
+        "reason_code": {
+          "const": "timer_due_supersede_cooldown",
+          "type": "string"
+        },
+        "initial_process_state": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "phase",
+            "status",
+            "wait_reason",
+            "terminal_reason"
+          ],
+          "properties": {
+            "phase": {
+              "const": "admission",
+              "type": "string"
+            },
+            "status": {
+              "const": "running",
+              "type": "string"
+            },
+            "wait_reason": {
+              "type": "null"
+            },
+            "terminal_reason": {
+              "type": "null"
+            }
+          }
+        },
+        "admission_precondition": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "idle",
+                  "type": "string"
+                },
+                "process_id": {
+                  "type": "null"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "execution",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    {
+                      "const": "preempt_requested",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelling",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "context",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "intent",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
                 },
                 "process_state_version": {
                   "minimum": 1,
@@ -1328,8 +2610,206 @@
                   "type": "string"
                 },
                 "status": {
-                  "const": "running",
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    {
+                      "const": "preempt_requested",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelling",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
                   "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "context",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "intent",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
                 },
                 "process_state_version": {
                   "minimum": 1,
@@ -1620,8 +3100,206 @@
                   "type": "string"
                 },
                 "status": {
-                  "const": "running",
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    {
+                      "const": "preempt_requested",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelling",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
                   "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "context",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "intent",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
                 },
                 "process_state_version": {
                   "minimum": 1,
@@ -1913,8 +3591,206 @@
                   "type": "string"
                 },
                 "status": {
-                  "const": "running",
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    {
+                      "const": "preempt_requested",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelling",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
                   "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "context",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "intent",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
                 },
                 "process_state_version": {
                   "minimum": 1,
@@ -2205,8 +4081,696 @@
                   "type": "string"
                 },
                 "status": {
-                  "const": "running",
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    {
+                      "const": "preempt_requested",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelling",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
                   "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "context",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "intent",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "cooldown",
+                  "type": "string"
+                },
+                "status": {
+                  "const": "waiting",
+                  "type": "string"
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "trigger_status",
+        "priority",
+        "action",
+        "reason_code",
+        "initial_process_state",
+        "admission_precondition"
+      ],
+      "properties": {
+        "trigger_status": {
+          "const": "accepted",
+          "type": "string"
+        },
+        "priority": {
+          "const": "strong",
+          "type": "string"
+        },
+        "action": {
+          "const": "dispatch",
+          "type": "string"
+        },
+        "reason_code": {
+          "const": "strong_supersede_cooldown",
+          "type": "string"
+        },
+        "initial_process_state": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "phase",
+            "status",
+            "wait_reason",
+            "terminal_reason"
+          ],
+          "properties": {
+            "phase": {
+              "const": "admission",
+              "type": "string"
+            },
+            "status": {
+              "const": "running",
+              "type": "string"
+            },
+            "wait_reason": {
+              "type": "null"
+            },
+            "terminal_reason": {
+              "type": "null"
+            }
+          }
+        },
+        "admission_precondition": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "idle",
+                  "type": "string"
+                },
+                "process_id": {
+                  "type": "null"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "execution",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    {
+                      "const": "preempt_requested",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelling",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "context",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "intent",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
                 },
                 "process_state_version": {
                   "minimum": 1,
@@ -2498,8 +5062,206 @@
                   "type": "string"
                 },
                 "status": {
-                  "const": "running",
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    {
+                      "const": "preempt_requested",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelling",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
                   "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "context",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "intent",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
                 },
                 "process_state_version": {
                   "minimum": 1,
@@ -2790,8 +5552,206 @@
                   "type": "string"
                 },
                 "status": {
-                  "const": "running",
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    {
+                      "const": "preempt_requested",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelling",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
                   "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "context",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "intent",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
                 },
                 "process_state_version": {
                   "minimum": 1,
@@ -3083,8 +6043,206 @@
                   "type": "string"
                 },
                 "status": {
-                  "const": "running",
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    {
+                      "const": "preempt_requested",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelling",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
                   "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "context",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "intent",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
                 },
                 "process_state_version": {
                   "minimum": 1,
@@ -3376,8 +6534,206 @@
                   "type": "string"
                 },
                 "status": {
-                  "const": "running",
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    {
+                      "const": "preempt_requested",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelling",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
                   "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "context",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "intent",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
                 },
                 "process_state_version": {
                   "minimum": 1,
@@ -3669,8 +7025,206 @@
                   "type": "string"
                 },
                 "status": {
-                  "const": "running",
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    },
+                    {
+                      "const": "preempt_requested",
+                      "type": "string"
+                    },
+                    {
+                      "const": "cancelling",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
                   "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "context",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "process_state_version": {
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_revision": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "strong_fifo_head_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_head_admission_time": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "strong_fifo_preempt_commit_process_id": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "kind",
+                "process_id",
+                "slot_generation",
+                "phase",
+                "status",
+                "process_state_version",
+                "strong_fifo_revision",
+                "strong_fifo_head_process_id",
+                "strong_fifo_head_admission_time",
+                "strong_fifo_preempt_commit_process_id"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "occupied",
+                  "type": "string"
+                },
+                "process_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "slot_generation": {
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "phase": {
+                  "const": "intent",
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "waiting",
+                      "type": "string"
+                    }
+                  ]
                 },
                 "process_state_version": {
                   "minimum": 1,

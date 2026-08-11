@@ -8,6 +8,7 @@ import {
   type ObjectRefV1,
   type ObjectStorePortV1,
 } from "@pai/object-store";
+import { InternalClientError } from "@pai/service-kit";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -23,6 +24,7 @@ import {
   type RuntimeToolResultV1,
   type RuntimeToolAuditV1,
 } from "../src/runtime-execution.v1.js";
+import { runtimeEventRetentionUntilV1 } from "../src/db/postgres-runtime-execution-store.v1.js";
 import { buildActionRuntimeApp } from "../src/app.js";
 
 const at = "2026-07-23T04:00:00.000Z";
@@ -449,6 +451,7 @@ function harness(
   },
   hooks: Readonly<{
     afterMarkToolRunning?: () => void | Promise<void>;
+    heartbeat_interval_ms?: number;
   }> = {},
 ) {
   let clockMs = now.getTime();
@@ -462,6 +465,15 @@ function harness(
   });
   const store = {
     ...baseStore,
+    finalizeAlreadyTerminalControl: vi.fn(
+      (
+        request: Parameters<typeof baseStore.finalizeAlreadyTerminalControl>[0],
+      ) => baseStore.finalizeAlreadyTerminalControl(request),
+    ),
+    heartbeat: vi.fn(
+      (request: Parameters<typeof baseStore.heartbeat>[0]) =>
+        baseStore.heartbeat(request),
+    ),
     markToolRunning: async (
       request: Parameters<typeof baseStore.markToolRunning>[0],
     ) => {
@@ -641,6 +653,9 @@ function harness(
       now: clock,
       max_adapter_turns: 20,
       max_retry_attempts: 2,
+      ...(hooks.heartbeat_interval_ms === undefined
+        ? {}
+        : { heartbeat_interval_ms: hooks.heartbeat_interval_ms }),
     }),
     now: clock,
     advance(milliseconds: number) {
@@ -737,6 +752,7 @@ async function startAndExecute(
 function cancelRequest(
   request = startRequest(),
   signalId = "signal-1",
+  requestedAt = at,
 ) {
   return {
     schema_version: "runtime_cancel.v1" as const,
@@ -746,7 +762,7 @@ function cancelRequest(
     start_attempt_no: request.start_attempt_no,
     preempt_token: request.preempt_token,
     reason_code: "user_cancelled",
-    requested_at: at,
+    requested_at: requestedAt,
     idempotency_key: `${request.runtime_run_id}:control:${signalId}`,
     trace_id: request.trace_id,
   };
@@ -792,6 +808,21 @@ function controlClaims(request = startRequest()) {
 }
 
 describe("Day15 Action Runtime execution loop", () => {
+  it("keeps a late terminal-control audit event readable through its control window", () => {
+    expect(
+      runtimeEventRetentionUntilV1(
+        "2026-08-07T04:16:03.704Z",
+        "2026-08-07T08:46:27.544Z",
+      ),
+    ).toBe("2026-08-07T09:01:27.544Z");
+    expect(
+      runtimeEventRetentionUntilV1(
+        "2026-08-07T08:46:27.545123Z",
+        "2026-08-07T08:46:27.544Z",
+      ),
+    ).toBe("2026-08-07T08:46:27.545123Z");
+  });
+
   it("rejects any adapter identity outside the pinned Claude Agent SDK contract", () => {
     const testHarness = harness();
     expect(() =>
@@ -1129,6 +1160,7 @@ describe("Day15 Action Runtime execution loop", () => {
     const applications = {
       tool_permission_profile_current_read: {} as never,
       runtime_event_read: {} as never,
+      runtime_final_result_read: {} as never,
       runtime_execution: testHarness.app,
       runtime_query: readyQuery as never,
       runtime_token_stream: readyTokenStream as never,
@@ -1202,16 +1234,24 @@ describe("Day15 Action Runtime execution loop", () => {
       idempotency_key: "run-1:control:before-start",
       trace_id: request.trace_id,
     } as const;
+    const transportTraceId = "a".repeat(32);
 
     const mismatch = await server.inject({
       method: "POST",
       url: "/internal/runtime/runs/a-different-run/cancel",
-      headers: { authorization: "Bearer aaa.bbb.ccc" },
+      headers: {
+        authorization: "Bearer aaa.bbb.ccc",
+        "x-trace-id": transportTraceId,
+      },
       payload: control,
     });
     expect(mismatch.statusCode).toBe(400);
-    expect(mismatch.json()).toMatchObject({
+    expect(mismatch.json()).toEqual({
       code: "schema_validation_failed",
+      message: "runtime_run_id path parameter must match the control body",
+      retryable: false,
+      details: {},
+      trace_id: transportTraceId,
     });
     expect(await testHarness.store.readRun(request.runtime_run_id)).toBeUndefined();
 
@@ -1334,6 +1374,7 @@ describe("Day15 Action Runtime execution loop", () => {
       "before_running",
     ]);
     expect(run.status).toBe("completed");
+    expect(run.terminal_reason).toBe("runtime_completed");
     expect(run.events.map(({ event_type }) => event_type)).toEqual([
       "runtime.run.started",
       "runtime.run.completed",
@@ -3264,6 +3305,71 @@ describe("Day15 Action Runtime execution loop", () => {
     expect(testHarness.dependencies.tools.invoke).not.toHaveBeenCalled();
   });
 
+  it("accepts a durable evidence reference from a completed read-only tool", async () => {
+    const testHarness = harness(
+      [
+        {
+          kind: "tool_call",
+          call: {
+            tool_call_id: "tool-call-read-only",
+            tool_name: "search",
+            capability: "search.read",
+            arguments: { query: "current weather" },
+          },
+        },
+        { kind: "complete", terminal_artifact_ref: null },
+      ],
+      {
+        outcome: "completed",
+        retryable: false,
+        side_effect_status: "none",
+        output: { current: "available" },
+        external_response_ref: "evidence:read-only:1",
+      },
+    );
+
+    const { run } = await startAndExecute(testHarness);
+    expect(run.status).toBe("completed");
+    expect(run.tools).toEqual([
+      expect.objectContaining({
+        tool_invocation_id: "tool-call-read-only",
+        status: "completed",
+        side_effect_status: "none",
+      }),
+    ]);
+  });
+
+  it("accepts the opaque ObjectStore reference it binds to a completed tool result", async () => {
+    const objectRef = `objv1_${"a".repeat(64)}` as ObjectRefV1;
+    const testHarness = harness(
+      [
+        {
+          kind: "tool_call",
+          call: {
+            tool_call_id: "tool-call-object-store-evidence",
+            tool_name: "search",
+            capability: "search.read",
+            arguments: { query: "current weather" },
+          },
+        },
+        { kind: "complete", terminal_artifact_ref: null },
+      ],
+      {
+        outcome: "completed",
+        retryable: false,
+        side_effect_status: "none",
+        output: { current: "available" },
+        external_response_ref: objectRef,
+      },
+    );
+
+    const { run } = await startAndExecute(testHarness);
+    expect(run.status).toBe("completed");
+    expect(run.tools[0]?.result).toMatchObject({
+      external_response_ref: objectRef,
+    });
+  });
+
   it("applies the documented bounded retry count and exponential backoff only to retryable no-side-effect failures", async () => {
     const testHarness = harness(
       [
@@ -3508,6 +3614,28 @@ describe("Day15 Action Runtime execution loop", () => {
     expect(recovered?.outbox.every(({ status }) => status === "sent")).toBe(
       true,
     );
+  });
+
+  it("dead-letters a non-retryable callback failure instead of spinning the owner outbox", async () => {
+    const testHarness = harness();
+    testHarness.dependencies.callback.deliver.mockRejectedValue(
+      new InternalClientError({
+        code: "event_expired",
+        message: "Runtime event retention has expired",
+        retryable: false,
+        traceId: "11111111111111111111111111111111",
+        status: 410,
+      }),
+    );
+
+    await startAndExecute(testHarness);
+
+    const run = await testHarness.store.readRun("run-1");
+    expect(run?.outbox.every(({ status }) => status === "failed")).toBe(true);
+    await expect(testHarness.app.recoverPendingCallbacks()).resolves.toEqual({
+      attempted: 0,
+      sent: 0,
+    });
   });
 
   it("ACKs the exact snapshotted callback record even when the claimed object is mutated during delivery", async () => {
@@ -4603,6 +4731,49 @@ describe("Day15 Action Runtime execution loop", () => {
     });
   });
 
+  it("terminalizes after a durably failed non-retryable final artifact", async () => {
+    const body = new Uint8Array([7, 8, 9]);
+    const testHarness = harness([
+      {
+        kind: "artifact",
+        artifact: {
+          artifact_id: "artifact-rejected",
+          artifact_kind: "runtime-final-result",
+          media_type: "text/plain",
+          body,
+          expected_sha256: rawSha256(body),
+          retention_until: "2026-08-23T04:00:00.000Z",
+        },
+      },
+    ]);
+    testHarness.dependencies.object_store.putImmutable.mockRejectedValueOnce(
+      new ObjectStoreErrorV1(
+        "precondition_failed",
+        "immutable object media type is invalid",
+      ),
+    );
+
+    await expect(startAndExecute(testHarness)).rejects.toMatchObject({
+      code: "artifact_integrity_mismatch",
+    });
+    const run = await testHarness.store.readRun("run-1");
+    expect(run).toMatchObject({
+      status: "failed",
+      terminal_reason: "artifact_integrity_mismatch",
+    });
+    expect(run?.events.map(({ event_type }) => event_type)).toEqual(
+      expect.arrayContaining([
+        "runtime.artifact.failed",
+        "runtime.run.failed",
+      ]),
+    );
+    await expect(
+      testHarness.store.readArtifact("run-1", "artifact-rejected"),
+    ).resolves.toMatchObject({
+      status: "failed",
+    });
+  });
+
   it("rejects a terminal artifact ref that has no committed available artifact event in this run", async () => {
     const testHarness = harness([
       {
@@ -5473,6 +5644,32 @@ describe("Day15 Action Runtime execution loop", () => {
     );
   });
 
+  it("renews the durable run lease while the provider turn is still in flight", async () => {
+    const testHarness = harness(
+      undefined,
+      undefined,
+      { heartbeat_interval_ms: 1 },
+    );
+    testHarness.dependencies.adapter.next.mockImplementationOnce(
+      async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+        return { kind: "complete", terminal_artifact_ref: null } as const;
+      },
+    );
+
+    const { run } = await startAndExecute(testHarness);
+
+    expect(run.status).toBe("completed");
+    expect(testHarness.store.heartbeat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtime_run_id: "run-1",
+        worker_id: "worker-1",
+        lease_generation: 1,
+        lease_seconds: 600,
+      }),
+    );
+  });
+
   it("resolves only planned skills while allowed_skills remains an upper bound", async () => {
     const testHarness = harness();
     const request = {
@@ -5851,10 +6048,10 @@ describe("Day15 Action Runtime execution loop", () => {
     ).toContain("runtime.control_signal.received");
   });
 
-  it("rejects a new control after terminal state without creating owner facts", async () => {
+  it("durably acknowledges a new control after terminal state without rewriting terminal history", async () => {
     const testHarness = harness();
     const request = startRequest();
-    const { response } = await startAndExecute(testHarness, request);
+    const { response, run } = await startAndExecute(testHarness, request);
     const control = {
       schema_version: "runtime_cancel.v1",
       runtime_signal_id: "signal-late",
@@ -5870,11 +6067,101 @@ describe("Day15 Action Runtime execution loop", () => {
 
     await expect(
       testHarness.app.receiveControl(principal, control),
-    ).rejects.toMatchObject({ code: "runtime_terminal" });
+    ).resolves.toEqual({ accepted: true, replayed: false });
+    expect(testHarness.dependencies.control_tokens.verify).toHaveBeenLastCalledWith(
+      request.preempt_token,
+      expect.objectContaining({ allow_expired_terminal_replay: true }),
+    );
+    await expect(
+      testHarness.app.receiveControl(principal, control),
+    ).resolves.toEqual({ accepted: true, replayed: true });
     const after = await testHarness.store.readRun(request.runtime_run_id);
     expect(after?.status).toBe("completed");
-    expect(after?.controls).toHaveLength(0);
-    expect(after?.events).toHaveLength(response.details.start_attempt_no + 1);
+    expect(after?.terminal_reason).toBe(run.terminal_reason);
+    expect(after?.controls).toEqual([
+      expect.objectContaining({
+        status: "handled",
+        handled_status: "already_terminal",
+      }),
+    ]);
+    expect(after?.events.slice(-2).map(({ event_type }) => event_type)).toEqual([
+      "runtime.control_signal.received",
+      "runtime.control_signal.handled",
+    ]);
+    expect(after?.outbox.slice(-2).map(({ status }) => status)).toEqual([
+      "sent",
+      "sent",
+    ]);
+    expect(after?.events).toHaveLength(response.details.start_attempt_no + 3);
+  });
+
+  it("admits a legacy raw preempt secret only for the exact terminal run", async () => {
+    const testHarness = harness();
+    const request = {
+      ...startRequest("run-legacy-terminal-control"),
+      preempt_token: "a".repeat(64),
+    };
+    await startAndExecute(testHarness, request);
+    const control = cancelRequest(request, "signal-legacy-terminal-control");
+
+    await expect(
+      testHarness.app.receiveControl(principal, control),
+    ).resolves.toEqual({ accepted: true, replayed: false });
+    await expect(
+      testHarness.app.receiveControl(principal, {
+        ...control,
+        runtime_signal_id: "signal-legacy-terminal-control-wrong-secret",
+        preempt_token: "b".repeat(64),
+      }),
+    ).rejects.toMatchObject({ code: "control_token_invalid" });
+    expect(
+      (await testHarness.store.readRun(request.runtime_run_id))?.controls,
+    ).toEqual([
+      expect.objectContaining({ handled_status: "already_terminal" }),
+    ]);
+  });
+
+  it("marks only an expired terminal control replay for the owner writer", async () => {
+    const testHarness = harness();
+    const request = startRequest("run-expired-terminal-control");
+    await startAndExecute(testHarness, request);
+    testHarness.advance(24 * 60 * 60 * 1_000 + 15 * 60 * 1_000 + 1);
+    const requestedAt = new Date(now.getTime() + 24 * 60 * 60 * 1_000 + 15 * 60 * 1_000 + 1).toISOString();
+
+    await expect(
+      testHarness.app.receiveControl(
+        principal,
+        cancelRequest(
+          request,
+          "signal-expired-terminal-control",
+          requestedAt,
+        ),
+      ),
+    ).resolves.toEqual({ accepted: true, replayed: false });
+
+    expect(testHarness.store.finalizeAlreadyTerminalControl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        terminal_replay_compatibility: true,
+        request: expect.objectContaining({ requested_at: requestedAt }),
+      }),
+    );
+  });
+
+  it("keeps expiry fail-closed when the target run is not terminal", async () => {
+    const testHarness = harness();
+    const request = startRequest("run-expired-active-control");
+    testHarness.advance(24 * 60 * 60 * 1_000 + 15 * 60 * 1_000 + 1);
+
+    await expect(
+      testHarness.app.receiveControl(
+        principal,
+        cancelRequest(request, "signal-expired-active-control"),
+      ),
+    ).rejects.toMatchObject({ code: "control_expired" });
+    expect(testHarness.dependencies.control_tokens.verify).toHaveBeenLastCalledWith(
+      request.preempt_token,
+      expect.objectContaining({ allow_expired_terminal_replay: false }),
+    );
   });
 
   it("rejects writes after a terminal event even with the last known generation", async () => {

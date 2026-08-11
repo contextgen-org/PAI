@@ -350,6 +350,97 @@ describe("Trigger admission domain", () => {
     ).toMatchObject({ action: "enqueue_weak", reason_code: "active_process_running" });
   });
 
+  it("queues Strong work behind a valid but non-preemptible foreground state", () => {
+    const states = [
+      ["context_running", "context", "running"],
+      ["context_waiting", "context", "waiting"],
+      ["intent_running", "intent", "running"],
+      ["intent_waiting", "intent", "waiting"],
+      ["execution_waiting", "execution", "waiting"],
+      ["execution_preempt_requested", "execution", "preempt_requested"],
+      ["execution_cancelling", "execution", "cancelling"],
+    ] as const;
+    for (const [active_process, phase, status] of states) {
+      const decision = decideTriggerAdmissionV1({
+        ...base,
+        trusted_strong_hint: true,
+        active_process,
+        active_process_id: "process-active",
+        active_process_slot_generation: 7,
+        active_process_state_version: 9,
+        foreground_slot_process_id: "process-active",
+      });
+      expect(decision).toMatchObject({
+        trigger_status: "accepted",
+        priority: "strong",
+        action: "enqueue_strong_fifo",
+        reason_code: "strong_fifo_waiting",
+        initial_process_state: {
+          phase: "admission",
+          status: "waiting",
+          wait_reason: "deferred_strong_queue",
+        },
+        admission_precondition: { phase, status },
+      });
+    }
+    expect(
+      decideTriggerAdmissionV1({
+        ...base,
+        source: "timer",
+        actor_type: "system",
+        active_process: "execution_waiting",
+        active_process_id: "process-runtime-start",
+        active_process_slot_generation: 7,
+        active_process_state_version: 9,
+        foreground_slot_process_id: "process-runtime-start",
+      }),
+    ).toMatchObject({
+      action: "enqueue_strong_fifo",
+      reason_code: "strong_fifo_waiting",
+    });
+  });
+
+  it("dispatches trusted strong work over a completed runtime in cooldown", () => {
+    expect(
+      decideTriggerAdmissionV1({
+        ...base,
+        trusted_strong_hint: true,
+        active_process: "cooldown_waiting",
+        active_process_id: "process-cooldown",
+        active_process_slot_generation: 7,
+        foreground_slot_process_id: "process-cooldown",
+        active_process_state_version: 9,
+      }),
+    ).toMatchObject({
+      trigger_status: "accepted",
+      priority: "strong",
+      action: "dispatch",
+      reason_code: "strong_supersede_cooldown",
+      initial_process_state: { phase: "admission", status: "running" },
+    });
+  });
+
+  it("dispatches a due timer over a completed runtime in cooldown without preempting it", () => {
+    expect(
+      decideTriggerAdmissionV1({
+        ...base,
+        source: "timer",
+        actor_type: "system",
+        active_process: "cooldown_waiting",
+        active_process_id: "process-cooldown",
+        active_process_slot_generation: 7,
+        foreground_slot_process_id: "process-cooldown",
+        active_process_state_version: 9,
+      }),
+    ).toMatchObject({
+      trigger_status: "accepted",
+      priority: "strong",
+      action: "dispatch",
+      reason_code: "timer_due_supersede_cooldown",
+      initial_process_state: { phase: "admission", status: "running" },
+    });
+  });
+
   it("rejects torn slot/process/FIFO snapshots", () => {
     expect(() =>
       decideTriggerAdmissionV1({
@@ -552,6 +643,7 @@ describe("Trigger admission application", () => {
           principal_id: "timer_trigger_app",
           principal_type: "service",
           permission_scope: "trigger.submit.timer",
+          delegated_principal: null,
           workload_subject: "timer_trigger_app",
           credential_jti: "credential-1",
           credential_kid: "workload-key-1",
@@ -630,6 +722,20 @@ describe("Trigger admission application", () => {
           principal_id: "user-1",
           principal_type: "user",
           permission_scope: "trigger.submit.chat",
+          delegated_principal: {
+            principal_type: "user",
+            principal_id: "user-1",
+            roles: ["member"],
+            source_issuer: "https://project.supabase.co/auth/v1",
+            source_subject: "subject-user-1",
+            auth_time: 100,
+            scope_kind: "bot",
+            workspace_id: "workspace-1",
+            bot_id: "bot-1",
+            owner_agent_id: "agent-1",
+            deployment_environment: "dev",
+            release_channel: "stable",
+          },
           verified_principal: {
             principal_type: "user",
             principal_id: "user-1",
@@ -679,6 +785,7 @@ describe("Trigger admission application", () => {
           principal_id: "agent-1",
           principal_type: "agent",
           permission_scope: "trigger.submit.notification",
+          delegated_principal: null,
           verified_principal: {
             principal_type: "bot",
             principal_id: "agent-1",

@@ -2,7 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { canonicalJsonV1 } from "@pai/eventing";
 import { Value } from "@sinclair/typebox/value";
-import { TriggerRuntimeStartRecomposeWorkV1Schema } from "@pai/contracts";
+import {
+  TriggerMetaEnqueueWorkV1Schema,
+  TriggerRuntimeStartRecomposeWorkV1Schema,
+} from "@pai/contracts";
 import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -384,6 +387,9 @@ describePostgres("Trigger runtime lifecycle owner writers", () => {
       | "runtime.run.cancelled"
       | "runtime.control_signal.handled",
     sequenceNo: number,
+    options: Readonly<{
+      handled_status?: "handled_safe_point" | "already_terminal";
+    }> = {},
   ) {
     const occurredAt = new Date(Date.now() + sequenceNo * 1_000).toISOString();
     const eventId = `${seeded.runtimeRunId}:${sequenceNo}:${eventType}`;
@@ -405,7 +411,7 @@ describePostgres("Trigger runtime lifecycle owner writers", () => {
             Date.parse(occurredAt) + 60 * 60 * 1_000,
           ).toISOString(),
           status: "handled",
-          handled_status: "handled_safe_point",
+          handled_status: options.handled_status ?? "handled_safe_point",
           target_lease_generation: 1,
           handled_lease_generation: 1,
           final_fencing_generation: 2,
@@ -832,14 +838,23 @@ describePostgres("Trigger runtime lifecycle owner writers", () => {
       expect(Date.parse(state.rows[0].snapshot_retention_until)).toBeGreaterThan(
         Date.parse(state.rows[0].cooldown_until),
       );
-      const work = await client.query(
-        `SELECT work_kind,status,next_retry_at FROM trigger_processor.trigger_process_work_items
+      const work = await client.query<{
+        work_kind: string;
+        status: string;
+        next_retry_at: string;
+        payload: unknown;
+      }>(
+        `SELECT work_kind,status,next_retry_at,payload FROM trigger_processor.trigger_process_work_items
           WHERE trigger_process_id=$1`,
         [seeded.processId],
       );
       expect(work.rows).toEqual([
         expect.objectContaining({ work_kind: "meta_enqueue", status: "pending" }),
       ]);
+      // PostgreSQL returns timestamptz JSON values as `+00:00` by default.
+      // The work fence deliberately requires canonical UTC `Z`, so validate
+      // the exact durable payload rather than only the process state.
+      expect(Value.Check(TriggerMetaEnqueueWorkV1Schema, work.rows[0]!.payload)).toBe(true);
     } finally {
       await client.query("ROLLBACK");
       client.release();
@@ -1200,6 +1215,62 @@ describePostgres("Trigger runtime lifecycle owner writers", () => {
       }
     },
   );
+
+  it("fails closed when a cancellation reaches an already-terminal Runtime after callback history was lost", async () => {
+    if (pool === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const seeded = await seed(client);
+      await callLifecycle(
+        client,
+        "record_runtime_started_v1",
+        seeded,
+        lifecycleEvent(seeded, "runtime.run.started", 1),
+      );
+      await markCancelling(client, seeded);
+      await callLifecycle(
+        client,
+        "apply_runtime_control_handled_v1",
+        seeded,
+        lifecycleEvent(
+          seeded,
+          "runtime.control_signal.handled",
+          2,
+          { handled_status: "already_terminal" },
+        ),
+      );
+
+      await expect(client.query(
+        `SELECT phase,status,terminal_reason,terminal_outcome,
+                canonical_reason_code,cancellation_status,
+                cancellation_isolation_status
+           FROM trigger_processor.trigger_processes
+          WHERE id=$1`,
+        [seeded.processId],
+      )).resolves.toMatchObject({
+        rows: [expect.objectContaining({
+          phase: "closed",
+          status: "failed",
+          terminal_reason: "runtime_terminal_unobserved_before_cancel",
+          terminal_outcome: "failed_with_reason",
+          canonical_reason_code: "runtime_terminal_unobserved_before_cancel",
+          cancellation_status: "completed",
+          cancellation_isolation_status: "safe_point",
+        })],
+      });
+      await expect(client.query(
+        `SELECT status FROM trigger_processor.runtime_start_reservations
+          WHERE trigger_process_id=$1`,
+        [seeded.processId],
+      )).resolves.toMatchObject({
+        rows: [{ status: "cancelled_after_dispatch" }],
+      });
+    } finally {
+      await client.query("ROLLBACK").catch(() => undefined);
+      client.release();
+    }
+  });
 
   it("rejects a handled event without its durable cancellation owner row", async () => {
     if (pool === undefined) throw new Error("PAI_TEST_DATABASE_URL is required");
