@@ -52,6 +52,29 @@ const EVENTING_TEST_SCHEMA = "trigger_processor" as const;
 const EVENTING_TEST_APP_ROLE = "pai_trigger_processor_app" as const;
 const EVENTING_TEST_MIGRATOR_ROLE = "pai_eventing_contract_migrator" as const;
 const EVENTING_TEST_RUNTIME_ROLE = "pai_eventing_contract_runtime" as const;
+
+async function waitForDatabaseConnectionsToClose(
+  control: Pool,
+  databaseName: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const result = await control.query<{ active_connections: string }>(
+      `SELECT count(*)::text AS active_connections
+         FROM pg_catalog.pg_stat_activity
+        WHERE datname = $1
+          AND backend_type = 'client backend'`,
+      [databaseName],
+    );
+    if (result.rows[0]?.active_connections === "0") return;
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 20);
+    });
+  }
+  throw new Error(
+    `test database ${databaseName} still has active client connections after pool shutdown`,
+  );
+}
+
 const EVENTING_DLQ_RESOLUTION = ownerDlqResolutionContractV1(
   "trigger_processor",
   "eventing_dlq",
@@ -1846,10 +1869,14 @@ describePostgres("PostgreSQL durable outbox recovery", () => {
   afterAll(async () => {
     await admin?.end();
     if (control !== undefined) {
-      await control.query(`DROP DATABASE IF EXISTS "${isolatedDatabase}" WITH (FORCE)`);
-      await control.query(`DROP ROLE IF EXISTS ${EVENTING_TEST_RUNTIME_ROLE}`);
-      await control.query(`DROP ROLE IF EXISTS ${EVENTING_TEST_MIGRATOR_ROLE}`);
-      await control.end();
+      try {
+        await waitForDatabaseConnectionsToClose(control, isolatedDatabase);
+        await control.query(`DROP DATABASE IF EXISTS "${isolatedDatabase}" WITH (FORCE)`);
+        await control.query(`DROP ROLE IF EXISTS ${EVENTING_TEST_RUNTIME_ROLE}`);
+        await control.query(`DROP ROLE IF EXISTS ${EVENTING_TEST_MIGRATOR_ROLE}`);
+      } finally {
+        await control.end();
+      }
     }
   });
 
